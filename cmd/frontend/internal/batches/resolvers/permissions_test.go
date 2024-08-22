@@ -49,7 +49,7 @@ func TestPermissionLevels(t *testing.T) {
 	db := database.NewDB(logger, dbtest.NewDB(t))
 	key := et.TestKey{}
 
-	bstore := store.New(db, &observation.TestContext, key)
+	bstore := store.New(db, observation.TestContextTB(t), key)
 	sr := New(db, bstore, gitserver.NewMockClient(), logger)
 	s, err := newSchema(db, sr)
 	if err != nil {
@@ -84,6 +84,8 @@ func TestPermissionLevels(t *testing.T) {
 	if err := repoStore.Create(ctx, repo); err != nil {
 		t.Fatal(err)
 	}
+	bt.MockRepoPermissions(t, db, userID, repo.ID)
+	bt.MockRepoPermissions(t, db, nonOrgUserID, repo.ID)
 
 	changeset := &btypes.Changeset{
 		RepoID:              repo.ID,
@@ -1361,7 +1363,7 @@ func TestRepositoryPermissions(t *testing.T) {
 
 	db := database.NewDB(logger, dbtest.NewDB(t))
 
-	bstore := store.New(db, &observation.TestContext, nil)
+	bstore := store.New(db, observation.TestContextTB(t), nil)
 	gitserverClient := gitserver.NewMockClient()
 	sr := &Resolver{store: bstore}
 	s, err := newSchema(db, sr)
@@ -1382,7 +1384,7 @@ func TestRepositoryPermissions(t *testing.T) {
 
 	// Create 2 repositories
 	repos := make([]*types.Repo, 0, 2)
-	for i := 0; i < cap(repos); i++ {
+	for i := range cap(repos) {
 		name := fmt.Sprintf("github.com/sourcegraph/test-repository-permissions-repo-%d", i)
 		r := newGitHubTestRepo(name, newGitHubExternalService(t, esStore))
 		if err := repoStore.Create(ctx, r); err != nil {
@@ -1392,6 +1394,7 @@ func TestRepositoryPermissions(t *testing.T) {
 	}
 
 	t.Run("BatchChange and changesets", func(t *testing.T) {
+		bt.MockRepoPermissions(t, db, userID, repos[0].ID, repos[1].ID)
 		// Create 2 changesets for 2 repositories
 		changesetBaseRefOid := "f00b4r"
 		changesetHeadRefOid := "b4rf00"
@@ -1523,6 +1526,7 @@ func TestRepositoryPermissions(t *testing.T) {
 	})
 
 	t.Run("BatchSpec and changesetSpecs", func(t *testing.T) {
+		bt.MockRepoPermissions(t, db, userID, repos[0].ID, repos[1].ID)
 		batchSpec := &btypes.BatchSpec{
 			UserID:          userID,
 			NamespaceUserID: userID,
@@ -1602,6 +1606,7 @@ func TestRepositoryPermissions(t *testing.T) {
 	})
 
 	t.Run("BatchSpec and workspaces", func(t *testing.T) {
+		bt.MockRepoPermissions(t, db, userID, repos[0].ID, repos[1].ID)
 		batchSpec := &btypes.BatchSpec{
 			UserID:          userID,
 			NamespaceUserID: userID,

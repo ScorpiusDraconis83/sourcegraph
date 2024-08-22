@@ -1,16 +1,21 @@
-import { Decorator, Meta, StoryFn } from '@storybook/react'
+import type { Decorator, Meta, StoryFn } from '@storybook/react'
 
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { NOOP_TELEMETRY_SERVICE } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { updateJSContextBatchChangesLicense } from '@sourcegraph/shared/src/testing/batches'
 
-import { AuthenticatedUser } from '../../auth'
+import type { AuthenticatedUser } from '../../auth'
 import { WebStory } from '../../components/WebStory'
-import { GlobalNavbar, GlobalNavbarProps } from '../GlobalNavbar'
+import type { GlobalNavbar, GlobalNavbarProps } from '../GlobalNavbar'
 
 import { NewGlobalNavigationBar } from './NewGlobalNavigationBar'
 
 const decorator: Decorator<GlobalNavbarProps> = Story => {
     updateJSContextBatchChangesLicense('full')
+
+    window.context.codeSearchEnabledOnInstance = true
+    window.context.codyEnabledOnInstance = true
+    window.context.codyEnabledForCurrentUser = true
 
     return <WebStory>{() => <Story />}</WebStory>
 }
@@ -24,14 +29,15 @@ export default config
 
 export const NewGlobalNavigationBarDemo: StoryFn = () => (
     <NewGlobalNavigationBar
+        routes={[]}
         isSourcegraphDotCom={true}
-        ownEnabled={true}
         notebooksEnabled={true}
         searchContextsEnabled={true}
         codeMonitoringEnabled={true}
         showSearchBox={true}
         codeInsightsEnabled={true}
         batchChangesEnabled={true}
+        searchJobsEnabled={true}
         authenticatedUser={
             {
                 username: 'alice',
@@ -41,7 +47,6 @@ export const NewGlobalNavigationBarDemo: StoryFn = () => (
                             __typename: 'Org',
                             id: 'acme',
                             name: 'acme',
-                            displayName: 'Acme',
                             url: 'https://example.com',
                             settingsURL: null,
                         },
@@ -52,5 +57,7 @@ export const NewGlobalNavigationBarDemo: StoryFn = () => (
         }
         selectedSearchContextSpec=""
         telemetryService={NOOP_TELEMETRY_SERVICE}
+        telemetryRecorder={noOpTelemetryRecorder}
+        showFeedbackModal={() => {}}
     />
 )

@@ -8,70 +8,83 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/sourcegraph/log"
+
+	"github.com/sourcegraph/sourcegraph/internal/completions/tokenizer"
+	"github.com/sourcegraph/sourcegraph/internal/completions/tokenusage"
 	"github.com/sourcegraph/sourcegraph/internal/completions/types"
 	"github.com/sourcegraph/sourcegraph/internal/httpcli"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
 
-func NewClient(cli httpcli.Doer, endpoint, accessToken string) types.CompletionsClient {
+func NewClient(cli httpcli.Doer, endpoint, accessToken string, tokenManager tokenusage.Manager) types.CompletionsClient {
 	return &openAIChatCompletionStreamClient{
-		cli:         cli,
-		accessToken: accessToken,
-		endpoint:    endpoint,
+		cli:          cli,
+		accessToken:  accessToken,
+		endpoint:     endpoint,
+		tokenManager: tokenManager,
 	}
 }
 
 type openAIChatCompletionStreamClient struct {
-	cli         httpcli.Doer
-	accessToken string
-	endpoint    string
+	cli          httpcli.Doer
+	accessToken  string
+	endpoint     string
+	tokenManager tokenusage.Manager
 }
 
 func (c *openAIChatCompletionStreamClient) Complete(
 	ctx context.Context,
-	feature types.CompletionsFeature,
-	requestParams types.CompletionRequestParameters,
-) (*types.CompletionResponse, error) {
-	var resp *http.Response
-	var err error
+	logger log.Logger,
+	request types.CompletionRequest) (*types.CompletionResponse, error) {
+
+	var (
+		resp *http.Response
+		err  error
+	)
 	defer (func() {
 		if resp != nil {
 			resp.Body.Close()
 		}
 	})()
 
-	if feature == types.CompletionsFeatureCode {
-		resp, err = c.makeCompletionRequest(ctx, requestParams, false)
-	} else {
-		resp, err = c.makeRequest(ctx, requestParams, false)
+	switch request.Feature {
+	case types.CompletionsFeatureCode:
+		resp, err = c.makeCompletionRequest(ctx, request, false)
+	case types.CompletionsFeatureChat:
+		resp, err = c.makeRequest(ctx, request, false)
+	default:
+		return nil, errors.Errorf("unknown feature %q", request.Feature)
 	}
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
 
 	var response openaiResponse
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
 		return nil, err
 	}
-
 	if len(response.Choices) == 0 {
-		// Empty response.
+		logger.Warn("no choices in OpenAI response")
 		return &types.CompletionResponse{}, nil
 	}
 
+	usage := response.Usage
+	if err = c.recordTokenUsage(request, usage.PromptTokens, usage.CompletionTokens); err != nil {
+		logger.Warn("Failed to count tokens with the token manager %w ", log.Error(err))
+	}
 	return &types.CompletionResponse{
-		Completion: response.Choices[0].Text,
+		Completion: response.Choices[0].Message.Content,
 		StopReason: response.Choices[0].FinishReason,
 	}, nil
 }
 
 func (c *openAIChatCompletionStreamClient) Stream(
 	ctx context.Context,
-	feature types.CompletionsFeature,
-	requestParams types.CompletionRequestParameters,
-	sendEvent types.SendCompletionEvent,
-) error {
+	logger log.Logger,
+	request types.CompletionRequest,
+	sendEvent types.SendCompletionEvent) error {
+
 	var resp *http.Response
 	var err error
 
@@ -80,16 +93,25 @@ func (c *openAIChatCompletionStreamClient) Stream(
 			resp.Body.Close()
 		}
 	})()
-	if feature == types.CompletionsFeatureCode {
-		resp, err = c.makeCompletionRequest(ctx, requestParams, true)
-	} else {
-		resp, err = c.makeRequest(ctx, requestParams, true)
+	switch request.Feature {
+	case types.CompletionsFeatureCode:
+		resp, err = c.makeCompletionRequest(ctx, request, true)
+	case types.CompletionsFeatureChat:
+		resp, err = c.makeRequest(ctx, request, true)
+	default:
+		return errors.Errorf("unknown feature %v", request.Feature)
 	}
 	if err != nil {
 		return err
 	}
+
 	dec := NewDecoder(resp.Body)
-	var content string
+	var (
+		content                        string
+		ev                             types.CompletionResponse
+		promptTokens, completionTokens int
+	)
+
 	for dec.Scan() {
 		if ctx.Err() != nil && ctx.Err() == context.Canceled {
 			return nil
@@ -106,13 +128,21 @@ func (c *openAIChatCompletionStreamClient) Stream(
 			return errors.Errorf("failed to decode event payload: %w - body: %s", err, string(data))
 		}
 
+		// These are only included in the last message, so we're not worried about overwriting
+		if event.Usage.PromptTokens > 0 {
+			promptTokens = event.Usage.PromptTokens
+		}
+		if event.Usage.CompletionTokens > 0 {
+			completionTokens = event.Usage.CompletionTokens
+		}
+
 		if len(event.Choices) > 0 {
-			if feature == types.CompletionsFeatureCode {
-				content += event.Choices[0].Text
+			if request.Feature == types.CompletionsFeatureCode {
+				content += event.Choices[0].Message.Content
 			} else {
 				content += event.Choices[0].Delta.Content
 			}
-			ev := types.CompletionResponse{
+			ev = types.CompletionResponse{
 				Completion: content,
 				StopReason: event.Choices[0].FinishReason,
 			}
@@ -122,12 +152,28 @@ func (c *openAIChatCompletionStreamClient) Stream(
 			}
 		}
 	}
+	if dec.Err() != nil {
+		return dec.Err()
+	}
 
-	return dec.Err()
+	if err = c.recordTokenUsage(request, promptTokens, completionTokens); err != nil {
+		logger.Warn("Failed to count tokens with the token manager %w", log.Error(err))
+	}
+	return nil
+}
+
+func (c *openAIChatCompletionStreamClient) recordTokenUsage(request types.CompletionRequest, promptTokens, completionTokens int) error {
+	feature := string(request.Feature)
+	model := request.ModelConfigInfo.Model.ModelName
+	label := tokenizer.OpenAIModel + "/" + string(model)
+	return c.tokenManager.UpdateTokenCountsFromModelUsage(
+		promptTokens, completionTokens,
+		label, feature, tokenusage.OpenAI)
 }
 
 // makeRequest formats the request and calls the chat/completions endpoint for code_completion requests
-func (c *openAIChatCompletionStreamClient) makeRequest(ctx context.Context, requestParams types.CompletionRequestParameters, stream bool) (*http.Response, error) {
+func (c *openAIChatCompletionStreamClient) makeRequest(ctx context.Context, request types.CompletionRequest, stream bool) (*http.Response, error) {
+	requestParams := request.Parameters
 	if requestParams.TopK < 0 {
 		requestParams.TopK = 0
 	}
@@ -137,7 +183,7 @@ func (c *openAIChatCompletionStreamClient) makeRequest(ctx context.Context, requ
 
 	// TODO(sqs): make CompletionRequestParameters non-anthropic-specific
 	payload := openAIChatCompletionsRequestParameters{
-		Model:       requestParams.Model,
+		Model:       request.ModelConfigInfo.Model.ModelName,
 		Temperature: requestParams.Temperature,
 		TopP:        requestParams.TopP,
 		// TODO(sqs): map requestParams.TopK to openai
@@ -155,7 +201,7 @@ func (c *openAIChatCompletionStreamClient) makeRequest(ctx context.Context, requ
 		switch m.Speaker {
 		case types.HUMAN_MESSAGE_SPEAKER:
 			role = "user"
-		case types.ASISSTANT_MESSAGE_SPEAKER:
+		case types.ASSISTANT_MESSAGE_SPEAKER:
 			role = "assistant"
 			//
 		default:
@@ -199,7 +245,8 @@ func (c *openAIChatCompletionStreamClient) makeRequest(ctx context.Context, requ
 }
 
 // makeCompletionRequest formats the request and calls the completions endpoint for code_completion requests
-func (c *openAIChatCompletionStreamClient) makeCompletionRequest(ctx context.Context, requestParams types.CompletionRequestParameters, stream bool) (*http.Response, error) {
+func (c *openAIChatCompletionStreamClient) makeCompletionRequest(ctx context.Context, request types.CompletionRequest, stream bool) (*http.Response, error) {
+	requestParams := request.Parameters
 	if requestParams.TopK < 0 {
 		requestParams.TopK = 0
 	}
@@ -213,7 +260,7 @@ func (c *openAIChatCompletionStreamClient) makeCompletionRequest(ctx context.Con
 	}
 
 	payload := openAICompletionsRequestParameters{
-		Model:       requestParams.Model,
+		Model:       request.ModelConfigInfo.Model.ModelName,
 		Temperature: requestParams.Temperature,
 		TopP:        requestParams.TopP,
 		N:           1,
@@ -251,68 +298,6 @@ func (c *openAIChatCompletionStreamClient) makeCompletionRequest(ctx context.Con
 	}
 
 	return resp, nil
-}
-
-// openAIChatCompletionsRequestParameters request object for openAI chat endpoint https://platform.openai.com/docs/api-reference/chat/create
-type openAIChatCompletionsRequestParameters struct {
-	Model            string             `json:"model"`                       // request.Model
-	Messages         []message          `json:"messages"`                    // request.Messages
-	Temperature      float32            `json:"temperature,omitempty"`       // request.Temperature
-	TopP             float32            `json:"top_p,omitempty"`             // request.TopP
-	N                int                `json:"n,omitempty"`                 // always 1
-	Stream           bool               `json:"stream,omitempty"`            // request.Stream
-	Stop             []string           `json:"stop,omitempty"`              // request.StopSequences
-	MaxTokens        int                `json:"max_tokens,omitempty"`        // request.MaxTokensToSample
-	PresencePenalty  float32            `json:"presence_penalty,omitempty"`  // unused
-	FrequencyPenalty float32            `json:"frequency_penalty,omitempty"` // unused
-	LogitBias        map[string]float32 `json:"logit_bias,omitempty"`        // unused
-	User             string             `json:"user,omitempty"`              // unused
-}
-
-// openAICompletionsRequestParameters payload for openAI completions endpoint https://platform.openai.com/docs/api-reference/completions/create
-type openAICompletionsRequestParameters struct {
-	Model            string             `json:"model"`                       // request.Model
-	Prompt           string             `json:"prompt"`                      // request.Messages[0] - formatted prompt expected to be the only message
-	Temperature      float32            `json:"temperature,omitempty"`       // request.Temperature
-	TopP             float32            `json:"top_p,omitempty"`             // request.TopP
-	N                int                `json:"n,omitempty"`                 // always 1
-	Stream           bool               `json:"stream,omitempty"`            // request.Stream
-	Stop             []string           `json:"stop,omitempty"`              // request.StopSequences
-	MaxTokens        int                `json:"max_tokens,omitempty"`        // request.MaxTokensToSample
-	PresencePenalty  float32            `json:"presence_penalty,omitempty"`  // unused
-	FrequencyPenalty float32            `json:"frequency_penalty,omitempty"` // unused
-	LogitBias        map[string]float32 `json:"logit_bias,omitempty"`        // unused
-	Suffix           string             `json:"suffix,omitempty"`            // unused
-	User             string             `json:"user,omitempty"`              // unused
-}
-
-type message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type openaiUsage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
-}
-
-type openaiChoiceDelta struct {
-	Content string `json:"content"`
-}
-
-type openaiChoice struct {
-	Delta        openaiChoiceDelta `json:"delta"`
-	Role         string            `json:"role"`
-	Text         string            `json:"text"`
-	FinishReason string            `json:"finish_reason"`
-}
-
-type openaiResponse struct {
-	// Usage is only available for non-streaming requests.
-	Usage   openaiUsage    `json:"usage"`
-	Model   string         `json:"model"`
-	Choices []openaiChoice `json:"choices"`
 }
 
 func getPrompt(messages []types.Message) (string, error) {

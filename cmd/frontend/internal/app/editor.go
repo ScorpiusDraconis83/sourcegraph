@@ -14,9 +14,9 @@ import (
 
 	"github.com/sourcegraph/log"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/backend"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/backend"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/cloneurls"
 	"github.com/sourcegraph/sourcegraph/internal/api"
-	"github.com/sourcegraph/sourcegraph/internal/cloneurls"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
@@ -42,11 +42,11 @@ func editorRev(ctx context.Context, logger log.Logger, db database.DB, repoName 
 	// If we are on the default branch we want to return a clean URL without a
 	// branch. If we fail its best to return the full URL and allow the
 	// front-end to inform them of anything that is wrong.
-	defaultBranchCommitID, err := repos.ResolveRev(ctx, repo, "")
+	defaultBranchCommitID, err := repos.ResolveRev(ctx, repo.Name, "")
 	if err != nil {
 		return "@" + rev
 	}
-	branchCommitID, err := repos.ResolveRev(ctx, repo, rev)
+	branchCommitID, err := repos.ResolveRev(ctx, repo.Name, rev)
 	if err != nil {
 		return "@" + rev
 	}

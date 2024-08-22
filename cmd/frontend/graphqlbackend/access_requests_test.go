@@ -13,12 +13,12 @@ import (
 
 	"github.com/sourcegraph/log/logtest"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/actor"
 	"github.com/sourcegraph/sourcegraph/internal/auth"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbmocks"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbtest"
+	"github.com/sourcegraph/sourcegraph/internal/gqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 )
 
@@ -287,7 +287,7 @@ func TestAccessRequestConnectionStore(t *testing.T) {
 	ctx := context.Background()
 
 	db := database.NewDB(logtest.Scoped(t), dbtest.NewDB(t))
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		_, err := db.AccessRequests().Create(ctx, &types.AccessRequest{
 			Name:   "test" + strconv.Itoa(i),
 			Email:  fmt.Sprintf("test%d@sourcegraph.com", i),
@@ -300,5 +300,5 @@ func TestAccessRequestConnectionStore(t *testing.T) {
 		db: db,
 	}
 
-	graphqlutil.TestConnectionResolverStoreSuite(t, connectionStore)
+	gqlutil.TestConnectionResolverStoreSuite(t, connectionStore, nil)
 }

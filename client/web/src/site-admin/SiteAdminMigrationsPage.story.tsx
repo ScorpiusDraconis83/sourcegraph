@@ -10,11 +10,7 @@ const decorator: Decorator = story => <div className="p-3 container">{story()}</
 
 const config: Meta = {
     title: 'web/Site Admin/Migrations',
-    parameters: {
-        chromatic: {
-            viewports: [320, 576, 978, 1440],
-        },
-    },
+    parameters: {},
     decorators: [decorator],
 }
 
@@ -26,7 +22,7 @@ export const InvalidPreIntroduction: StoryFn = () => (
         {props => (
             <SiteAdminMigrationsPage
                 {...props}
-                fetchAllMigrations={(): Observable<OutOfBandMigrationFields[]> => of(migrations)}
+                fetchMigrations={(): Observable<OutOfBandMigrationFields[]> => of(migrations)}
                 fetchSiteUpdateCheck={() => of({ productVersion: '3.23.2' })}
                 now={now}
             />
@@ -42,7 +38,7 @@ export const DowngradeWarning: StoryFn = () => (
         {props => (
             <SiteAdminMigrationsPage
                 {...props}
-                fetchAllMigrations={(): Observable<OutOfBandMigrationFields[]> => of(migrations)}
+                fetchMigrations={(): Observable<OutOfBandMigrationFields[]> => of(migrations)}
                 fetchSiteUpdateCheck={() => of({ productVersion: '3.24.2' })}
                 now={now}
             />
@@ -58,7 +54,7 @@ export const NoWarnings: StoryFn = () => (
         {props => (
             <SiteAdminMigrationsPage
                 {...props}
-                fetchAllMigrations={(): Observable<OutOfBandMigrationFields[]> => of(migrations)}
+                fetchMigrations={(): Observable<OutOfBandMigrationFields[]> => of(migrations)}
                 fetchSiteUpdateCheck={() => of({ productVersion: '3.25.2' })}
                 now={now}
             />
@@ -74,7 +70,7 @@ export const UpgradeWarning: StoryFn = () => (
         {props => (
             <SiteAdminMigrationsPage
                 {...props}
-                fetchAllMigrations={(): Observable<OutOfBandMigrationFields[]> => of(migrations)}
+                fetchMigrations={(): Observable<OutOfBandMigrationFields[]> => of(migrations)}
                 fetchSiteUpdateCheck={() => of({ productVersion: '3.26.2' })}
                 now={now}
             />
@@ -90,7 +86,7 @@ export const InvalidPostDeprecation: StoryFn = () => (
         {props => (
             <SiteAdminMigrationsPage
                 {...props}
-                fetchAllMigrations={(): Observable<OutOfBandMigrationFields[]> => of(migrations)}
+                fetchMigrations={(): Observable<OutOfBandMigrationFields[]> => of(migrations)}
                 fetchSiteUpdateCheck={() => of({ productVersion: '3.27.2' })}
                 now={now}
             />

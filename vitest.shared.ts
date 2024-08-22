@@ -1,6 +1,6 @@
 import path from 'path'
 
-import { type UserConfig, type UserWorkspaceConfig, defineProject, mergeConfig } from 'vitest/config'
+import { defineProject, mergeConfig, type UserConfig, type UserWorkspaceConfig } from 'vitest/config'
 
 /** Whether we're running in Bazel. */
 export const BAZEL = !!process.env.BAZEL
@@ -34,8 +34,8 @@ export const defaultProjectConfig: UserWorkspaceConfig = {
         ],
         css: { modules: { classNameStrategy: 'non-scoped' } },
         hideSkippedTests: true,
-        setupFiles: [path.join(process.cwd(), `client/testing/src/perTestSetup.${TS_EXT}`)],
-        globalSetup: [path.join(process.cwd(), `client/testing/src/globalTestSetup.${TS_EXT}`)],
+        setupFiles: [path.join(BAZEL ? process.cwd() : __dirname, `client/testing/src/perTestSetup.${TS_EXT}`)],
+        globalSetup: [path.join(BAZEL ? process.cwd() : __dirname, `client/testing/src/globalTestSetup.${TS_EXT}`)],
     },
     plugins: BAZEL
         ? [

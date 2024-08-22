@@ -4,12 +4,19 @@ package cloudsqlproxy
 import (
 	"context"
 	"fmt"
+	"net"
+	"strings"
 	"time"
 
 	"github.com/sourcegraph/run"
 
+	"github.com/sourcegraph/sourcegraph/dev/sg/internal/background"
 	"github.com/sourcegraph/sourcegraph/dev/sg/internal/std"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
+)
+
+var (
+	ErrPortInUse = errors.New("port already in use")
 )
 
 // CloudSQLProxy is a cloud-sql-proxy instance
@@ -18,24 +25,33 @@ import (
 // and the proxy can handle the authentication for the database and refresh
 // the credentials as needed.
 type CloudSQLProxy struct {
-	Token                     string
 	DBInstanceConnectionName  string
 	ImpersonateServiceAccount string
 	Port                      int
+
+	// PermissionsHelpPageURL is the URL to show users for permissions issues.
+	PermissionsHelpPageURL string
 }
 
-func NewCloudSQLProxy(dbConnection string, iamUserEmail string, port int) (*CloudSQLProxy, error) {
+func NewCloudSQLProxy(dbConnection string, iamUserEmail string, port int, permissionsHelpPageURL string) *CloudSQLProxy {
 	return &CloudSQLProxy{
 		DBInstanceConnectionName:  dbConnection,
 		ImpersonateServiceAccount: iamUserEmail,
 		Port:                      port,
-	}, nil
+		PermissionsHelpPageURL:    permissionsHelpPageURL,
+	}
 }
 
 func (p *CloudSQLProxy) Start(ctx context.Context, timeoutSeconds int) error {
 	bin, err := Path()
 	if err != nil {
 		return errors.Wrap(err, "failed to get path to the cloud-sql-proxy binary")
+	}
+
+	if ok, err := isPortInUse(p.Port); err != nil {
+		return errors.Wrapf(err, "failed to check if port %d is in use", p.Port)
+	} else if ok {
+		return errors.Wrapf(ErrPortInUse, "port %d is in use", p.Port)
 	}
 
 	proxyCmd := fmt.Sprintf("%s -i -p %d --impersonate-service-account=%s  %s",
@@ -46,7 +62,7 @@ func (p *CloudSQLProxy) Start(ctx context.Context, timeoutSeconds int) error {
 		ctx, cancel = context.WithCancel(ctx)
 		defer cancel()
 
-		std.Out.WriteWarningf("The current session will terminate in %d seconds. Use '-session.timeout' to increase the session duration.",
+		std.Out.WriteWarningf("For security reasons, the current session will terminate in %d seconds. Use '-session.timeout' to increase the session duration.",
 			timeoutSeconds)
 		time.AfterFunc(time.Duration(timeoutSeconds)*time.Second, func() {
 			select {
@@ -62,6 +78,29 @@ func (p *CloudSQLProxy) Start(ctx context.Context, timeoutSeconds int) error {
 
 	err = run.Cmd(ctx, proxyCmd).Run().StreamLines(func(line string) {
 		std.Out.Write("  [cloud-sql-proxy] " + line)
+
+		// Detect permission errors and present some additional help to the user.
+		if strings.Contains(line, "IAM_PERMISSION_DENIED") ||
+			// Sometimes, GCP just chooses to time out instead on permission
+			// errors. Optimistically show help text in these cases.
+			strings.Contains(line, "failed to connect to instance: context deadline exceeded") {
+
+			// HACK: Sleep briefly to allow related output to be flushed
+			// first, before presenting our help text, as the GCP error may
+			// be multi-line. We do this safely in sg context by using
+			// background.Run(...).
+			background.Run(ctx, func(ctx context.Context, _ *std.Output) {
+				select {
+				case <-time.After(100 * time.Millisecond):
+				case <-ctx.Done():
+				}
+				// Use our own output, instead of the aggregated background output,
+				// to show our warning immediately.
+				std.Out.WriteWarningf(
+					"Possible permissions error detected - do you have the prerequisite Entitle permissions grant? See %s for more details.",
+					p.PermissionsHelpPageURL)
+			})
+		}
 	})
 	if err != nil {
 		if ctx.Err() == context.Canceled {
@@ -71,4 +110,16 @@ func (p *CloudSQLProxy) Start(ctx context.Context, timeoutSeconds int) error {
 	}
 
 	return nil
+}
+
+func isPortInUse(port int) (bool, error) {
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort("", fmt.Sprintf("%d", port)), 3*time.Second)
+	if err != nil {
+		return false, nil
+	}
+	if conn != nil {
+		defer conn.Close()
+		return true, nil
+	}
+	return false, nil
 }

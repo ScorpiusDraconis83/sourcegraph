@@ -3,31 +3,24 @@
 <script lang="ts" context="module">
     const BY_LINE_RANKING = 'by-line-number'
     const DEFAULT_CONTEXT_LINES = 1
-    const DEFAULT_EXPANDED_MATCHES = 3
+    const DEFAULT_EXPANDED_MATCHES = 5
 </script>
 
 <script lang="ts">
-    import { mdiChevronDown, mdiChevronUp } from '@mdi/js'
-    import { observeIntersection } from '$lib/intersection-observer'
-
-    import {
-        addLineRangeQueryParameter,
-        formatSearchParameters,
-        pluralize,
-        toPositionOrRangeQueryParameter,
-    } from '$lib/common'
+    import CodeExcerpt from '$lib/CodeExcerpt.svelte'
+    import { pluralize, SourcegraphURL } from '$lib/common'
     import Icon from '$lib/Icon.svelte'
+    import { observeIntersection } from '$lib/intersection-observer'
+    import RepoStars from '$lib/repo/RepoStars.svelte'
+    import { fetchFileRangeMatches } from '$lib/search/api/highlighting'
+    import { rankContentMatch } from '$lib/search/results'
     import { getFileMatchUrl, type ContentMatch, rankByLine, rankPassthrough } from '$lib/shared'
+    import { settings } from '$lib/stores'
 
+    import FileSearchResultHeader from './FileSearchResultHeader.svelte'
+    import PreviewButton from './PreviewButton.svelte'
     import SearchResult from './SearchResult.svelte'
     import { getSearchResultsContext } from './searchResultsContext'
-    import CodeHostIcon from './CodeHostIcon.svelte'
-    import RepoStars from './RepoStars.svelte'
-    import { settings } from '$lib/stores'
-    import { rankContentMatch } from '$lib/search/results'
-    import FileSearchResultHeader from './FileSearchResultHeader.svelte'
-    import { fetchFileRangeMatches } from '$lib/search/api/highlighting'
-    import CodeExcerpt from '$lib/search/CodeExcerpt.svelte'
 
     export let result: ContentMatch
 
@@ -44,6 +37,7 @@
     $: fileURL = getFileMatchUrl(result)
 
     const searchResultContext = getSearchResultsContext()
+    const scrollContainer = searchResultContext.scrollContainer
     let expanded: boolean = searchResultContext?.isExpanded(result)
     $: searchResultContext.setExpanded(result, expanded)
     $: expandButtonText = expanded
@@ -60,52 +54,66 @@
         }, 0)
     }
 
-    function getMatchURL(startLine: number, endLine: number): string {
-        const searchParams = formatSearchParameters(
-            addLineRangeQueryParameter(
-                // We don't want to preserve the 'q' query parameter.
-                // We might have to adjust this if we want to preserve other query parameters.
-                new URLSearchParams(),
-                toPositionOrRangeQueryParameter({ range: { start: { line: startLine }, end: { line: endLine } } })
-            )
-        )
-        return `${fileURL}?${searchParams}`
+    function getMatchURL(line: number, endLine: number): string {
+        return SourcegraphURL.from(fileURL).setLineRange({ line, endLine }).toString()
     }
 
-    let hasBeenVisible = false
-    let highlightedHTMLRows: string[][] = []
-    async function onIntersection(event: { detail: boolean }) {
-        if (hasBeenVisible) {
-            return
+    let visible = false
+    let highlightedHTMLRows: Promise<string[][]> | undefined
+    $: if (visible) {
+        // If the file contains some large lines, avoid stressing syntax-highlighter and the browser.
+        if (!result.chunkMatches?.some(chunk => chunk.contentTruncated)) {
+            // We rely on fetchFileRangeMatches to cache the result for us so that repeated
+            // calls will not result in repeated network requests.
+            highlightedHTMLRows = fetchFileRangeMatches({
+                result,
+                ranges: expandedMatchGroups.map(group => ({
+                    startLine: group.startLine,
+                    endLine: group.endLine,
+                })),
+            })
         }
-        hasBeenVisible = true
-        const matchRanges = expandedMatchGroups.map(group => ({
-            startLine: group.startLine,
-            endLine: group.endLine,
-        }))
-        highlightedHTMLRows = await fetchFileRangeMatches({ result, ranges: matchRanges })
     }
 </script>
 
 <SearchResult>
-    <CodeHostIcon slot="icon" repository={result.repository} />
     <FileSearchResultHeader slot="title" {result} />
     <svelte:fragment slot="info">
         {#if result.repoStars}
             <RepoStars repoStars={result.repoStars} />
         {/if}
+        <PreviewButton {result} />
     </svelte:fragment>
 
-    <div bind:this={root} use:observeIntersection on:intersecting={onIntersection} class="matches">
+    <div
+        bind:this={root}
+        use:observeIntersection={$scrollContainer}
+        on:intersecting={event => (visible = event.detail)}
+        class="matches"
+    >
         {#each matchesToShow as group, index}
             <div class="code">
-                <a href={getMatchURL(group.startLine + 1, group.endLine)}>
-                    <CodeExcerpt
-                        startLine={group.startLine}
-                        matches={group.matches}
-                        plaintextLines={group.plaintextLines}
-                        highlightedHTMLRows={highlightedHTMLRows[index]}
-                    />
+                <a href={getMatchURL(group.startLine + 1, group.endLine)} data-focusable-search-result>
+                    <!--
+                        We need to "post-slice" `highlightedHTMLRows` because we fetch highlighting for
+                        the whole chunk.
+                    -->
+                    {#await highlightedHTMLRows}
+                        <CodeExcerpt
+                            startLine={group.startLine}
+                            matches={group.matches}
+                            plaintextLines={group.plaintextLines}
+                            --background-color="transparent"
+                        />
+                    {:then result}
+                        <CodeExcerpt
+                            startLine={group.startLine}
+                            matches={group.matches}
+                            plaintextLines={group.plaintextLines}
+                            highlightedHTMLRows={result?.[index]?.slice(0, group.plaintextLines.length)}
+                            --background-color="transparent"
+                        />
+                    {/await}
                 </a>
             </div>
         {/each}
@@ -117,8 +125,9 @@
                     userInteracted = true
                 }}
                 class:expanded
+                data-focusable-search-result
             >
-                <Icon svgPath={expanded ? mdiChevronUp : mdiChevronDown} inline aria-hidden="true" />
+                <Icon icon={expanded ? ILucideChevronUp : ILucideChevronDown} inline aria-hidden="true" />
                 <span>{expandButtonText}</span>
             </button>
         {/if}
@@ -132,25 +141,41 @@
         border: none;
         padding: 0.25rem 0.5rem;
         background-color: var(--code-bg);
-        color: var(--collapse-results-color);
+        color: var(--text-muted);
         cursor: pointer;
 
         &.expanded {
             position: sticky;
             bottom: 0;
         }
+
+        &:hover {
+            background-color: var(--secondary-4);
+            color: var(--text-title);
+        }
     }
 
     .code {
         border-bottom: 1px solid var(--border-color);
+        background-color: var(--code-bg);
 
         &:last-child {
             border-bottom: none;
         }
 
+        &:hover {
+            background-color: var(--secondary-4);
+        }
+
         a {
             text-decoration: none;
             color: inherit;
+            display: block;
+            padding: 0.125rem 0.375rem;
         }
+    }
+
+    [data-focusable-search-result]:focus {
+        box-shadow: var(--focus-shadow-inset);
     }
 </style>

@@ -310,18 +310,17 @@ func gatherMetrics(logger log.Logger, gatherer prometheus.Gatherer) (string, err
 	maxDuration := 3 * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), maxDuration)
 	defer cancel()
-	go func() {
-		<-ctx.Done()
+	context.AfterFunc(ctx, func() {
 		if ctx.Err() == context.DeadlineExceeded {
 			logger.Warn("gathering metrics took longer than expected", log.Duration("maxDuration", maxDuration))
 		}
-	}()
+	})
 	mfs, err := gatherer.Gather()
 	if err != nil {
 		return "", err
 	}
 	var buf bytes.Buffer
-	enc := expfmt.NewEncoder(&buf, expfmt.FmtText)
+	enc := expfmt.NewEncoder(&buf, expfmt.NewFormat(expfmt.TypeTextPlain))
 	for _, mf := range mfs {
 		if err = enc.Encode(mf); err != nil {
 			return "", errors.Wrap(err, "encoding metric family")

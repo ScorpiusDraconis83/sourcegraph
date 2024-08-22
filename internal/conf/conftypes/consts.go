@@ -6,11 +6,18 @@ type CompletionsConfig struct {
 	ChatModel          string
 	ChatModelMaxTokens int
 
+	SmartContextWindow     string
+	DisableClientConfigAPI bool
+
 	FastChatModel          string
 	FastChatModelMaxTokens int
 
 	CompletionModel          string
 	CompletionModelMaxTokens int
+
+	AzureCompletionModel                         string
+	AzureChatModel                               string
+	AzureUseDeprecatedCompletionsAPIForOldModels bool
 
 	AccessToken                                            string
 	Provider                                               CompletionsProviderName
@@ -25,17 +32,27 @@ type CompletionsConfig struct {
 	PerCommunityUserCodeCompletionsMonthlyInteractionLimit int
 	PerProUserChatDailyInteractionLimit                    int
 	PerProUserCodeCompletionsDailyInteractionLimit         int
+	User                                                   string
+}
+
+type ConfigFeatures struct {
+	Chat         bool
+	AutoComplete bool
+	Commands     bool
+	Attribution  bool
 }
 
 type CompletionsProviderName string
 
 const (
-	CompletionsProviderNameAnthropic   CompletionsProviderName = "anthropic"
-	CompletionsProviderNameOpenAI      CompletionsProviderName = "openai"
-	CompletionsProviderNameAzureOpenAI CompletionsProviderName = "azure-openai"
-	CompletionsProviderNameSourcegraph CompletionsProviderName = "sourcegraph"
-	CompletionsProviderNameFireworks   CompletionsProviderName = "fireworks"
-	CompletionsProviderNameAWSBedrock  CompletionsProviderName = "aws-bedrock"
+	CompletionsProviderNameAnthropic        CompletionsProviderName = "anthropic"
+	CompletionsProviderNameOpenAI           CompletionsProviderName = "openai"
+	CompletionsProviderNameGoogle           CompletionsProviderName = "google"
+	CompletionsProviderNameAzureOpenAI      CompletionsProviderName = "azure-openai"
+	CompletionsProviderNameOpenAICompatible CompletionsProviderName = "openai-compatible"
+	CompletionsProviderNameSourcegraph      CompletionsProviderName = "sourcegraph"
+	CompletionsProviderNameFireworks        CompletionsProviderName = "fireworks"
+	CompletionsProviderNameAWSBedrock       CompletionsProviderName = "aws-bedrock"
 )
 
 type EmbeddingsConfig struct {
@@ -51,34 +68,8 @@ type EmbeddingsConfig struct {
 	MaxTextEmbeddingsPerRepo               int
 	PolicyRepositoryMatchLimit             *int
 	ExcludeChunkOnError                    bool
-	Qdrant                                 QdrantConfig
 	PerCommunityUserEmbeddingsMonthlyLimit int
 	PerProUserEmbeddingsMonthlyLimit       int
-}
-
-type QdrantConfig struct {
-	Enabled                  bool
-	QdrantHNSWConfig         QdrantHNSWConfig
-	QdrantOptimizersConfig   QdrantOptimizersConfig
-	QdrantQuantizationConfig QdrantQuantizationConfig
-}
-
-type QdrantHNSWConfig struct {
-	EfConstruct       *uint64
-	FullScanThreshold *uint64
-	M                 *uint64
-	OnDisk            bool
-	PayloadM          *uint64
-}
-
-type QdrantOptimizersConfig struct {
-	IndexingThreshold uint64
-	MemmapThreshold   uint64
-}
-
-type QdrantQuantizationConfig struct {
-	Enabled  bool
-	Quantile float32
 }
 
 type EmbeddingsProviderName string

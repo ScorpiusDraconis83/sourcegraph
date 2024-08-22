@@ -6,12 +6,14 @@ go_library(
     name = "weather",
     embed = [":grpc_example_weather_v1_go_proto"],
     importpath = "github.com/sourcegraph/sourcegraph/internal/grpc/example/weather/v1",
+    tags = [TAG_PLATFORM_SOURCE],
     visibility = ["//:__subpackages__"],
 )
 
 proto_library(
     name = "grpc_example_weather_v1_proto",
     srcs = ["weather.proto"],
+    strip_import_prefix = "/internal",
     visibility = ["//:__subpackages__"],
     deps = ["@com_google_protobuf//:timestamp_proto"],
 )

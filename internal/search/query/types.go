@@ -9,8 +9,12 @@ import (
 	"github.com/grafana/regexp"
 
 	"github.com/sourcegraph/sourcegraph/internal/search/limits"
+	"github.com/sourcegraph/sourcegraph/internal/types"
+	"github.com/sourcegraph/sourcegraph/lib/pointers"
 )
 
+// ExpectedOperand is a 'marker' error type that the frontend logic
+// knows how to convert into a user-facing alert.
 type ExpectedOperand struct {
 	Msg string
 }
@@ -19,6 +23,8 @@ func (e *ExpectedOperand) Error() string {
 	return e.Msg
 }
 
+// UnsupportedError is a 'marker' error type that the frontend logic
+// knows how to convert into a user-facing alert.
 type UnsupportedError struct {
 	Msg string
 }
@@ -33,10 +39,9 @@ const (
 	SearchTypeRegex SearchType = iota
 	SearchTypeLiteral
 	SearchTypeStructural
-	SearchTypeLucky
 	SearchTypeStandard
+	SearchTypeCodyContext
 	SearchTypeKeyword
-	SearchTypeNewStandardRC1
 )
 
 func (s SearchType) String() string {
@@ -49,12 +54,10 @@ func (s SearchType) String() string {
 		return "literal"
 	case SearchTypeStructural:
 		return "structural"
-	case SearchTypeLucky:
-		return "lucky"
+	case SearchTypeCodyContext:
+		return "codycontext"
 	case SearchTypeKeyword:
 		return "keyword"
-	case SearchTypeNewStandardRC1:
-		return "newStandardRC1"
 	default:
 		return fmt.Sprintf("unknown{%d}", s)
 	}
@@ -437,8 +440,8 @@ func (p Parameters) RepoContainsCommitAfter() (res *RepoHasCommitAfterArgs) {
 }
 
 type RepoKVPFilter struct {
-	Key     string
-	Value   *string
+	Key     types.RegexpPattern
+	Value   *types.RegexpPattern
 	Negated bool
 	KeyOnly bool
 }
@@ -455,22 +458,22 @@ func (p Parameters) RepoHasKVPs() (res []RepoKVPFilter) {
 
 	VisitTypedPredicate(toNodes(p), func(pred *RepoHasKVPPredicate) {
 		res = append(res, RepoKVPFilter{
-			Key:     pred.Key,
-			Value:   &pred.Value,
+			Key:     exactRegexpPattern(pred.Key),
+			Value:   pointers.Ptr(exactRegexpPattern(pred.Value)),
 			Negated: pred.Negated,
 		})
 	})
 
 	VisitTypedPredicate(toNodes(p), func(pred *RepoHasTagPredicate) {
 		res = append(res, RepoKVPFilter{
-			Key:     pred.Key,
+			Key:     exactRegexpPattern(pred.Key),
 			Negated: pred.Negated,
 		})
 	})
 
 	VisitTypedPredicate(toNodes(p), func(pred *RepoHasKeyPredicate) {
 		res = append(res, RepoKVPFilter{
-			Key:     pred.Key,
+			Key:     exactRegexpPattern(pred.Key),
 			Negated: pred.Negated,
 			KeyOnly: true,
 		})

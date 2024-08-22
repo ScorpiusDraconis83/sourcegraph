@@ -5,12 +5,13 @@ import classNames from 'classnames'
 import { partition } from 'lodash'
 import { Navigate, useLocation, useSearchParams } from 'react-router-dom'
 
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import { EVENT_LOGGER } from '@sourcegraph/shared/src/telemetry/web/eventLogger'
 import { Alert, Icon, Text, Link, Button, ErrorAlert, AnchorLink, Container } from '@sourcegraph/wildcard'
 
 import type { AuthenticatedUser } from '../auth'
 import { PageTitle } from '../components/PageTitle'
 import type { AuthProvider, SourcegraphContext } from '../jscontext'
-import { eventLogger } from '../tracking/eventLogger'
 import { checkRequestAccessAllowed } from '../util/checkRequestAccessAllowed'
 
 import { AuthPageWrapper } from './AuthPageWrapper'
@@ -20,7 +21,7 @@ import { UsernamePasswordSignInForm } from './UsernamePasswordSignInForm'
 
 import styles from './SignInPage.module.scss'
 
-export interface SignInPageProps {
+export interface SignInPageProps extends TelemetryV2Props {
     authenticatedUser: AuthenticatedUser | null
     context: Pick<
         SourcegraphContext,
@@ -38,9 +39,13 @@ export interface SignInPageProps {
 
 export const SignInPage: React.FunctionComponent<React.PropsWithChildren<SignInPageProps>> = props => {
     const { context, authenticatedUser } = props
-    useEffect(() => eventLogger.logViewEvent('SignIn', null, false))
+    useEffect(() => {
+        EVENT_LOGGER.logViewEvent('SignIn', null, false)
+        props.telemetryRecorder.recordEvent('auth.signIn', 'view')
+    }, [props.telemetryRecorder])
 
     const location = useLocation()
+    const email = new URLSearchParams(location.search).get('email')
     const [error, setError] = useState<Error | null>(null)
     const [searchParams, setSearchParams] = useSearchParams()
     const isRequestAccessAllowed = checkRequestAccessAllowed(props.context)
@@ -56,6 +61,10 @@ export const SignInPage: React.FunctionComponent<React.PropsWithChildren<SignInP
     )
 
     const shouldShowProvider = function (provider: AuthProvider): boolean {
+        if (provider.noSignIn) {
+            return false
+        }
+
         // Hide the Sourcegraph Operator authentication provider by default because it is
         // not useful to customer users and may even cause confusion.
         if (provider.serviceType === 'sourcegraph-operator') {
@@ -78,6 +87,30 @@ export const SignInPage: React.FunctionComponent<React.PropsWithChildren<SignInP
     }
 
     const thirdPartyAuthProviders = nonBuiltinAuthProviders.filter(provider => shouldShowProvider(provider))
+    // If there is only one auth provider that is going to be displayed, and request access is disabled, we want to redirect to the auth provider directly.
+    if (context.sourcegraphDotComMode && thirdPartyAuthProviders.length === 1) {
+        // Add '?returnTo=' + encodeURIComponent(returnTo) to thirdPartyAuthProviders[0].authenticationURL in a safe way.
+        const redirectUrl = new URL(thirdPartyAuthProviders[0].authenticationURL, window.location.href)
+        if (returnTo) {
+            redirectUrl.searchParams.set('returnTo', new URL(returnTo, window.location.href).toString())
+        }
+        window.location.replace(redirectUrl)
+
+        return (
+            <>
+                <PageTitle title="Signing in..." />
+                <AuthPageWrapper
+                    title="Redirecting to sign in..."
+                    sourcegraphDotComMode={context.sourcegraphDotComMode}
+                    className={styles.wrapper}
+                >
+                    <Alert className="mt-3" variant="info">
+                        You are being redirected to sign in with {thirdPartyAuthProviders[0].displayName}.
+                    </Alert>
+                </AuthPageWrapper>
+            </>
+        )
+    }
     const primaryProviders = thirdPartyAuthProviders.slice(0, context.primaryLoginProvidersCount)
     const moreProviders = thirdPartyAuthProviders.slice(context.primaryLoginProvidersCount)
 
@@ -111,6 +144,7 @@ export const SignInPage: React.FunctionComponent<React.PropsWithChildren<SignInP
                 {builtInAuthProvider && (showMoreProviders || thirdPartyAuthProviders.length === 0) && (
                     <UsernamePasswordSignInForm
                         {...props}
+                        email={email}
                         onAuthError={setError}
                         className={classNames({ 'mb-3': providers.length > 0 })}
                     />
@@ -158,6 +192,7 @@ export const SignInPage: React.FunctionComponent<React.PropsWithChildren<SignInP
                 allowSignup={context.allowSignup}
                 isRequestAccessAllowed={isRequestAccessAllowed}
                 sourcegraphDotComMode={context.sourcegraphDotComMode}
+                telemetryRecorder={props.telemetryRecorder}
             />
         </>
     )
@@ -187,6 +222,9 @@ const ProviderIcon: React.FunctionComponent<{ serviceType: AuthProvider['service
         case 'bitbucketCloud': {
             return <Icon aria-hidden={true} svgPath={mdiBitbucket} />
         }
+        case 'bitbucketServer': {
+            return <Icon aria-hidden={true} svgPath={mdiBitbucket} />
+        }
         case 'azuredevops': {
             return <Icon aria-hidden={true} svgPath={mdiMicrosoftAzureDevops} />
         }
@@ -196,16 +234,26 @@ const ProviderIcon: React.FunctionComponent<{ serviceType: AuthProvider['service
     }
 }
 
-const SignUpNotice: React.FunctionComponent<{
+interface SignUpNoticeProps extends TelemetryV2Props {
     allowSignup: boolean
     sourcegraphDotComMode: boolean
     isRequestAccessAllowed: boolean
-}> = ({ allowSignup, sourcegraphDotComMode, isRequestAccessAllowed }) => {
+}
+
+const SignUpNotice: React.FunctionComponent<SignUpNoticeProps> = ({
+    allowSignup,
+    sourcegraphDotComMode,
+    isRequestAccessAllowed,
+    telemetryRecorder,
+}) => {
     const dotcomCTAs = (
         <>
             <Link
                 to="https://sourcegraph.com/get-started?t=enterprise"
-                onClick={() => eventLogger.log('ClickedOnEnterpriseCTA', { location: 'SignInPage' })}
+                onClick={() => {
+                    EVENT_LOGGER.log('ClickedOnEnterpriseCTA', { location: 'SignInPage' })
+                    telemetryRecorder.recordEvent('auth.enterpriseCTA', 'click')
+                }}
             >
                 consider Sourcegraph Enterprise
             </Link>

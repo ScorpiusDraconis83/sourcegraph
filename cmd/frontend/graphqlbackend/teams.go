@@ -11,12 +11,13 @@ import (
 	"github.com/graph-gophers/graphql-go"
 	"github.com/graph-gophers/graphql-go/relay"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/envvar"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/actor"
 	"github.com/sourcegraph/sourcegraph/internal/auth"
 	"github.com/sourcegraph/sourcegraph/internal/database"
+	"github.com/sourcegraph/sourcegraph/internal/dotcom"
 	"github.com/sourcegraph/sourcegraph/internal/errcode"
+	"github.com/sourcegraph/sourcegraph/internal/gqlutil"
+	"github.com/sourcegraph/sourcegraph/internal/own"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
@@ -49,7 +50,7 @@ type teamConnectionResolver struct {
 	teams            []*types.Team
 	onlyRootTeams    bool
 	exceptAncestorID int32
-	pageInfo         *graphqlutil.PageInfo
+	pageInfo         *gqlutil.PageInfo
 	err              error
 }
 
@@ -57,7 +58,7 @@ type teamConnectionResolver struct {
 // into `teamConnectionResolver` fields for convenient use in database query.
 func (r *teamConnectionResolver) applyArgs(args *ListTeamsArgs) error {
 	if args.After != nil {
-		cursor, err := graphqlutil.DecodeIntCursor(args.After)
+		cursor, err := gqlutil.DecodeIntCursor(args.After)
 		if err != nil {
 			return err
 		}
@@ -99,9 +100,9 @@ func (r *teamConnectionResolver) compute(ctx context.Context) {
 		}
 		r.teams = teams
 		if next > 0 {
-			r.pageInfo = graphqlutil.EncodeIntCursor(&next)
+			r.pageInfo = gqlutil.EncodeIntCursor(&next)
 		} else {
-			r.pageInfo = graphqlutil.HasNextPage(false)
+			r.pageInfo = gqlutil.HasNextPage(false)
 		}
 	})
 }
@@ -116,7 +117,7 @@ func (r *teamConnectionResolver) TotalCount(ctx context.Context) (int32, error) 
 	return r.db.Teams().CountTeams(ctx, opts)
 }
 
-func (r *teamConnectionResolver) PageInfo(ctx context.Context) (*graphqlutil.PageInfo, error) {
+func (r *teamConnectionResolver) PageInfo(ctx context.Context) (*gqlutil.PageInfo, error) {
 	r.compute(ctx)
 	return r.pageInfo, r.err
 }
@@ -261,7 +262,7 @@ type teamMemberConnection struct {
 	limit    int
 	once     sync.Once
 	nodes    []*types.TeamMember
-	pageInfo *graphqlutil.PageInfo
+	pageInfo *gqlutil.PageInfo
 	err      error
 }
 
@@ -274,7 +275,7 @@ type teamMemberListCursor struct {
 // into `teamMemberConnection` fields for convenient use in database query.
 func (r *teamMemberConnection) applyArgs(args *ListTeamMembersArgs) error {
 	if args.After != nil && *args.After != "" {
-		cursorText, err := graphqlutil.DecodeCursor(args.After)
+		cursorText, err := gqlutil.DecodeCursor(args.After)
 		if err != nil {
 			return err
 		}
@@ -325,9 +326,9 @@ func (r *teamMemberConnection) compute(ctx context.Context) {
 				r.err = errors.Wrap(err, "error encoding pageInfo")
 			}
 			cursorString := string(cursorBytes)
-			r.pageInfo = graphqlutil.EncodeCursor(&cursorString)
+			r.pageInfo = gqlutil.EncodeCursor(&cursorString)
 		} else {
-			r.pageInfo = graphqlutil.HasNextPage(false)
+			r.pageInfo = gqlutil.HasNextPage(false)
 		}
 	})
 }
@@ -341,7 +342,7 @@ func (r *teamMemberConnection) TotalCount(ctx context.Context) (int32, error) {
 	return r.db.Teams().CountTeamMembers(ctx, opts)
 }
 
-func (r *teamMemberConnection) PageInfo(ctx context.Context) (*graphqlutil.PageInfo, error) {
+func (r *teamMemberConnection) PageInfo(ctx context.Context) (*gqlutil.PageInfo, error) {
 	r.compute(ctx)
 	if r.err != nil {
 		return nil, r.err
@@ -994,8 +995,11 @@ func extractMembers(members []TeamMemberInput, pred func(member TeamMemberInput)
 var ErrNoAccessToTeam = errors.New("user cannot modify team")
 
 func areTeamEndpointsAvailable() error {
-	if envvar.SourcegraphDotComMode() {
+	if dotcom.SourcegraphDotComMode() {
 		return errors.New("teams are not available on sourcegraph.com")
+	}
+	if !own.IsEnabled() {
+		return errors.New("teams are disabled")
 	}
 	return nil
 }

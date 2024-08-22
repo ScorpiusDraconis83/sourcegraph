@@ -5,9 +5,7 @@ import { type TemporarySettings, TemporarySettingsStorage, migrateLocalStorageTo
 
 import { getStores } from './stores'
 
-const loggedOutUserStore = new TemporarySettingsStorage(null, false)
-
-export function createTemporarySettingsStorage(storage = loggedOutUserStore): Writable<TemporarySettingsStorage> {
+export function createTemporarySettingsStorage(storage: TemporarySettingsStorage): Writable<TemporarySettingsStorage> {
     const { subscribe, set } = writable(storage)
 
     function disposeAndSet(newStorage: TemporarySettingsStorage): void {
@@ -34,8 +32,9 @@ type LoadingData<D, E> =
 type TemporarySettingsKey = keyof TemporarySettings
 type TemporarySettingStatus<K extends TemporarySettingsKey> = LoadingData<TemporarySettings[K], unknown>
 
-interface TemporarySettingStore<K extends TemporarySettingsKey> extends Readable<TemporarySettingStatus<K>> {
+export interface TemporarySettingStore<K extends TemporarySettingsKey> extends Readable<TemporarySettingStatus<K>> {
     setValue(value: TemporarySettings[K]): void
+    value(): Promise<TemporarySettings[K] | null>
 }
 
 /**
@@ -66,6 +65,19 @@ export function temporarySetting<K extends TemporarySettingsKey>(
         subscribe,
         setValue(data) {
             storage?.set(key, data)
+        },
+        value(): Promise<TemporarySettings[K] | null> {
+            let unsubscribe: (() => void) | null = null
+            return new Promise<TemporarySettings[K] | null>((resolve, reject) => {
+                unsubscribe = subscribe(result => {
+                    if (result.loading) return
+                    if (result.error) {
+                        reject(result.error)
+                    } else {
+                        resolve(result.data)
+                    }
+                })
+            }).finally(() => unsubscribe?.())
         },
     }
 }

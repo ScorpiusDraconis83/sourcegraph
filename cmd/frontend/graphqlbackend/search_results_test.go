@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	mockrequire "github.com/derision-test/go-mockgen/testutil/require"
+	mockrequire "github.com/derision-test/go-mockgen/v2/testutil/require"
 	"github.com/google/go-cmp/cmp"
 	"github.com/sourcegraph/log/logtest"
 	"github.com/sourcegraph/zoekt"
@@ -44,7 +44,7 @@ func TestSearchResults(t *testing.T) {
 	db := dbmocks.NewMockDB()
 
 	getResults := func(t *testing.T, query, version string) []string {
-		r, err := newSchemaResolver(db, gitserver.NewTestClient(t)).Search(ctx, &SearchArgs{Query: query, Version: version})
+		r, err := newSchemaResolver(db, gitserver.NewTestClient(t), nil).Search(ctx, &SearchArgs{Query: query, Version: version})
 		require.Nil(t, err)
 
 		results, err := r.Results(ctx)
@@ -122,12 +122,11 @@ func TestSearchResolver_DynamicFilters(t *testing.T) {
 	}
 
 	tests := []testCase{
-
 		{
 			descr:         "single repo match",
 			searchResults: []result.Match{repoMatch},
 			expectedDynamicFilterStrsRegexp: map[string]int{
-				`repo:^testRepo$`: 1,
+				`type:repo`: 1,
 			},
 		},
 
@@ -137,6 +136,7 @@ func TestSearchResolver_DynamicFilters(t *testing.T) {
 			expectedDynamicFilterStrsRegexp: map[string]int{
 				`repo:^testRepo$`: 1,
 				`lang:markdown`:   1,
+				`type:path`:       1,
 			},
 		},
 
@@ -146,22 +146,25 @@ func TestSearchResolver_DynamicFilters(t *testing.T) {
 			expectedDynamicFilterStrsRegexp: map[string]int{
 				`repo:^testRepo$@develop3.0`: 1,
 				`lang:markdown`:              1,
+				`type:path`:                  1,
 			},
 		},
 		{
 			descr:         "file match from a language with two file extensions, using first extension",
-			searchResults: []result.Match{fileMatch("/testFile.ts")},
+			searchResults: []result.Match{fileMatch("/testFile.yml")},
 			expectedDynamicFilterStrsRegexp: map[string]int{
 				`repo:^testRepo$`: 1,
-				`lang:typescript`: 1,
+				`lang:yaml`:       1,
+				`type:path`:       1,
 			},
 		},
 		{
 			descr:         "file match from a language with two file extensions, using second extension",
-			searchResults: []result.Match{fileMatch("/testFile.tsx")},
+			searchResults: []result.Match{fileMatch("/testFile.yaml")},
 			expectedDynamicFilterStrsRegexp: map[string]int{
 				`repo:^testRepo$`: 1,
-				`lang:typescript`: 1,
+				`lang:yaml`:       1,
+				`type:path`:       1,
 			},
 		},
 		{
@@ -171,6 +174,7 @@ func TestSearchResolver_DynamicFilters(t *testing.T) {
 				`repo:^testRepo$`:          1,
 				`-file:(^|/)node_modules/`: 1,
 				`lang:markdown`:            1,
+				`type:path`:                1,
 			},
 		},
 		{
@@ -180,6 +184,7 @@ func TestSearchResolver_DynamicFilters(t *testing.T) {
 				`repo:^testRepo$`:          1,
 				`-file:(^|/)node_modules/`: 1,
 				`lang:markdown`:            1,
+				`type:path`:                1,
 			},
 		},
 		{
@@ -189,9 +194,10 @@ func TestSearchResolver_DynamicFilters(t *testing.T) {
 				fileMatch("/foo.go"),
 			},
 			expectedDynamicFilterStrsRegexp: map[string]int{
-				`repo:^testRepo$`:  2,
-				`-file:_test\.go$`: 1,
-				`lang:go`:          2,
+				`repo:^testRepo$`:   2,
+				`-file:_test\.\w+$`: 1,
+				`lang:go`:           2,
+				`type:path`:         2,
 			},
 		},
 
@@ -203,6 +209,7 @@ func TestSearchResolver_DynamicFilters(t *testing.T) {
 			expectedDynamicFilterStrsRegexp: map[string]int{
 				`repo:^testRepo$`: 1,
 				`lang:rust`:       1,
+				`type:path`:       1,
 			},
 		},
 
@@ -218,6 +225,7 @@ func TestSearchResolver_DynamicFilters(t *testing.T) {
 				`-file:\.min\.js$`: 1,
 				`-file:\.js\.map$`: 2,
 				`lang:javascript`:  1,
+				`type:path`:        3,
 			},
 		},
 
@@ -233,6 +241,7 @@ func TestSearchResolver_DynamicFilters(t *testing.T) {
 			expectedDynamicFilterStrsRegexp: map[string]int{
 				`repo:^testRepo$`:    1,
 				`lang:"ignore list"`: 1,
+				`type:path`:          1,
 			},
 		},
 	}
@@ -641,7 +650,7 @@ func TestSubRepoFiltering(t *testing.T) {
 					}
 					return authz.Read, nil
 				})
-				checker.EnabledForRepoFunc.SetDefaultHook(func(ctx context.Context, rn api.RepoName) (bool, error) {
+				checker.EnabledForRepoIDFunc.SetDefaultHook(func(context.Context, api.RepoID) (bool, error) {
 					return true, nil
 				})
 				return checker

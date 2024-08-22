@@ -8,16 +8,20 @@ go_library(
         "environment.go",
         "monitoring.go",
         "projectid.go",
+        "rollout.go",
         "service.go",
         "spec.go",
     ],
     importpath = "github.com/sourcegraph/sourcegraph/dev/managedservicesplatform/spec",
+    tags = [TAG_INFRA_CORESERVICES],
     visibility = ["//visibility:public"],
     deps = [
         "//dev/managedservicesplatform/internal/imageupdater",
         "//lib/errors",
         "//lib/pointers",
+        "@com_github_alecthomas_units//:units",
         "@com_github_grafana_regexp//:regexp",
+        "@com_github_hashicorp_cronexpr//:cronexpr",
         "@in_gopkg_yaml_v3//:yaml_v3",
     ],
 )
@@ -26,10 +30,10 @@ go_test(
     name = "spec_test",
     srcs = [
         "environment_test.go",
-        "projectid_test.go",
         "service_test.go",
     ],
     embed = [":spec"],
+    tags = [TAG_INFRA_CORESERVICES],
     deps = [
         "//lib/pointers",
         "@com_github_hexops_autogold_v2//:autogold",

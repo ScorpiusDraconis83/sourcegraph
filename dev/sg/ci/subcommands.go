@@ -3,7 +3,6 @@ package ci
 import (
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
@@ -16,9 +15,9 @@ import (
 	sgrun "github.com/sourcegraph/run"
 	"github.com/urfave/cli/v2"
 
+	"github.com/sourcegraph/sourcegraph/dev/ci/helpers"
 	"github.com/sourcegraph/sourcegraph/dev/ci/runtype"
 	"github.com/sourcegraph/sourcegraph/dev/sg/internal/bk"
-	"github.com/sourcegraph/sourcegraph/dev/sg/internal/loki"
 	"github.com/sourcegraph/sourcegraph/dev/sg/internal/open"
 	"github.com/sourcegraph/sourcegraph/dev/sg/internal/repo"
 	"github.com/sourcegraph/sourcegraph/dev/sg/internal/run"
@@ -29,6 +28,7 @@ import (
 	"github.com/sourcegraph/sourcegraph/lib/cliutil/exit"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 	"github.com/sourcegraph/sourcegraph/lib/output"
+	"github.com/sourcegraph/sourcegraph/lib/pointers"
 )
 
 var previewCommand = &cli.Command{
@@ -97,9 +97,11 @@ var previewCommand = &cli.Command{
 	},
 }
 
+var bazelCommandHowTo = "https://www.notion.so/sourcegraph/Running-an-arbitrary-Bazel-command-in-CI-diagnosing-flakes-for-example-e0ae40ec6f3a4fd5a39a41d9681ec632"
 var bazelCommand = &cli.Command{
 	Name:      "bazel",
 	Usage:     "Fires a CI build running a given bazel command",
+	UsageText: fmt.Sprintf("See %s for more information", bazelCommandHowTo),
 	ArgsUsage: "[--web|--wait] [test|build] <target1> <target2> ... <bazel flags>",
 	Flags: []cli.Flag{
 		&cli.BoolFlag{
@@ -112,17 +114,34 @@ var bazelCommand = &cli.Command{
 			Usage: "Print the web URL for the build and return immediately",
 			Value: false,
 		},
+		&cli.BoolFlag{
+			Name:  "staged",
+			Usage: "Perform the build/test including the current staged files",
+			Value: false,
+		},
 	},
-	Action: func(cmd *cli.Context) error {
+	Action: func(cmd *cli.Context) (err error) {
 		args := cmd.Args().Slice()
 
-		out, err := run.GitCmd("diff", "--cached")
-		if err != nil {
+		if err := helpers.VerifyBazelCommand(strings.Join(args, " ")); err != nil {
+			std.Out.WriteWarningf(
+				"Given bazel commands/flags %q is not in allow-list for running in CI: %s",
+				strings.Join(args, " "),
+				err,
+			)
+			std.Out.WriteNoticef("Please see %s for more informations.", bazelCommandHowTo)
 			return err
 		}
 
-		if out != "" {
-			return errors.New("You have staged changes, aborting.")
+		if !cmd.Bool("staged") {
+			out, err := run.GitCmd("diff", "--cached")
+			if err != nil {
+				return err
+			}
+
+			if out != "" {
+				return errors.New("You have staged changes, aborting.")
+			}
 		}
 
 		branch := fmt.Sprintf("bazel-do/%s", uuid.NewString())
@@ -138,6 +157,20 @@ var bazelCommand = &cli.Command{
 		if err != nil {
 			return err
 		}
+		commit, err := run.TrimResult(run.GitCmd("rev-parse", "HEAD"))
+		if err != nil {
+			return err
+		}
+
+		if cmd.Bool("staged") {
+			// restore the changes we've commited so theyre back in the staging area
+			// when we checkout the original branch again.
+			_, err = run.GitCmd("reset", "--soft", "HEAD~1")
+			if err != nil {
+				return err
+			}
+		}
+
 		_, err = run.GitCmd("checkout", "-")
 		if err != nil {
 			return err
@@ -153,7 +186,7 @@ var bazelCommand = &cli.Command{
 		if err != nil {
 			return err
 		}
-		build, err := client.GetMostRecentBuild(cmd.Context, "sourcegraph", branch)
+		build, err := client.TriggerBuild(cmd.Context, "sourcegraph", branch, commit, bk.WithEnvVar("DISABLE_ASPECT_WORKFLOWS", "true"))
 		if err != nil {
 			return err
 		}
@@ -286,6 +319,88 @@ var statusCommand = &cli.Command{
 	},
 }
 
+var listBuildsCommand = &cli.Command{
+	Name:        "list-builds",
+	Usage:       "List all builds that match the given state and pipeline",
+	Description: "List builds for the given pipeline",
+	Flags: []cli.Flag{
+		&cli.StringFlag{
+			Name:    "pipeline",
+			Usage:   "pipeline to list builds for",
+			Value:   "sourcegraph",
+			Aliases: []string{"p"},
+		},
+		&cli.StringFlag{
+			Name:  "state",
+			Value: "running",
+			Usage: "what state the build should be in (one of 'running', 'pending', 'passed', 'finished', 'failed', 'canceled')",
+		},
+		&cli.IntFlag{
+			Name:  "limit",
+			Value: 50,
+			Usage: "limit the number of builds returned - does not apply when using json formatting",
+		},
+		&cli.StringFlag{
+			Name:  "format",
+			Usage: "Output format (one of 'json', or 'terminal')",
+			Value: "terminal",
+		},
+	},
+	Action: func(cmd *cli.Context) error {
+		ctx := cmd.Context
+		client, err := bk.NewClient(ctx, std.Out)
+		if err != nil {
+			return err
+		}
+
+		var state string
+		switch cmd.String("state") {
+		case "running", "pending", "finished", "passed", "failed", "canceled":
+			state = cmd.String("state")
+		default:
+			return errors.Newf("invalid state %q, must be one of 'running', 'pending', 'passed', 'finished', 'failed', 'canceled'", cmd.String("state"))
+		}
+
+		// in case the format is set to json, we don't want to print status messages to std out, so we create output that prints to stderr and use that instead
+		out := std.NewOutput(os.Stderr, false)
+		pending := out.Pending(output.Styledf(output.StylePending, "Fetching builds for %q pipeline...", cmd.String("pipeline")))
+		builds, err := client.ListBuilds(cmd.Context, cmd.String("pipeline"), state)
+		if err != nil {
+			pending.Complete(output.Linef(output.EmojiFailure, output.StyleWarning, "Failed to fetch builds for %q pipeline", cmd.String("pipeline")))
+			return err
+		}
+		pending.Complete(output.Linef(output.EmojiSuccess, output.StyleSuccess, "Fetched %d builds for %q pipeline", len(builds), cmd.String("pipeline")))
+
+		switch cmd.String("format") {
+		case "json":
+			enc := json.NewEncoder(os.Stdout)
+			return enc.Encode(builds)
+		case "terminal":
+			std.Out.WriteLine(output.Styledf(output.StyleBold, "Pipeline:%s %s", output.StyleReset, cmd.String("pipeline")))
+			std.Out.WriteLine(output.Styledf(output.StyleBold, "%-8s%-10s%-25s%-16s%s", "Build", "Status", "Author", "Commit", "Link"))
+			if len(builds) == 0 {
+				std.Out.WriteLine(output.Styledf(output.StyleGrey, "No builds found with state %q", state))
+			}
+			for i, b := range builds {
+				if i > cmd.Int("limit") {
+					break
+				}
+				author := "n/a"
+				if b.Author != nil {
+					author = b.Author.Name
+				}
+				commit := pointers.DerefZero(b.Commit)
+				if len(commit) > 12 {
+					commit = commit[:12]
+				}
+				std.Out.WriteLine(output.Styledf(output.StyleGrey, "%-8d%-10s%-25s%-16s%s", pointers.DerefZero(b.Number), pointers.DerefZero(b.State), author, commit, pointers.DerefZero(b.WebURL)))
+			}
+		}
+
+		return nil
+	},
+}
+
 var buildCommand = &cli.Command{
 	Name:      "build",
 	ArgsUsage: "[runtype] <argument>",
@@ -347,7 +462,7 @@ sg ci build docker-images-candidates-notest
 			}
 		}
 
-		var rt = runtype.PullRequest
+		rt := runtype.PullRequest
 		// 🚨 SECURITY: We do a simple check to see if commit is in origin, this is
 		// non blocking but we ask for confirmation to double check that the user
 		// is aware that potentially unknown code is going to get run on our infra.
@@ -408,7 +523,7 @@ sg ci build docker-images-candidates-notest
 		if rt != runtype.PullRequest {
 			pollTicker := time.NewTicker(5 * time.Second)
 			std.Out.WriteLine(output.Styledf(output.StylePending, "Polling for build for branch %s at %s...", branch, commit))
-			for i := 0; i < 30; i++ {
+			for range 30 {
 				// attempt to fetch the new build - it might take some time for the hooks so we will
 				// retry up to 30 times (roughly 30 seconds)
 				if build != nil && build.Commit != nil && *build.Commit == commit {
@@ -436,12 +551,9 @@ sg ci build docker-images-candidates-notest
 var logsCommand = &cli.Command{
 	Name:  "logs",
 	Usage: "Get logs from CI builds (e.g. to grep locally)",
-	Description: `Get logs from CI builds, and output them in stdout or push them to Loki. By default only gets failed jobs - to change this, use the '--state' flag.
+	Description: `Get logs from CI builds, and output them in stdout. By default only gets failed jobs - to change this, use the '--state' flag.
 
 The '--job' flag can be used to narrow down the logs returned - you can provide either the ID, or part of the name of the job you want to see logs for.
-
-To send logs to a Loki instance, you can provide --out=http://127.0.0.1:3100 after spinning up an instance with 'sg run loki grafana'.
-From there, you can start exploring logs with the Grafana explore panel.
 `,
 	Flags: append(ciTargetFlags,
 		&cli.StringFlag{
@@ -458,8 +570,8 @@ From there, you can start exploring logs with the Grafana explore panel.
 		&cli.StringFlag{
 			Name:    "out",
 			Aliases: []string{"o"},
-			Usage: fmt.Sprintf("Output `format`: one of [%s], or a URL pointing to a Loki instance, such as %s",
-				strings.Join([]string{ciLogsOutTerminal, ciLogsOutSimple, ciLogsOutJSON}, "|"), loki.DefaultLokiURL),
+			Usage: fmt.Sprintf("Output `format`: one of [%s]",
+				strings.Join([]string{ciLogsOutTerminal, ciLogsOutSimple, ciLogsOutJSON}, "|")),
 			Value: ciLogsOutTerminal,
 		},
 		&cli.StringFlag{
@@ -523,11 +635,7 @@ From there, you can start exploring logs with the Grafana explore panel.
 					failed := logsOut
 					log.JobMeta.State = &failed
 				}
-				stream, err := loki.NewStreamFromJobLogs(log)
-				if err != nil {
-					return errors.Newf("build %d job %s: NewStreamFromJobLogs: %s", log.JobMeta.Build, log.JobMeta.Job, err)
-				}
-				b, err := json.MarshalIndent(stream, "", "\t")
+				b, err := json.MarshalIndent(log, "", "\t")
 				if err != nil {
 					return errors.Newf("build %d job %s: Marshal: %s", log.JobMeta.Build, log.JobMeta.Job, err)
 				}
@@ -535,73 +643,6 @@ From there, you can start exploring logs with the Grafana explore panel.
 			}
 
 		default:
-			lokiURL, err := url.Parse(logsOut)
-			if err != nil {
-				return errors.Newf("invalid Loki target: %w", err)
-			}
-			lokiClient := loki.NewLokiClient(lokiURL)
-			std.Out.WriteLine(output.Styledf(output.StylePending, "Pushing to Loki instance at %q", lokiURL.Host))
-
-			var (
-				pushedEntries int
-				pushedStreams int
-				pushErrs      []string
-				pending       = std.Out.Pending(output.Styled(output.StylePending, "Processing logs..."))
-			)
-			for i, log := range logs {
-				job := log.JobMeta.Job
-				if log.JobMeta.Label != nil {
-					job = fmt.Sprintf("%q (%s)", *log.JobMeta.Label, log.JobMeta.Job)
-				}
-				overwriteState := cmd.String("overwrite-state")
-				if overwriteState != "" {
-					failed := overwriteState
-					log.JobMeta.State = &failed
-				}
-
-				pending.Updatef("Processing build %d job %s (%d/%d)...",
-					log.JobMeta.Build, job, i, len(logs))
-				stream, err := loki.NewStreamFromJobLogs(log)
-				if err != nil {
-					pushErrs = append(pushErrs, fmt.Sprintf("build %d job %s: %s",
-						log.JobMeta.Build, job, err))
-					continue
-				}
-
-				// Set buildkite metadata if available
-				if ciBranch := os.Getenv("BUILDKITE_BRANCH"); ciBranch != "" {
-					stream.Stream.Branch = ciBranch
-				}
-				if ciQueue := os.Getenv("BUILDKITE_AGENT_META_DATA_QUEUE"); ciQueue != "" {
-					stream.Stream.Queue = ciQueue
-				}
-
-				err = lokiClient.PushStreams(ctx, []*loki.Stream{stream})
-				if err != nil {
-					pushErrs = append(pushErrs, fmt.Sprintf("build %d job %q: %s",
-						log.JobMeta.Build, job, err))
-					continue
-				}
-
-				pushedEntries += len(stream.Values)
-				pushedStreams += 1
-			}
-
-			if pushedEntries > 0 {
-				pending.Complete(output.Linef(output.EmojiSuccess, output.StyleSuccess,
-					"Pushed %d entries from %d streams to Loki", pushedEntries, pushedStreams))
-			} else {
-				pending.Destroy()
-			}
-
-			if pushErrs != nil {
-				failedStreams := len(logs) - pushedStreams
-				std.Out.WriteLine(output.Linef(output.EmojiFailure, output.StyleWarning,
-					"Failed to push %d streams: \n - %s", failedStreams, strings.Join(pushErrs, "\n - ")))
-				if failedStreams == len(logs) {
-					return errors.New("failed to push all logs")
-				}
-			}
 		}
 
 		return nil
@@ -613,7 +654,7 @@ var docsCommand = &cli.Command{
 	Usage: "Render reference documentation for build pipeline types",
 	Action: func(ctx *cli.Context) error {
 		cmd := exec.Command("go", "run", "./dev/ci/gen-pipeline.go", "-docs")
-		out, err := run.InRoot(cmd)
+		out, err := run.InRoot(cmd, run.InRootArgs{})
 		if err != nil {
 			return err
 		}

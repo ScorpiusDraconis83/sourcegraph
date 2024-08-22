@@ -1,3 +1,4 @@
+load("//dev:go_mockgen.bzl", "go_mockgen")
 load("//dev:go_defs.bzl", "go_test")
 load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
@@ -13,6 +14,7 @@ go_library(
         "util.go",
     ],
     importpath = "github.com/sourcegraph/sourcegraph/cmd/executor/internal/worker/command",
+    tags = [TAG_SEARCHSUITE],
     visibility = ["//cmd/executor:__subpackages__"],
     deps = [
         "//cmd/executor/internal/util",
@@ -49,6 +51,7 @@ go_test(
         "util_test.go",
     ],
     embed = [":command"],
+    tags = [TAG_SEARCHSUITE],
     deps = [
         "//cmd/executor/internal/util",
         "//cmd/executor/internal/worker/cmdlogger",
@@ -70,5 +73,19 @@ go_test(
         "@io_k8s_client_go//kubernetes/fake",
         "@io_k8s_client_go//testing",
         "@io_k8s_utils//pointer",
+    ],
+)
+
+go_mockgen(
+    name = "generate_mocks",
+    out = "mocks_test.go",
+    manifests = [
+        "//:mockgen.yaml",
+        "//:mockgen.test.yaml",
+        "//:mockgen.temp.yaml",
+    ],
+    deps = [
+        ":command",
+        "//cmd/executor/internal/worker/cmdlogger",
     ],
 )

@@ -15,11 +15,12 @@ import {
     jsonHighlighting,
     useCodeMirror,
 } from '@sourcegraph/shared/src/components/CodeMirrorEditor'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import { EVENT_LOGGER } from '@sourcegraph/shared/src/telemetry/web/eventLogger'
 import { useIsLightTheme } from '@sourcegraph/shared/src/theme'
 import { Container, H3, Link, LoadingSpinner, PageHeader, Text, useObservable } from '@sourcegraph/wildcard'
 
 import { PageTitle } from '../components/PageTitle'
-import { eventLogger } from '../tracking/eventLogger'
 
 // This seems to be necessary to have properly rounded corners on
 // the right side.
@@ -30,19 +31,20 @@ const theme = EditorView.theme({
     },
 })
 
-interface Props {}
+interface Props extends TelemetryV2Props {}
 
 /**
  * A page displaying information about telemetry pings for the site.
  */
-export const SiteAdminPingsPage: React.FunctionComponent<React.PropsWithChildren<Props>> = () => {
+export const SiteAdminPingsPage: React.FunctionComponent<React.PropsWithChildren<Props>> = ({ telemetryRecorder }) => {
     const isLightTheme = useIsLightTheme()
     const latestPing = useObservable(
         useMemo(() => fromFetch<{}>('/site-admin/pings/latest', { selector: response => checkOk(response).json() }), [])
     )
     useEffect(() => {
-        eventLogger.logViewEvent('SiteAdminPings')
-    }, [])
+        EVENT_LOGGER.logViewEvent('SiteAdminPings')
+        telemetryRecorder.recordEvent('admin.pings', 'view')
+    }, [telemetryRecorder])
 
     const updatesDisabled = window.context.site['update.channel'] !== 'release'
     const jsonEditorContainerRef = useRef<HTMLDivElement | null>(null)
@@ -106,6 +108,8 @@ export const SiteAdminPingsPage: React.FunctionComponent<React.PropsWithChildren
                         The email address of the initial site installer (or if deleted, the first active site admin), to
                         know who to contact regarding sales, product updates, security updates, and policy updates
                     </li>
+                    <li>The external URL of the instance (e.g. "https://sourcegraph.example.com")</li>
+                    <li>The IP address of the instance (e.g. "172.xx.xx.xx")</li>
                     <li>Sourcegraph version string (e.g. "vX.X.X")</li>
                     <li>Dependency versions (e.g. "6.0.9" for Redis, or "13.0" for Postgres)</li>
                     <li>
@@ -418,22 +422,16 @@ export const SiteAdminPingsPage: React.FunctionComponent<React.PropsWithChildren
                                 <ul>
                                     <li>
                                         Provider (e.g., "sourcegraph", "anthropic", "openai", "azure-openai",
-                                        "fireworks", "aws-bedrock", etc.)
+                                        "fireworks", "aws-bedrock", "google", etc.)
                                     </li>
                                     <li>Chat model (included only for "sourcegraph" provider)</li>
                                     <li>Fast chat model (included only for "sourcegraph" provider)</li>
                                     <li>Completion model (included only for "sourcegraph" provider)</li>
                                 </ul>
                             </li>
-                            <li>
-                                Embeddings
-                                <ul>
-                                    <li>Provider (e.g., "sourcegraph", "openai", "azure-openai", etc.)</li>
-                                    <li>Model</li>
-                                </ul>
-                            </li>
                         </ul>
                     </li>
+                    <li>Whether Cody context filters are configured in the site config (true/false)</li>
                 </ul>
                 {updatesDisabled && <Text>All telemetry is disabled.</Text>}
             </Container>

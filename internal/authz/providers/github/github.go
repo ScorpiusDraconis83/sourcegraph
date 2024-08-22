@@ -19,6 +19,7 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/extsvc/github"
 	"github.com/sourcegraph/sourcegraph/internal/oauthtoken"
 	"github.com/sourcegraph/sourcegraph/internal/rcache"
+	"github.com/sourcegraph/sourcegraph/internal/redispool"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
@@ -70,6 +71,7 @@ func NewProvider(urn string, opts ProviderOptions) *Provider {
 	if opts.GroupsCacheTTL >= 0 {
 		cg = &cachedGroups{
 			cache: rcache.NewWithTTL(
+				redispool.Cache,
 				fmt.Sprintf("gh_groups_perms:%s:%s", codeHost.ServiceID, urn), int(opts.GroupsCacheTTL.Seconds()),
 			),
 		}
@@ -91,7 +93,7 @@ var _ authz.Provider = (*Provider)(nil)
 
 // FetchAccount implements the authz.Provider interface. It always returns nil, because the GitHub
 // API doesn't currently provide a way to fetch user by external SSO account.
-func (p *Provider) FetchAccount(context.Context, *types.User, []*extsvc.Account, []string) (mine *extsvc.Account, err error) {
+func (p *Provider) FetchAccount(context.Context, *types.User) (mine *extsvc.Account, err error) {
 	return nil, nil
 }
 
@@ -160,7 +162,7 @@ func (p *Provider) requiredAuthScopes() (requiredAuthScope, bool) {
 		oneOf: []string{"read:org", "write:org", "admin:org"},
 		message: "Scope `read:org`, `write:org`, or `admin:org` is required to enable `authorization.groupsCacheTTL` - " +
 			"please provide a `token` with the required scopes, or try updating the [**site configuration**](/site-admin/configuration)'s " +
-			"corresponding entry in [`auth.providers`](https://docs.sourcegraph.com/admin/auth) to enable `allowGroupsPermissionsSync`.",
+			"corresponding entry in [`auth.providers`](https://sourcegraph.com/docs/admin/auth) to enable `allowGroupsPermissionsSync`.",
 	}, true
 }
 
@@ -427,11 +429,16 @@ func (p *Provider) FetchUserPerms(ctx context.Context, account *extsvc.Account, 
 		return nil, errors.New("no token found in the external account data")
 	}
 
+	oauthContext := github.GetOAuthContext(strings.TrimSuffix(p.ServiceID(), "/"))
+	if oauthContext == nil {
+		return nil, errors.Newf("no matching GitHub OAuth provider found for service %q", p.ServiceID())
+	}
+
 	oauthToken := &auth.OAuthBearerToken{
 		Token:              tok.AccessToken,
 		RefreshToken:       tok.RefreshToken,
 		Expiry:             tok.Expiry,
-		RefreshFunc:        oauthtoken.GetAccountRefreshAndStoreOAuthTokenFunc(p.db.UserExternalAccounts(), account.ID, github.GetOAuthContext(strings.TrimSuffix(p.ServiceID(), "/"))),
+		RefreshFunc:        oauthtoken.GetAccountRefreshAndStoreOAuthTokenFunc(p.db.UserExternalAccounts(), account.ID, oauthContext),
 		NeedsRefreshBuffer: 5,
 	}
 

@@ -3,26 +3,27 @@ import React, { useCallback, useEffect } from 'react'
 import { useApolloClient } from '@apollo/client'
 import { mdiMapSearch } from '@mdi/js'
 
-import { Container, Link, PageHeader, Icon, H3, Text } from '@sourcegraph/wildcard'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import { EVENT_LOGGER } from '@sourcegraph/shared/src/telemetry/web/eventLogger'
+import { Container, H3, Icon, Link, PageHeader, Text } from '@sourcegraph/wildcard'
 
 import {
     FilteredConnection,
-    type FilteredConnectionFilter,
+    type Filter,
     type FilteredConnectionQueryArguments,
 } from '../../../components/FilteredConnection'
 import { PageTitle } from '../../../components/PageTitle'
 import type { ExecutorFields } from '../../../graphql-operations'
-import { eventLogger } from '../../../tracking/eventLogger'
 
 import { ExecutorNode } from './ExecutorNode'
 import { queryExecutors as defaultQueryExecutors } from './useExecutors'
 
-const filters: FilteredConnectionFilter[] = [
+const filters: Filter[] = [
     {
         id: 'filters',
         label: 'State',
         type: 'select',
-        values: [
+        options: [
             {
                 label: 'All',
                 value: 'all',
@@ -39,12 +40,18 @@ const filters: FilteredConnectionFilter[] = [
     },
 ]
 
-export interface ExecutorsListPageProps {
+export interface ExecutorsListPageProps extends TelemetryV2Props {
     queryExecutors?: typeof defaultQueryExecutors
 }
 
-export const ExecutorsListPage: React.FC<ExecutorsListPageProps> = ({ queryExecutors = defaultQueryExecutors }) => {
-    useEffect(() => eventLogger.logViewEvent('ExecutorsList'))
+export const ExecutorsListPage: React.FC<ExecutorsListPageProps> = ({
+    queryExecutors = defaultQueryExecutors,
+    telemetryRecorder,
+}) => {
+    useEffect(() => {
+        EVENT_LOGGER.logViewEvent('ExecutorsList')
+        telemetryRecorder.recordEvent('admin.executors.list', 'view')
+    }, [telemetryRecorder])
 
     const apolloClient = useApolloClient()
     const queryExecutorsCallback = useCallback(

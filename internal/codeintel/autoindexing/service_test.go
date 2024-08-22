@@ -1,13 +1,16 @@
 package autoindexing
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/autoindexing/internal/jobselector"
@@ -25,7 +28,7 @@ func init() {
 	jobselector.MaximumIndexJobsPerInferredConfiguration = 50
 }
 
-func TestQueueIndexesExplicit(t *testing.T) {
+func TestQueueAutoIndexJobsExplicit(t *testing.T) {
 	conf := `{
 		"index_jobs": [
 			{
@@ -49,8 +52,8 @@ func TestQueueIndexesExplicit(t *testing.T) {
 	}`
 
 	mockDBStore := NewMockStore()
-	mockDBStore.InsertIndexesFunc.SetDefaultHook(func(ctx context.Context, indexes []uploadsshared.Index) ([]uploadsshared.Index, error) {
-		return indexes, nil
+	mockDBStore.InsertJobsFunc.SetDefaultHook(func(ctx context.Context, jobs []uploadsshared.AutoIndexJob) ([]uploadsshared.AutoIndexJob, error) {
+		return jobs, nil
 	})
 	mockDBStore.RepositoryExceptionsFunc.SetDefaultReturn(true, true, nil)
 
@@ -62,13 +65,13 @@ func TestQueueIndexesExplicit(t *testing.T) {
 	inferenceService := NewMockInferenceService()
 
 	service := newService(
-		&observation.TestContext,
+		observation.TestContextTB(t),
 		mockDBStore,
 		inferenceService,
 		defaultMockRepoStore(), // repoStore
 		mockGitserverClient,
 	)
-	_, _ = service.QueueIndexes(context.Background(), 42, "HEAD", conf, false, false)
+	_, _ = service.QueueAutoIndexJobs(context.Background(), 42, "HEAD", conf, false, false)
 
 	if len(mockDBStore.IsQueuedFunc.History()) != 1 {
 		t.Errorf("unexpected number of calls to IsQueued. want=%d have=%d", 1, len(mockDBStore.IsQueuedFunc.History()))
@@ -84,12 +87,12 @@ func TestQueueIndexesExplicit(t *testing.T) {
 		}
 	}
 
-	var indexes []uploadsshared.Index
-	for _, call := range mockDBStore.InsertIndexesFunc.History() {
-		indexes = append(indexes, call.Result0...)
+	var jobs []uploadsshared.AutoIndexJob
+	for _, call := range mockDBStore.InsertJobsFunc.History() {
+		jobs = append(jobs, call.Result0...)
 	}
 
-	expectedIndexes := []uploadsshared.Index{
+	expectedIndexes := []uploadsshared.AutoIndexJob{
 		{
 			RepositoryID: 42,
 			Commit:       "cr42",
@@ -114,12 +117,12 @@ func TestQueueIndexesExplicit(t *testing.T) {
 			Outfile:      "lsif.dump",
 		},
 	}
-	if diff := cmp.Diff(expectedIndexes, indexes); diff != "" {
+	if diff := cmp.Diff(expectedIndexes, jobs, cmpopts.EquateEmpty()); diff != "" {
 		t.Errorf("unexpected indexes (-want +got):\n%s", diff)
 	}
 }
 
-func TestQueueIndexesInDatabase(t *testing.T) {
+func TestQueueAutoIndexJobsInDatabase(t *testing.T) {
 	indexConfiguration := shared.IndexConfiguration{
 		ID:           1,
 		RepositoryID: 42,
@@ -147,8 +150,8 @@ func TestQueueIndexesInDatabase(t *testing.T) {
 	}
 
 	mockDBStore := NewMockStore()
-	mockDBStore.InsertIndexesFunc.SetDefaultHook(func(ctx context.Context, indexes []uploadsshared.Index) ([]uploadsshared.Index, error) {
-		return indexes, nil
+	mockDBStore.InsertJobsFunc.SetDefaultHook(func(ctx context.Context, jobs []uploadsshared.AutoIndexJob) ([]uploadsshared.AutoIndexJob, error) {
+		return jobs, nil
 	})
 	mockDBStore.GetIndexConfigurationByRepositoryIDFunc.SetDefaultReturn(indexConfiguration, true, nil)
 	mockDBStore.RepositoryExceptionsFunc.SetDefaultReturn(true, true, nil)
@@ -160,13 +163,13 @@ func TestQueueIndexesInDatabase(t *testing.T) {
 	inferenceService := NewMockInferenceService()
 
 	service := newService(
-		&observation.TestContext,
+		observation.TestContextTB(t),
 		mockDBStore,
 		inferenceService,
 		defaultMockRepoStore(), // repoStore
 		mockGitserverClient,
 	)
-	_, _ = service.QueueIndexes(context.Background(), 42, "HEAD", "", false, false)
+	_, _ = service.QueueAutoIndexJobs(context.Background(), 42, "HEAD", "", false, false)
 
 	if len(mockDBStore.GetIndexConfigurationByRepositoryIDFunc.History()) != 1 {
 		t.Errorf("unexpected number of calls to GetIndexConfigurationByRepositoryID. want=%d have=%d", 1, len(mockDBStore.GetIndexConfigurationByRepositoryIDFunc.History()))
@@ -196,12 +199,12 @@ func TestQueueIndexesInDatabase(t *testing.T) {
 		}
 	}
 
-	var indexes []uploadsshared.Index
-	for _, call := range mockDBStore.InsertIndexesFunc.History() {
-		indexes = append(indexes, call.Result0...)
+	var jobs []uploadsshared.AutoIndexJob
+	for _, call := range mockDBStore.InsertJobsFunc.History() {
+		jobs = append(jobs, call.Result0...)
 	}
 
-	expectedIndexes := []uploadsshared.Index{
+	expectedIndexes := []uploadsshared.AutoIndexJob{
 		{
 			RepositoryID: 42,
 			Commit:       "cr42",
@@ -226,7 +229,7 @@ func TestQueueIndexesInDatabase(t *testing.T) {
 			Outfile:      "lsif.dump",
 		},
 	}
-	if diff := cmp.Diff(expectedIndexes, indexes); diff != "" {
+	if diff := cmp.Diff(expectedIndexes, jobs, cmpopts.EquateEmpty()); diff != "" {
 		t.Errorf("unexpected indexes (-want +got):\n%s", diff)
 	}
 }
@@ -248,10 +251,10 @@ index_jobs:
     outfile: lsif.dump
 `)
 
-func TestQueueIndexesInRepository(t *testing.T) {
+func TestQueueAutoIndexJobsInRepository(t *testing.T) {
 	mockDBStore := NewMockStore()
-	mockDBStore.InsertIndexesFunc.SetDefaultHook(func(ctx context.Context, indexes []uploadsshared.Index) ([]uploadsshared.Index, error) {
-		return indexes, nil
+	mockDBStore.InsertJobsFunc.SetDefaultHook(func(ctx context.Context, jobs []uploadsshared.AutoIndexJob) ([]uploadsshared.AutoIndexJob, error) {
+		return jobs, nil
 	})
 	mockDBStore.RepositoryExceptionsFunc.SetDefaultReturn(true, true, nil)
 
@@ -259,18 +262,18 @@ func TestQueueIndexesInRepository(t *testing.T) {
 	gitserverClient.ResolveRevisionFunc.SetDefaultHook(func(ctx context.Context, repo api.RepoName, rev string, opts gitserver.ResolveRevisionOptions) (api.CommitID, error) {
 		return api.CommitID(fmt.Sprintf("c%s", repo)), nil
 	})
-	gitserverClient.ReadFileFunc.SetDefaultReturn(yamlIndexConfiguration, nil)
+	gitserverClient.NewFileReaderFunc.SetDefaultReturn(io.NopCloser(bytes.NewReader(yamlIndexConfiguration)), nil)
 	inferenceService := NewMockInferenceService()
 
 	service := newService(
-		&observation.TestContext,
+		observation.TestContextTB(t),
 		mockDBStore,
 		inferenceService,
 		defaultMockRepoStore(), // repoStore
 		gitserverClient,
 	)
 
-	if _, err := service.QueueIndexes(context.Background(), 42, "HEAD", "", false, false); err != nil {
+	if _, err := service.QueueAutoIndexJobs(context.Background(), 42, "HEAD", "", false, false); err != nil {
 		t.Fatalf("unexpected error performing update: %s", err)
 	}
 
@@ -288,12 +291,12 @@ func TestQueueIndexesInRepository(t *testing.T) {
 		}
 	}
 
-	var indexes []uploadsshared.Index
-	for _, call := range mockDBStore.InsertIndexesFunc.History() {
-		indexes = append(indexes, call.Result0...)
+	var jobs []uploadsshared.AutoIndexJob
+	for _, call := range mockDBStore.InsertJobsFunc.History() {
+		jobs = append(jobs, call.Result0...)
 	}
 
-	expectedIndexes := []uploadsshared.Index{
+	expectedIndexes := []uploadsshared.AutoIndexJob{
 		{
 			RepositoryID: 42,
 			Commit:       "cr42",
@@ -318,15 +321,15 @@ func TestQueueIndexesInRepository(t *testing.T) {
 			Outfile:      "lsif.dump",
 		},
 	}
-	if diff := cmp.Diff(expectedIndexes, indexes); diff != "" {
+	if diff := cmp.Diff(expectedIndexes, jobs, cmpopts.EquateEmpty()); diff != "" {
 		t.Errorf("unexpected indexes (-want +got):\n%s", diff)
 	}
 }
 
-func TestQueueIndexesInferred(t *testing.T) {
+func TestQueueAutoIndexJobsInferred(t *testing.T) {
 	mockDBStore := NewMockStore()
-	mockDBStore.InsertIndexesFunc.SetDefaultHook(func(ctx context.Context, indexes []uploadsshared.Index) ([]uploadsshared.Index, error) {
-		return indexes, nil
+	mockDBStore.InsertJobsFunc.SetDefaultHook(func(ctx context.Context, jobs []uploadsshared.AutoIndexJob) ([]uploadsshared.AutoIndexJob, error) {
+		return jobs, nil
 	})
 	mockDBStore.RepositoryExceptionsFunc.SetDefaultReturn(true, true, nil)
 
@@ -334,22 +337,22 @@ func TestQueueIndexesInferred(t *testing.T) {
 	gitserverClient.ResolveRevisionFunc.SetDefaultHook(func(ctx context.Context, repo api.RepoName, rev string, opts gitserver.ResolveRevisionOptions) (api.CommitID, error) {
 		return api.CommitID(fmt.Sprintf("c%s", repo)), nil
 	})
-	gitserverClient.ReadFileFunc.SetDefaultReturn(nil, os.ErrNotExist)
+	gitserverClient.NewFileReaderFunc.SetDefaultReturn(nil, os.ErrNotExist)
 
 	inferenceService := NewMockInferenceService()
 	inferenceService.InferIndexJobsFunc.SetDefaultHook(func(ctx context.Context, rn api.RepoName, s1, s2 string) (*shared.InferenceResult, error) {
 		switch string(rn) {
 		case "r42":
-			return &shared.InferenceResult{IndexJobs: []config.IndexJob{{Root: ""}}}, nil
+			return &shared.InferenceResult{IndexJobs: []config.AutoIndexJobSpec{{Root: ""}}}, nil
 		case "r44":
-			return &shared.InferenceResult{IndexJobs: []config.IndexJob{{Root: "a"}, {Root: "b"}}}, nil
+			return &shared.InferenceResult{IndexJobs: []config.AutoIndexJobSpec{{Root: "a"}, {Root: "b"}}}, nil
 		default:
 			return &shared.InferenceResult{IndexJobs: nil}, nil
 		}
 	})
 
 	service := newService(
-		&observation.TestContext,
+		observation.TestContextTB(t),
 		mockDBStore,
 		inferenceService,
 		defaultMockRepoStore(), // repoStore
@@ -357,13 +360,13 @@ func TestQueueIndexesInferred(t *testing.T) {
 	)
 
 	for _, id := range []int{41, 42, 43, 44} {
-		if _, err := service.QueueIndexes(context.Background(), id, "HEAD", "", false, false); err != nil {
+		if _, err := service.QueueAutoIndexJobs(context.Background(), id, "HEAD", "", false, false); err != nil {
 			t.Fatalf("unexpected error performing update: %s", err)
 		}
 	}
 
 	indexRoots := map[int][]string{}
-	for _, call := range mockDBStore.InsertIndexesFunc.History() {
+	for _, call := range mockDBStore.InsertJobsFunc.History() {
 		for _, index := range call.Result0 {
 			indexRoots[index.RepositoryID] = append(indexRoots[index.RepositoryID], index.Root)
 		}
@@ -392,10 +395,10 @@ func TestQueueIndexesInferred(t *testing.T) {
 	}
 }
 
-func TestQueueIndexesForPackage(t *testing.T) {
+func TestQueueAutoIndexJobsForPackage(t *testing.T) {
 	mockDBStore := NewMockStore()
-	mockDBStore.InsertIndexesFunc.SetDefaultHook(func(ctx context.Context, indexes []uploadsshared.Index) ([]uploadsshared.Index, error) {
-		return indexes, nil
+	mockDBStore.InsertJobsFunc.SetDefaultHook(func(ctx context.Context, jobs []uploadsshared.AutoIndexJob) ([]uploadsshared.AutoIndexJob, error) {
+		return jobs, nil
 	})
 	mockDBStore.IsQueuedFunc.SetDefaultReturn(false, nil)
 	mockDBStore.RepositoryExceptionsFunc.SetDefaultReturn(true, true, nil)
@@ -407,12 +410,12 @@ func TestQueueIndexesForPackage(t *testing.T) {
 		}
 		return "c42", nil
 	})
-	gitserverClient.ReadFileFunc.SetDefaultReturn(nil, os.ErrNotExist)
+	gitserverClient.NewFileReaderFunc.SetDefaultReturn(nil, os.ErrNotExist)
 
 	inferenceService := NewMockInferenceService()
 	inferenceService.InferIndexJobsFunc.SetDefaultHook(func(ctx context.Context, rn api.RepoName, s1, s2 string) (*shared.InferenceResult, error) {
 		return &shared.InferenceResult{
-			IndexJobs: []config.IndexJob{
+			IndexJobs: []config.AutoIndexJobSpec{
 				{
 					Root: "",
 					Steps: []config.DockerStep{
@@ -437,14 +440,14 @@ func TestQueueIndexesForPackage(t *testing.T) {
 	})
 
 	service := newService(
-		&observation.TestContext,
+		observation.TestContextTB(t),
 		mockDBStore,
 		inferenceService,
 		mockRepoStore, // repoStore
 		gitserverClient,
 	)
 
-	_ = service.QueueIndexesForPackage(context.Background(), dependencies.MinimialVersionedPackageRepo{
+	_ = service.QueueAutoIndexJobsForPackage(context.Background(), dependencies.MinimialVersionedPackageRepo{
 		Scheme:  "gomod",
 		Name:    "https://github.com/sourcegraph/sourcegraph",
 		Version: "v3.26.0-4e7eeb0f8a96",
@@ -464,15 +467,15 @@ func TestQueueIndexesForPackage(t *testing.T) {
 		}
 	}
 
-	if len(mockDBStore.InsertIndexesFunc.History()) != 1 {
-		t.Errorf("unexpected number of calls to InsertIndexes. want=%d have=%d", 1, len(mockDBStore.InsertIndexesFunc.History()))
+	if len(mockDBStore.InsertJobsFunc.History()) != 1 {
+		t.Errorf("unexpected number of calls to InsertJobs. want=%d have=%d", 1, len(mockDBStore.InsertJobsFunc.History()))
 	} else {
-		var indexes []uploadsshared.Index
-		for _, call := range mockDBStore.InsertIndexesFunc.History() {
-			indexes = append(indexes, call.Result0...)
+		var jobs []uploadsshared.AutoIndexJob
+		for _, call := range mockDBStore.InsertJobsFunc.History() {
+			jobs = append(jobs, call.Result0...)
 		}
 
-		expectedIndexes := []uploadsshared.Index{
+		expectedIndexes := []uploadsshared.AutoIndexJob{
 			{
 				RepositoryID: 42,
 				Commit:       "c42",
@@ -487,7 +490,7 @@ func TestQueueIndexesForPackage(t *testing.T) {
 				IndexerArgs: []string{"lsif-go", "--no-animation"},
 			},
 		}
-		if diff := cmp.Diff(expectedIndexes, indexes); diff != "" {
+		if diff := cmp.Diff(expectedIndexes, jobs, cmpopts.EquateEmpty()); diff != "" {
 			t.Errorf("unexpected indexes (-want +got):\n%s", diff)
 		}
 	}

@@ -47,6 +47,11 @@ const (
 	SecurityEventNameRoleChangeDenied  SecurityEventName = "RoleChangeDenied"
 	SecurityEventNameRoleChangeGranted SecurityEventName = "RoleChangeGranted"
 
+	SecurityEventNameRBACRoleAdded     SecurityEventName = "RBACRoleAdded"
+	SecurityEventNameRBACRoleRemoved   SecurityEventName = "RBACRoleRemoved"
+	SecurityEventNameRBACRoleSet       SecurityEventName = "RBACRoleSet"
+	SecurityEventNameRBACPermissionSet SecurityEventName = "RBACPermissionSet"
+
 	SecurityEventNameAccessGranted SecurityEventName = "AccessGranted"
 
 	SecurityEventAccessTokenCreated             SecurityEventName = "AccessTokenCreated"
@@ -64,6 +69,9 @@ const (
 
 	SecurityEventBitbucketCloudAuthSucceeded SecurityEventName = "BitbucketCloudAuthSucceeded"
 	SecurityEventBitbucketCloudAuthFailed    SecurityEventName = "BitbucketCloudAuthFailed"
+
+	SecurityEventBitbucketServerAuthSucceeded SecurityEventName = "BitbucketServerAuthSucceeded"
+	SecurityEventBitbucketServerAuthFailed    SecurityEventName = "BitbucketServerAuthFailed"
 
 	SecurityEventAzureDevOpsAuthSucceeded SecurityEventName = "AzureDevOpsAuthSucceeded"
 	SecurityEventAzureDevOpsAuthFailed    SecurityEventName = "AzureDevOpsAuthFailed"
@@ -88,7 +96,6 @@ const (
 	SecurityEventNameOrgCreated        SecurityEventName = "OrganizationCreated"
 	SecurityEventNameOrgUpdated        SecurityEventName = "OrganizationUpdated"
 	SecurityEventNameOrgSettingsViewed SecurityEventName = "OrganizationSettingsViewed"
-	SecurityEventNameDotComOrgViewed   SecurityEventName = "DotComOrganizationViewed"
 
 	SecurityEventNameOutboundReqViewed SecurityEventName = "OutboundRequestViewed"
 
@@ -112,8 +119,8 @@ type SecurityEvent struct {
 	Timestamp       time.Time
 }
 
-func (e *SecurityEvent) marshalArgumentAsJSON() string {
-	if e.Argument == nil {
+func (e *SecurityEvent) argumentToJSONString() string {
+	if e.Argument == nil || string(e.Argument) == "null" {
 		return "{}"
 	}
 	return string(e.Argument)
@@ -166,7 +173,7 @@ func (s *securityEventLogsStore) InsertList(ctx context.Context, events []*Secur
 		// Add an attribution for Sourcegraph operator to be distinguished in our analytics pipelines
 		if actor.SourcegraphOperator {
 			result, err := jsonc.Edit(
-				event.marshalArgumentAsJSON(),
+				event.argumentToJSONString(),
 				true,
 				EventLogsSourcegraphOperatorKey,
 			)
@@ -197,7 +204,7 @@ func (s *securityEventLogsStore) InsertList(ctx context.Context, events []*Secur
 			event.UserID,
 			event.AnonymousUserID,
 			event.Source,
-			event.marshalArgumentAsJSON(),
+			event.argumentToJSONString(),
 			version.Version(),
 			event.Timestamp.UTC(),
 		)
@@ -221,7 +228,7 @@ func (s *securityEventLogsStore) InsertList(ctx context.Context, events []*Secur
 						log.Uint32("UserID", event.UserID),
 						log.String("AnonymousUserID", event.AnonymousUserID),
 						log.String("source", event.Source),
-						log.String("argument", event.marshalArgumentAsJSON()),
+						log.String("argument", event.argumentToJSONString()),
 						log.String("version", version.Version()),
 						log.String("timestamp", event.Timestamp.UTC().String()),
 					),

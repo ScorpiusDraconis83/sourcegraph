@@ -3,14 +3,11 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "api",
-    srcs = [
-        "api.go",
-        "httpapi_schema.go",
-    ],
+    srcs = ["api.go"],
     importpath = "github.com/sourcegraph/sourcegraph/internal/api",
+    tags = [TAG_PLATFORM_SOURCE],
     visibility = ["//:__subpackages__"],
     deps = [
-        "//internal/gitserver/v1:gitserver",
         "//internal/lazyregexp",
         "//lib/errors",
         "@io_opentelemetry_go_otel//attribute",
@@ -22,5 +19,6 @@ go_test(
     timeout = "short",
     srcs = ["api_test.go"],
     embed = [":api"],
+    tags = [TAG_PLATFORM_SOURCE],
     deps = ["@com_github_stretchr_testify//require"],
 )

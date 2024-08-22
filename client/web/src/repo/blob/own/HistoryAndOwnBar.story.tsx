@@ -2,6 +2,7 @@ import type { MockedResponse } from '@apollo/client/testing'
 import type { Meta, StoryFn } from '@storybook/react'
 
 import { getDocumentNode } from '@sourcegraph/http-client'
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 
 import { WebStory } from '../../../components/WebStory'
 import { ExternalServiceKind, type FetchOwnersAndHistoryResult, RepositoryType } from '../../../graphql-operations'
@@ -13,6 +14,7 @@ window.context.experimentalFeatures = { perforceChangelistMapping: 'enabled' }
 
 const barData: FetchOwnersAndHistoryResult = {
     node: {
+        id: '1',
         sourceType: RepositoryType.GIT_REPOSITORY,
         commit: {
             blob: {
@@ -136,7 +138,7 @@ const barData: FetchOwnersAndHistoryResult = {
     },
 }
 
-const variables = { repoID: 'VXNlcjox', filePath: 'test.tsx' }
+const variables = { repoID: 'VXNlcjox', filePath: 'test.tsx', telemetryRecorder: noOpTelemetryRecorder }
 
 const mockLoaded: MockedResponse = {
     request: {
@@ -148,9 +150,7 @@ const mockLoaded: MockedResponse = {
 
 const config: Meta = {
     title: 'web/repo/blob/own/HistoryAndOwnBar',
-    parameters: {
-        chromatic: { disableSnapshot: false },
-    },
+    parameters: {},
 }
 
 export default config

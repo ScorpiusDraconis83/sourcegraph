@@ -4,14 +4,10 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/envvar"
 	"github.com/sourcegraph/sourcegraph/internal/conf/deploy"
 )
 
 func IsEnabled() bool {
-	if envvar.SourcegraphDotComMode() {
-		return false
-	}
 	if v, _ := strconv.ParseBool(os.Getenv("DISABLE_CODE_INSIGHTS")); v {
 		// Code insights can always be disabled. This can be a helpful escape hatch if e.g. there
 		// are issues with (or connecting to) the codeinsights-db deployment and it is preventing

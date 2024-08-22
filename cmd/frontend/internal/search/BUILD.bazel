@@ -4,12 +4,14 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "search",
     srcs = [
+        "display.go",
         "event_writer.go",
         "init.go",
         "metadata.go",
         "search.go",
     ],
     importpath = "github.com/sourcegraph/sourcegraph/cmd/frontend/internal/search",
+    tags = [TAG_PLATFORM_SEARCH],
     visibility = ["//cmd/frontend:__subpackages__"],
     deps = [
         "//cmd/frontend/enterprise",
@@ -29,9 +31,10 @@ go_library(
         "//internal/observation",
         "//internal/search",
         "//internal/search/client",
+        "//internal/search/exhaustive",
         "//internal/search/exhaustive/service",
         "//internal/search/exhaustive/store",
-        "//internal/search/exhaustive/uploadstore",
+        "//internal/search/query",
         "//internal/search/result",
         "//internal/search/streaming",
         "//internal/search/streaming/api",
@@ -41,6 +44,7 @@ go_library(
         "//internal/types",
         "//lib/errors",
         "//lib/pointers",
+        "@com_github_nytimes_gziphandler//:gziphandler",
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_prometheus_client_golang//prometheus/promauto",
         "@com_github_sourcegraph_log//:log",
@@ -53,6 +57,7 @@ go_test(
     timeout = "short",
     srcs = ["search_test.go"],
     embed = [":search"],
+    tags = [TAG_PLATFORM_SEARCH],
     deps = [
         "//internal/api",
         "//internal/database/dbmocks",

@@ -5,20 +5,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"github.com/sourcegraph/sourcegraph/internal/embeddings/embed/client"
 	"net/http"
 	"time"
 
 	"github.com/sourcegraph/log"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/globals"
-	"github.com/sourcegraph/sourcegraph/internal/embeddings/embed"
-	"github.com/sourcegraph/sourcegraph/lib/errors"
-
 	"github.com/sourcegraph/sourcegraph/internal/actor"
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/authz"
-	"github.com/sourcegraph/sourcegraph/internal/authz/providers"
 	srp "github.com/sourcegraph/sourcegraph/internal/authz/subrepoperms"
 	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/conf/conftypes"
@@ -26,6 +20,8 @@ import (
 	connections "github.com/sourcegraph/sourcegraph/internal/database/connections/live"
 	"github.com/sourcegraph/sourcegraph/internal/embeddings"
 	"github.com/sourcegraph/sourcegraph/internal/embeddings/background/repo"
+	"github.com/sourcegraph/sourcegraph/internal/embeddings/embed"
+	"github.com/sourcegraph/sourcegraph/internal/embeddings/embed/client"
 	"github.com/sourcegraph/sourcegraph/internal/errcode"
 	"github.com/sourcegraph/sourcegraph/internal/featureflag"
 	"github.com/sourcegraph/sourcegraph/internal/goroutine"
@@ -34,7 +30,9 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/instrumentation"
 	"github.com/sourcegraph/sourcegraph/internal/observation"
 	"github.com/sourcegraph/sourcegraph/internal/service"
+	"github.com/sourcegraph/sourcegraph/internal/tenant"
 	"github.com/sourcegraph/sourcegraph/internal/trace"
+	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
 
 const addr = ":9991"
@@ -52,13 +50,11 @@ func Main(ctx context.Context, observationCtx *observation.Context, ready servic
 	sqlDB := mustInitializeFrontendDB(observationCtx)
 	db := database.NewDB(logger, sqlDB)
 
-	go setAuthzProviders(ctx, db)
-
 	repoStore := db.Repos()
 	repoEmbeddingJobsStore := repo.NewRepoEmbeddingJobsStore(db)
 
 	// Run setup
-	uploadStore, err := embeddings.NewEmbeddingsUploadStore(ctx, observationCtx, config.EmbeddingsUploadStoreConfig)
+	uploadStore, err := embeddings.NewObjectStorage(ctx, observationCtx, config.EmbeddingsUploadStoreConfig)
 	if err != nil {
 		return err
 	}
@@ -81,9 +77,10 @@ func Main(ctx context.Context, observationCtx *observation.Context, ready servic
 	handler := NewHandler(logger, indexGetter.Get, getQueryEmbedding)
 	handler = handlePanic(logger, handler)
 	handler = featureflag.Middleware(db.FeatureFlags(), handler)
-	handler = trace.HTTPMiddleware(logger, handler, conf.DefaultClient())
+	handler = trace.HTTPMiddleware(logger, handler)
 	handler = instrumentation.HTTPMiddleware("", handler)
 	handler = actor.HTTPMiddleware(logger, handler)
+	handler = tenant.InternalHTTPMiddleware(logger, handler)
 	server := httpserver.NewFromAddr(addr, &http.Server{
 		ReadTimeout:  75 * time.Second,
 		WriteTimeout: 10 * time.Minute,
@@ -93,9 +90,7 @@ func Main(ctx context.Context, observationCtx *observation.Context, ready servic
 	// Mark health server as ready and go!
 	ready()
 
-	goroutine.MonitorBackgroundRoutines(ctx, server)
-
-	return nil
+	return goroutine.MonitorBackgroundRoutines(ctx, server)
 }
 
 func NewHandler(
@@ -172,20 +167,6 @@ func mustInitializeFrontendDB(observationCtx *observation.Context) *sql.DB {
 	}
 
 	return db
-}
-
-// SetAuthzProviders periodically refreshes the global authz providers. This changes the repositories that are visible for reads based on the
-// current actor stored in an operation's context, which is likely an internal actor for many of
-// the jobs configured in this service. This also enables repository update operations to fetch
-// permissions from code hosts.
-func setAuthzProviders(ctx context.Context, db database.DB) {
-	// authz also relies on UserMappings being setup.
-	globals.WatchPermissionsUserMapping()
-
-	for range time.NewTicker(providers.RefreshInterval()).C {
-		allowAccessByDefault, authzProviders, _, _, _ := providers.ProvidersFromConfig(ctx, conf.Get(), db)
-		authz.SetProviders(allowAccessByDefault, authzProviders)
-	}
 }
 
 func handlePanic(logger log.Logger, next http.Handler) http.Handler {

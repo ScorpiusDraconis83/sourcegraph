@@ -2,6 +2,7 @@ import type { Meta, StoryFn } from '@storybook/react'
 import delay from 'delay'
 import { noop } from 'lodash'
 
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { NOOP_TELEMETRY_SERVICE } from '@sourcegraph/shared/src/telemetry/telemetryService'
 
 import { WebStory } from '../../../../../../components/WebStory'
@@ -12,12 +13,7 @@ import { ComputeInsightCreationPage as ComputeInsightCreationPageComponent } fro
 const defaultStory: Meta = {
     title: 'web/insights/creation-ui/compute/ComputeInsightCreationPage',
     decorators: [story => <WebStory>{() => story()}</WebStory>],
-    parameters: {
-        chromatic: {
-            viewports: [576, 1440],
-            disableSnapshot: false,
-        },
-    },
+    parameters: {},
 }
 
 export default defaultStory
@@ -38,6 +34,7 @@ export const ComputeInsightCreationPage: StoryFn = () => {
             onInsightCreateRequest={fakeAPIRequest}
             onSuccessfulCreation={noop}
             onCancel={noop}
+            telemetryRecorder={noOpTelemetryRecorder}
         />
     )
 }

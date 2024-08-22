@@ -8,6 +8,8 @@ import (
 	"github.com/graph-gophers/graphql-go"
 	"github.com/graph-gophers/graphql-go/relay"
 	"github.com/keegancsmith/sqlf"
+
+	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
 
 // LimitOffset specifies SQL LIMIT and OFFSET counts. A pointer to it is
@@ -94,6 +96,11 @@ func (o OrderBy) SQL(ascending bool) *sqlf.Query {
 }
 
 // OrderByOption represents ordering in SQL by one column.
+//
+// The direction (ascending or descending) is not set here. It is set in (PaginationArgs).Ascending.
+// This is because we use [PostgreSQL composite
+// types](https://www.postgresql.org/docs/current/rowtypes.html) to support before/after pagination
+// cursors based on multiple columns.
 type OrderByOption struct {
 	Field string
 	Nulls OrderByNulls
@@ -148,7 +155,7 @@ func (p *PaginationArgs) SQL() *QueryArgs {
 	orderByColumns := orderBy.Columns()
 
 	if len(p.After) > 0 {
-		// For order by stars, id this'll generate SQL of the following form:
+		// For "order by stars, id" this'll generate SQL of the following form:
 		// WHERE (stars, id) (<|>) (%s, %s)
 		// ORDER BY stars (ASC|DESC), id (ASC|DESC)
 		columnsStr := strings.Join(orderByColumns, ", ")
@@ -180,7 +187,7 @@ func (p *PaginationArgs) SQL() *QueryArgs {
 	}
 
 	if len(conditions) > 0 {
-		queryArgs.Where = sqlf.Sprintf("%v", sqlf.Join(conditions, "AND "))
+		queryArgs.Where = sqlf.Join(conditions, "AND ")
 	}
 
 	if p.First != nil {
@@ -194,4 +201,29 @@ func (p *PaginationArgs) SQL() *QueryArgs {
 	}
 
 	return queryArgs
+}
+
+// Pre-condition: values in args.After and args.Before should have type 'int'.
+func OffsetBasedCursorSlice[T any](nodes []T, args *PaginationArgs) ([]T, int, error) {
+	start := 0
+	end := 0
+	total := len(nodes)
+	if args.First != nil {
+		if len(args.After) > 0 {
+			start = min(args.After[0].(int)+1, total)
+		}
+		end = min(start+*args.First, total)
+	} else if args.Last != nil {
+		end = total
+		if len(args.Before) > 0 {
+			end = max(args.Before[0].(int), 0)
+		}
+		start = max(end-*args.Last, 0)
+	} else {
+		return nil, 0, errors.New(`args.First and args.Last are nil`)
+	}
+
+	nodes = nodes[start:end]
+
+	return nodes, start, nil
 }

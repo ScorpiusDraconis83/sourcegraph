@@ -14,6 +14,7 @@ import (
 	"github.com/lib/pq"
 	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/uploads/shared"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/database/basestore"
@@ -218,9 +219,9 @@ JOIN repo ON repo.id = u.repository_id
 WHERE repo.deleted_at IS NULL AND u.state != 'deleted' AND u.id = %s AND %s
 `
 
-// GetDumpsByIDs returns a set of dumps by identifiers.
-func (s *store) GetDumpsByIDs(ctx context.Context, ids []int) (_ []shared.Dump, err error) {
-	ctx, trace, endObservation := s.operations.getDumpsByIDs.With(ctx, &err, observation.Args{Attrs: []attribute.KeyValue{
+// GetCompletedUploadsByIDs returns a set of uploads by identifiers.
+func (s *store) GetCompletedUploadsByIDs(ctx context.Context, ids []int) (_ []shared.CompletedUpload, err error) {
+	ctx, trace, endObservation := s.operations.getCompletedUploadsByIDs.With(ctx, &err, observation.Args{Attrs: []attribute.KeyValue{
 		attribute.Int("numIDs", len(ids)),
 		attribute.IntSlice("ids", ids),
 	}})
@@ -235,16 +236,17 @@ func (s *store) GetDumpsByIDs(ctx context.Context, ids []int) (_ []shared.Dump, 
 		idx = append(idx, sqlf.Sprintf("%s", id))
 	}
 
-	dumps, err := scanDumps(s.db.Query(ctx, sqlf.Sprintf(getDumpsByIDsQuery, sqlf.Join(idx, ", "))))
+	// TODO(id: completed-state-check) Make sure we only return uploads with state = 'completed' here
+	uploads, err := scanCompletedUploads(s.db.Query(ctx, sqlf.Sprintf(getCompletedUploadsByIDsQuery, sqlf.Join(idx, ", "))))
 	if err != nil {
 		return nil, err
 	}
-	trace.AddEvent("TODO Domain Owner", attribute.Int("numDumps", len(dumps)))
+	trace.AddEvent("TODO Domain Owner", attribute.Int("numUploads", len(uploads)))
 
-	return dumps, nil
+	return uploads, nil
 }
 
-const getDumpsByIDsQuery = `
+const getCompletedUploadsByIDsQuery = `
 SELECT
 	u.id,
 	u.commit,
@@ -381,18 +383,18 @@ func (s *store) GetUploadIDsWithReferences(
 		}
 		recordsScanned++
 
-		if _, ok := filtered[packageReference.DumpID]; ok {
+		if _, ok := filtered[packageReference.UploadID]; ok {
 			// This index includes a definition so we can skip testing the filters here. The index
 			// will be included in the moniker search regardless if it contains additional references.
 			continue
 		}
 
-		if _, ok := ignoreIDsMap[packageReference.DumpID]; ok {
+		if _, ok := ignoreIDsMap[packageReference.UploadID]; ok {
 			// Ignore this dump
 			continue
 		}
 
-		filtered[packageReference.DumpID] = struct{}{}
+		filtered[packageReference.UploadID] = struct{}{}
 	}
 
 	if trace != nil {
@@ -438,6 +440,7 @@ func (s *store) GetVisibleUploadsMatchingMonikers(ctx context.Context, repositor
 	}
 
 	var (
+		visibleUploadsCTE    = sqlf.Sprintf("%s", makeVisibleUploadsQuery(api.RepoID(repositoryID), api.CommitID(commit)))
 		countExpr            = sqlf.Sprintf("COUNT(distinct r.dump_id)")
 		emptyExpr            = sqlf.Sprintf("")
 		selectExpr           = sqlf.Sprintf("r.dump_id, r.scheme, r.manager, r.name, r.version")
@@ -446,8 +449,7 @@ func (s *store) GetVisibleUploadsMatchingMonikers(ctx context.Context, repositor
 
 	countQuery := sqlf.Sprintf(
 		referenceIDsQuery,
-		repositoryID, dbutil.CommitBytea(commit),
-		repositoryID, dbutil.CommitBytea(commit),
+		visibleUploadsCTE,
 		countExpr,
 		sqlf.Join(qs, ", "),
 		authzConds,
@@ -461,8 +463,7 @@ func (s *store) GetVisibleUploadsMatchingMonikers(ctx context.Context, repositor
 
 	rows, err := s.db.Query(ctx, sqlf.Sprintf(
 		referenceIDsQuery,
-		repositoryID, dbutil.CommitBytea(commit),
-		repositoryID, dbutil.CommitBytea(commit),
+		visibleUploadsCTE,
 		selectExpr,
 		sqlf.Join(qs, ", "),
 		authzConds,
@@ -477,40 +478,7 @@ func (s *store) GetVisibleUploadsMatchingMonikers(ctx context.Context, repositor
 
 const referenceIDsQuery = `
 WITH
-visible_uploads AS (
-	SELECT t.upload_id
-	FROM (
-
-		-- Select the set of uploads visible from the given commit. This is done by looking
-		-- at each commit's row in the lsif_nearest_uploads table, and the (adjusted) set of
-		-- uploads from each commit's nearest ancestor according to the data compressed in
-		-- the links table.
-		--
-		-- NB: A commit should be present in at most one of these tables.
-		SELECT
-			t.upload_id,
-			row_number() OVER (PARTITION BY root, indexer ORDER BY distance) AS r
-		FROM (
-			SELECT
-				upload_id::integer,
-				u_distance::text::integer as distance
-			FROM lsif_nearest_uploads nu
-			CROSS JOIN jsonb_each(nu.uploads) as u(upload_id, u_distance)
-			WHERE nu.repository_id = %s AND nu.commit_bytea = %s
-			UNION (
-				SELECT
-					upload_id::integer,
-					u_distance::text::integer + ul.distance as distance
-				FROM lsif_nearest_uploads_links ul
-				JOIN lsif_nearest_uploads nu ON nu.repository_id = ul.repository_id AND nu.commit_bytea = ul.ancestor_commit_bytea
-				CROSS JOIN jsonb_each(nu.uploads) as u(upload_id, u_distance)
-				WHERE nu.repository_id = %s AND ul.commit_bytea = %s
-			)
-		) t
-		JOIN lsif_uploads u ON u.id = upload_id
-	) t
-	WHERE t.r <= 1
-)
+visible_uploads AS (%s)
 SELECT %s
 FROM lsif_references r
 LEFT JOIN lsif_dumps u ON u.id = r.dump_id
@@ -544,9 +512,9 @@ WHERE
 // definitionDumpsLimit is the maximum number of records that can be returned from DefinitionDumps.
 var definitionDumpsLimit, _ = strconv.ParseInt(env.Get("PRECISE_CODE_INTEL_DEFINITION_DUMPS_LIMIT", "100", "The maximum number of dumps that can define the same package."), 10, 64)
 
-// GetDumpsWithDefinitionsForMonikers returns the set of dumps that define at least one of the given monikers.
-func (s *store) GetDumpsWithDefinitionsForMonikers(ctx context.Context, monikers []precise.QualifiedMonikerData) (_ []shared.Dump, err error) {
-	ctx, trace, endObservation := s.operations.getDumpsWithDefinitionsForMonikers.With(ctx, &err, observation.Args{Attrs: []attribute.KeyValue{
+// GetCompletedUploadsWithDefinitionsForMonikers returns the set of uploads that define at least one of the given monikers.
+func (s *store) GetCompletedUploadsWithDefinitionsForMonikers(ctx context.Context, monikers []precise.QualifiedMonikerData) (_ []shared.CompletedUpload, err error) {
+	ctx, trace, endObservation := s.operations.getCompletedUploadsWithDefinitionsForMonikers.With(ctx, &err, observation.Args{Attrs: []attribute.KeyValue{
 		attribute.Int("numMonikers", len(monikers)),
 		attribute.String("monikers", monikersToString(monikers)),
 	}})
@@ -566,17 +534,18 @@ func (s *store) GetDumpsWithDefinitionsForMonikers(ctx context.Context, monikers
 		return nil, err
 	}
 
-	query := sqlf.Sprintf(definitionDumpsQuery, sqlf.Join(qs, ", "), authzConds, definitionDumpsLimit)
-	dumps, err := scanDumps(s.db.Query(ctx, query))
+	// TODO(id: completed-state-check) Make sure we only return uploads with state = 'completed' here
+	query := sqlf.Sprintf(getCompletedUploadsWithDefinitionsForMonikersQuery, sqlf.Join(qs, ", "), authzConds, definitionDumpsLimit)
+	uploads, err := scanCompletedUploads(s.db.Query(ctx, query))
 	if err != nil {
 		return nil, err
 	}
-	trace.AddEvent("TODO Domain Owner", attribute.Int("numDumps", len(dumps)))
+	trace.AddEvent("TODO Domain Owner", attribute.Int("numUploads", len(uploads)))
 
-	return dumps, nil
+	return uploads, nil
 }
 
-const definitionDumpsQuery = `
+const getCompletedUploadsWithDefinitionsForMonikersQuery = `
 WITH
 ranked_uploads AS (
 	SELECT
@@ -624,30 +593,31 @@ FROM lsif_dumps_with_repository_name u
 WHERE u.id IN (SELECT id FROM canonical_uploads)
 `
 
-// scanDumps scans a slice of dumps from the return value of `*Store.query`.
-func scanDump(s dbutil.Scanner) (dump shared.Dump, err error) {
-	return dump, s.Scan(
-		&dump.ID,
-		&dump.Commit,
-		&dump.Root,
-		&dump.VisibleAtTip,
-		&dump.UploadedAt,
-		&dump.State,
-		&dump.FailureMessage,
-		&dump.StartedAt,
-		&dump.FinishedAt,
-		&dump.ProcessAfter,
-		&dump.NumResets,
-		&dump.NumFailures,
-		&dump.RepositoryID,
-		&dump.RepositoryName,
-		&dump.Indexer,
-		&dbutil.NullString{S: &dump.IndexerVersion},
-		&dump.AssociatedIndexID,
+// scanCompletedUploads scans a slice of dumps from the return value of `*Store.query`.
+func scanCompletedUpload(s dbutil.Scanner) (upload shared.CompletedUpload, err error) {
+	err = s.Scan(
+		&upload.ID,
+		&upload.Commit,
+		&upload.Root,
+		&upload.VisibleAtTip,
+		&upload.UploadedAt,
+		&upload.State,
+		&upload.FailureMessage,
+		&upload.StartedAt,
+		&upload.FinishedAt,
+		&upload.ProcessAfter,
+		&upload.NumResets,
+		&upload.NumFailures,
+		&upload.RepositoryID,
+		&upload.RepositoryName,
+		&upload.Indexer,
+		&dbutil.NullString{S: &upload.IndexerVersion},
+		&upload.AssociatedIndexID,
 	)
+	return upload, err
 }
 
-var scanDumps = basestore.NewSliceScanner(scanDump)
+var scanCompletedUploads = basestore.NewSliceScanner(scanCompletedUpload)
 
 // GetAuditLogsForUpload returns all the audit logs for the given upload ID in order of entry
 // from oldest to newest, according to the auto-incremented internal sequence field.

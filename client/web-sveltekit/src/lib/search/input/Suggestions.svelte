@@ -1,13 +1,15 @@
 <script lang="ts">
-    import { getSuggestionsState, type Option, type Group, type Action } from '$lib/branded'
     import { EditorView } from '@codemirror/view'
-    import SuggestionOption from './SuggestionOption.svelte'
     import { createEventDispatcher, tick } from 'svelte'
+
     import { isSafari } from '@sourcegraph/common/src/util'
-    import Icon from '$lib/Icon.svelte'
-    import { mdiInformationOutline } from '@mdi/js'
-    import ActionInfo from './ActionInfo.svelte'
+
+    import { getSuggestionsState, type Option, type Group, type Action } from '$lib/branded'
     import { restrictToViewport } from '$lib/dom'
+    import Icon from '$lib/Icon.svelte'
+
+    import ActionInfo from './ActionInfo.svelte'
+    import SuggestionOption from './SuggestionOption.svelte'
 
     const dispatch = createEventDispatcher<{ select: { option: Option; action: Action } }>()
 
@@ -72,7 +74,7 @@
             {#each suggestions as group, groupIndex (group.title)}
                 {#if group.options.length > 0}
                     <ul role="rowgroup" aria-labelledby="{groupIndex}-label">
-                        <li id="{groupIndex}-lable" role="presentation">{group.title}</li>
+                        <li id="{groupIndex}-label" role="presentation">{group.title}</li>
                         {#each group.options as option, rowIndex (option)}
                             <SuggestionOption {groupIndex} {rowIndex} {option} selected={option === selectedOption} />
                         {/each}
@@ -83,12 +85,16 @@
         {#if selectedOption}
             <div class="footer">
                 <span>
-                    <ActionInfo action={selectedOption.action} shortcut="Enter" />{' '}
+                    <ActionInfo action={selectedOption.action} shortcut={{ key: 'enter' }} />
                     {#if selectedOption.alternativeAction}
-                        <ActionInfo action={selectedOption.alternativeAction} shortcut="Mod+Enter" />
+                        {' '}
+                        <ActionInfo
+                            action={selectedOption.alternativeAction}
+                            shortcut={{ key: 'mod+enter', mac: 'cmd+enter' }}
+                        />
                     {/if}
                 </span>
-                <Icon svgPath={mdiInformationOutline} aria-hidden="true" inline />
+                <Icon icon={ILucideInfo} aria-hidden="true" inline />
             </div>
         {/if}
     {/if}
@@ -96,8 +102,6 @@
 
 <style lang="scss">
     .root {
-        --color: var(--icon-color);
-
         overflow-y: hidden;
         display: flex;
         flex-direction: column;
@@ -146,7 +150,7 @@
                 // group header
                 [role='presentation'] {
                     color: var(--text-muted);
-                    font-size: 0.75rem;
+                    font-size: var(--code-font-size);
                     font-weight: 500;
                     margin-bottom: 0.25rem;
                     padding: 0 0.5rem;

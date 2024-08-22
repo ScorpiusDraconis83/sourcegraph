@@ -1,3 +1,4 @@
+load("//dev:go_mockgen.bzl", "go_mockgen")
 load("@io_bazel_rules_go//go:def.bzl", "go_library")
 load("//dev:go_defs.bzl", "go_test")
 
@@ -9,6 +10,7 @@ go_library(
     ],
     importpath = "github.com/sourcegraph/sourcegraph/lib/background",
     visibility = ["//visibility:public"],
+    deps = ["//lib/errors"],
 )
 
 go_test(
@@ -19,4 +21,21 @@ go_test(
         "mocks_test.go",
     ],
     embed = [":background"],
+    deps = [
+        "//lib/errors",
+        "@com_github_derision_test_go_mockgen_v2//testutil/require",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_mockgen(
+    name = "generate_mocks",
+    out = "mocks_test.go",
+    manifests = [
+        "//:mockgen.yaml",
+        "//:mockgen.test.yaml",
+        "//:mockgen.temp.yaml",
+    ],
+    deps = [":background"],
 )

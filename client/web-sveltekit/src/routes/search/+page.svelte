@@ -1,25 +1,73 @@
 <script lang="ts">
+    import { registerHotkey } from '$lib/Hotkey'
+    // @sg EnableRollout
     import { queryStateStore } from '$lib/search/state'
     import { settings } from '$lib/stores'
 
-    import type { PageData } from './$types'
+    import type { PageData, Snapshot } from './$types'
+    import QueryExamples from './QueryExamples.svelte'
     import SearchHome from './SearchHome.svelte'
-    import SearchResults from './SearchResults.svelte'
+    import SearchResults, { type SearchResultsCapture } from './SearchResults.svelte'
 
     export let data: PageData
 
+    export const snapshot: Snapshot<{ searchResults?: SearchResultsCapture }> = {
+        capture() {
+            return {
+                searchResults: searchResults?.capture(),
+            }
+        },
+        restore(value) {
+            if (value) {
+                searchResults?.restore(value.searchResults)
+            }
+        },
+    }
+
     const queryState = queryStateStore(data.queryOptions ?? {}, $settings)
+    let searchResults: SearchResults | undefined
+
+    for (const key of ['j', 'down']) {
+        registerHotkey({
+            keys: { key },
+            handler: () => {
+                searchResults?.focusNextResult('down')
+            },
+        })
+    }
+
+    for (const key of ['k', 'up']) {
+        registerHotkey({
+            keys: { key },
+            handler: () => {
+                searchResults?.focusNextResult('up')
+            },
+        })
+    }
+
     $: queryState.set(data.queryOptions ?? {})
     $: queryState.setSettings($settings)
 </script>
 
-{#if data.stream}
+<svelte:head>
+    <title>{data.queryFromURL ? `${data.queryFromURL} - ` : ''}Sourcegraph</title>
+</svelte:head>
+
+{#if data.searchStream}
     <SearchResults
-        stream={data.stream}
-        queryFromURL={data.queryOptions.query}
+        bind:this={searchResults}
+        stream={data.searchStream}
+        queryFromURL={data.queryFromURL}
         {queryState}
-        queryFilters={data.queryFilters}
+        selectedFilters={data.queryFilters}
+        searchJob={data.searchJob}
     />
 {:else}
-    <SearchHome {queryState} />
+    <SearchHome {queryState}>
+        <QueryExamples
+            showQueryPage={data.showExampleQueries}
+            queryExample={data.queryExample}
+        />
+        <svelte:component this={data.footer} />
+    </SearchHome>
 {/if}

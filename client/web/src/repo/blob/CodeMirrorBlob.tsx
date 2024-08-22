@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type RefObject } from 'react'
 
+import { useApolloClient } from '@apollo/client'
 import { openSearchPanel } from '@codemirror/search'
 import { EditorState, type Extension } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
@@ -13,24 +14,19 @@ import { isEqual } from 'lodash'
 import { createRoot } from 'react-dom/client'
 import { createPath, useLocation, useNavigate, type Location, type NavigateFunction } from 'react-router-dom'
 
-import { NoopEditor } from '@sourcegraph/cody-shared/dist/editor'
-import {
-    addLineRangeQueryParameter,
-    formatSearchParameters,
-    toPositionOrRangeQueryParameter,
-} from '@sourcegraph/common'
-import { getOrCreateCodeIntelAPI, type CodeIntelAPI } from '@sourcegraph/shared/src/codeintel/api'
+import { NoopEditor } from '@sourcegraph/cody-shared'
+import { SourcegraphURL } from '@sourcegraph/common'
+import { createCodeIntelAPI } from '@sourcegraph/shared/src/codeintel/api'
 import { editorHeight, useCodeMirror, useCompartment } from '@sourcegraph/shared/src/components/CodeMirrorEditor'
-import type { ExtensionsControllerProps } from '@sourcegraph/shared/src/extensions/controller'
 import { useKeyboardShortcut } from '@sourcegraph/shared/src/keyboardShortcuts/useKeyboardShortcut'
-import type { PlatformContext, PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
 import { Shortcut } from '@sourcegraph/shared/src/react-shortcuts'
-import type { SettingsCascadeProps } from '@sourcegraph/shared/src/settings/settings'
+import { useSettings } from '@sourcegraph/shared/src/settings/settings'
 import type { TemporarySettingsSchema } from '@sourcegraph/shared/src/settings/temporary/TemporarySettings'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
-import { Theme, useTheme } from '@sourcegraph/shared/src/theme'
+import { useIsLightTheme } from '@sourcegraph/shared/src/theme'
+import { codeCopiedEvent } from '@sourcegraph/shared/src/tracking/event-log-creators'
 import {
-    parseQueryAndHash,
     toPrettyBlobURL,
     type AbsoluteRepoFile,
     type BlobViewState,
@@ -39,11 +35,11 @@ import {
 import { useLocalStorage } from '@sourcegraph/wildcard'
 
 import { CodeMirrorEditor } from '../../cody/components/CodeMirrorEditor'
-import { isCodyEnabled } from '../../cody/isCodyEnabled'
 import { useCodySidebar } from '../../cody/sidebar/Provider'
 import { useFeatureFlag } from '../../featureFlags/useFeatureFlag'
 import type { ExternalLinkFields, Scalars } from '../../graphql-operations'
-import type { BlameHunkData } from '../blame/useBlameHunks'
+import { requestGraphQLAdapter } from '../../platform/context'
+import type { BlameHunkData } from '../blame/shared'
 import type { HoverThresholdProps } from '../RepoContainer'
 
 import { BlameDecoration } from './BlameDecoration'
@@ -59,10 +55,11 @@ import { selectableLineNumbers, selectLines, type SelectedLineRange } from './co
 import { linkify } from './codemirror/links'
 import { lockFirstVisibleLine } from './codemirror/lock-line'
 import { navigateToLineOnAnyClickExtension } from './codemirror/navigate-to-any-line-on-click'
+import { CodeMirrorContainer } from './codemirror/react-interop'
 import { scipSnapshot } from './codemirror/scip-snapshot'
 import { search, type SearchPanelConfig } from './codemirror/search'
-import { sourcegraphExtensions } from './codemirror/sourcegraph-extensions'
-import { codyWidgetExtension } from './codemirror/tooltips/CodyTooltip'
+import { SearchPanel } from './codemirror/search/SearchPanel'
+import { staticHighlights, type Range } from './codemirror/static-highlights'
 import { HovercardView } from './codemirror/tooltips/HovercardView'
 import { showTemporaryTooltip, temporaryTooltip } from './codemirror/tooltips/TemporaryTooltip'
 import { locationToURL, positionToOffset } from './codemirror/utils'
@@ -87,14 +84,9 @@ interface CodeMirrorBlobProps {
     overrideBrowserSearchKeybinding?: boolean
 }
 
-export interface BlobProps
-    extends SettingsCascadeProps,
-        PlatformContextProps,
-        TelemetryProps,
-        HoverThresholdProps,
-        ExtensionsControllerProps,
-        CodeMirrorBlobProps {
+export interface BlobProps extends TelemetryProps, TelemetryV2Props, HoverThresholdProps, CodeMirrorBlobProps {
     className: string
+
     wrapCode: boolean
     /** The current text document to be rendered and provided to extensions */
     blobInfo: BlobInfo
@@ -119,6 +111,7 @@ export interface BlobProps
 
     activeURL?: string
     searchPanelConfig?: SearchPanelConfig
+    staticHighlightRanges?: Range[]
 }
 
 export interface BlobPropsFacet extends BlobProps {
@@ -209,7 +202,6 @@ export const CodeMirrorBlob: React.FunctionComponent<BlobProps> = props => {
         wrapCode,
         ariaLabel,
         role,
-        extensionsController,
         isBlameVisible,
         blameHunks,
         ocgVisibility,
@@ -219,11 +211,16 @@ export const CodeMirrorBlob: React.FunctionComponent<BlobProps> = props => {
 
         overrideBrowserSearchKeybinding,
         searchPanelConfig,
+        staticHighlightRanges,
         'data-testid': dataTestId,
+        telemetryService,
+        telemetryRecorder,
     } = props
 
+    const apolloClient = useApolloClient()
     const navigate = useNavigate()
     const location = useLocation()
+    const isLightTheme = useIsLightTheme()
 
     const [enableBlobPageSwitchAreasShortcuts] = useFeatureFlag('blob-page-switch-areas-shortcuts')
     const focusCodeEditorShortcut = useKeyboardShortcut('focusCodeEditor')
@@ -234,17 +231,14 @@ export const CodeMirrorBlob: React.FunctionComponent<BlobProps> = props => {
     // This is used to avoid reinitializing the editor when new locations in the
     // same file are opened inside the reference panel.
     const blobInfo = useDistinctBlob(props.blobInfo)
-    const position = useMemo(() => {
+    const position = useMemo(
         // When an activeURL is passed, it takes presedence over the react
         // router location API.
         //
         // This is needed to support the reference panel
-        if (props.activeURL) {
-            const url = new URL(props.activeURL, window.location.href)
-            return parseQueryAndHash(url.search, url.hash)
-        }
-        return parseQueryAndHash(location.search, location.hash)
-    }, [props.activeURL, location.search, location.hash])
+        () => SourcegraphURL.from(props.activeURL || location).lineRange,
+        [props.activeURL, location]
+    )
     const hasPin = useMemo(() => urlIsPinned(location.search), [location.search])
 
     // Keep history and location in a ref so that we can use the latest value in
@@ -273,32 +267,20 @@ export const CodeMirrorBlob: React.FunctionComponent<BlobProps> = props => {
     const customHistoryAction = props.nav
     const onSelection = useCallback(
         (range: SelectedLineRange) => {
-            const parameters = new URLSearchParams(locationRef.current.search)
-            parameters.delete('popover')
+            const url = SourcegraphURL.from(locationRef.current)
+                .deleteSearchParameter('popover')
+                .setLineRange(range ? { line: range.line, endLine: range.endLine } : null)
 
-            let query: string | undefined
-
-            if (range?.line !== range?.endLine && range?.endLine) {
-                query = toPositionOrRangeQueryParameter({
-                    range: {
-                        start: { line: range.line },
-                        end: { line: range.endLine },
-                    },
-                })
-            } else if (range?.line) {
-                query = toPositionOrRangeQueryParameter({ position: { line: range.line } })
-            }
-
-            const newSearchParameters = addLineRangeQueryParameter(parameters, query)
             if (customHistoryAction) {
                 customHistoryAction(
                     createPath({
-                        ...locationRef.current,
-                        search: formatSearchParameters(newSearchParameters),
+                        pathname: url.pathname,
+                        search: url.search,
+                        hash: url.hash,
                     })
                 )
             } else {
-                updateBrowserHistoryIfChanged(navigate, locationRef.current, newSearchParameters)
+                updateBrowserHistoryIfChanged(navigate, locationRef.current, url)
             }
         },
         [customHistoryAction, locationRef, navigate]
@@ -327,11 +309,13 @@ export const CodeMirrorBlob: React.FunctionComponent<BlobProps> = props => {
         useMemo<Extension>(() => (wrapCode ? EditorView.lineWrapping : []), [wrapCode])
     )
     const codeIntelExtension = useCodeIntelExtension(
-        props.platformContext,
+        telemetryService,
+        telemetryRecorder,
         {
             repoName: blobInfo.repoName,
             filePath: blobInfo.filePath,
             commitID: blobInfo.commitID,
+            revision: blobInfo.revision,
             languages: blobInfo.languages,
         },
         blobInfo.mode
@@ -347,11 +331,15 @@ export const CodeMirrorBlob: React.FunctionComponent<BlobProps> = props => {
         Boolean(ocgVisibility)
     )
 
-    const { theme } = useTheme()
+    const themeExtension = useCompartment(
+        editorRef,
+        useMemo(() => EditorView.darkTheme.of(!isLightTheme), [isLightTheme])
+    )
 
     const extensions = useMemo(
         () => [
             staticExtensions,
+            staticHighlights(navigate, apolloClient, staticHighlightRanges ?? []),
             selectableLineNumbers({
                 onSelection,
                 initialSelection: position.line !== undefined ? position : null,
@@ -360,29 +348,10 @@ export const CodeMirrorBlob: React.FunctionComponent<BlobProps> = props => {
             scipSnapshot(blobInfo.content, blobInfo.snapshotData),
             openCodeGraphExtension,
             codeFoldingExtension(),
-            isCodyEnabled()
-                ? codyWidgetExtension(
-                      editorRef.current
-                          ? new CodeMirrorEditor({
-                                view: editorRef.current,
-                                repo: props.blobInfo.repoName,
-                                revision: props.blobInfo.revision,
-                                filename: props.blobInfo.filePath,
-                                content: props.blobInfo.content,
-                            })
-                          : undefined
-                  )
-                : [],
+            [],
             pinnedTooltip,
             navigateToLineOnAnyClick ? navigateToLineOnAnyClickExtension(navigate) : codeIntelExtension,
             syntaxHighlight.of(blobInfo),
-            extensionsController !== null && !navigateToLineOnAnyClick
-                ? sourcegraphExtensions({
-                      blobInfo,
-                      initialSelection: position,
-                      extensionsController,
-                  })
-                : [],
             blobProps,
             blameDecorations,
             wrapCodeSettings,
@@ -393,9 +362,9 @@ export const CodeMirrorBlob: React.FunctionComponent<BlobProps> = props => {
                 overrideBrowserFindInPageShortcut: useFileSearch,
                 onOverrideBrowserFindInPageToggle: setUseFileSearch,
                 initialState: searchPanelConfig,
-                navigate,
+                createPanel: config => new SearchPanel(config, apolloClient, navigate),
             }),
-            EditorView.theme({}, { dark: theme === Theme.Dark }),
+            themeExtension,
         ],
         // A couple of values are not dependencies (hasPin and position) because those are updated in effects
         // further below. However, they are still needed here because we need to
@@ -403,10 +372,9 @@ export const CodeMirrorBlob: React.FunctionComponent<BlobProps> = props => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
         [
             onSelection,
+            staticHighlightRanges,
             navigate,
             blobInfo,
-            extensionsController,
-            isCodyEnabled,
             openCodeGraphExtension,
             codeIntelExtension,
             editorRef.current,
@@ -414,6 +382,7 @@ export const CodeMirrorBlob: React.FunctionComponent<BlobProps> = props => {
             wrapCodeSettings,
             blobProps,
             pinnedTooltip,
+            themeExtension,
         ]
     )
 
@@ -513,6 +482,11 @@ export const CodeMirrorBlob: React.FunctionComponent<BlobProps> = props => {
         setEditorScope,
     ])
 
+    const logEventOnCopy = useCallback(() => {
+        telemetryService.log(...codeCopiedEvent('blob-view'))
+        telemetryRecorder.recordEvent('blob.code', 'copy')
+    }, [telemetryService, telemetryRecorder])
+
     return (
         <>
             <div
@@ -522,6 +496,7 @@ export const CodeMirrorBlob: React.FunctionComponent<BlobProps> = props => {
                 data-testid={dataTestId}
                 className={`${className} overflow-hidden test-editor`}
                 data-editor="codemirror6"
+                onCopy={logEventOnCopy}
             />
             {overrideBrowserSearchKeybinding && useFileSearch && (
                 <Shortcut ordered={['f']} held={['Mod']} onMatch={openSearch} ignoreInput={true} />
@@ -542,47 +517,49 @@ export const CodeMirrorBlob: React.FunctionComponent<BlobProps> = props => {
 }
 
 function useCodeIntelExtension(
-    context: PlatformContext,
+    telemetryService: TelemetryProps['telemetryService'],
+    telemetryRecorder: TelemetryV2Props['telemetryRecorder'],
     {
         repoName,
         filePath,
         commitID,
         revision,
         languages,
-    }: { repoName: string; filePath: string; commitID: string; revision?: string; languages: string[] },
+    }: { repoName: string; filePath: string; commitID: string; revision: string; languages: string[] },
     mode: string
 ): Extension {
     const navigate = useNavigate()
     const location = useLocation()
+    const apolloClient = useApolloClient()
     const locationRef = useRef(location)
-    const [api, setApi] = useState<CodeIntelAPI | null>(null)
+    const settings = useSettings()
+    const codeIntelAPI = useMemo(
+        () =>
+            settings
+                ? createCodeIntelAPI({
+                      settings: name => settings[name],
+                      requestGraphQL: requestGraphQLAdapter(apolloClient),
+                      telemetryService,
+                      telemetryRecorder,
+                  })
+                : null,
+        [settings, apolloClient, telemetryService, telemetryRecorder]
+    )
 
     useEffect(() => {
         locationRef.current = location
     }, [location])
 
-    useEffect(() => {
-        let ignore = false
-        void getOrCreateCodeIntelAPI(context).then(api => {
-            if (!ignore) {
-                setApi(api)
-            }
-        })
-        return () => {
-            ignore = true
-        }
-    }, [context])
-
     return useMemo(
         () => [
             temporaryTooltip,
-            api
+            codeIntelAPI
                 ? createCodeIntelExtension({
                       api: {
-                          api,
+                          api: codeIntelAPI,
                           documentInfo: { repoName, filePath, commitID, revision, languages },
                           createTooltipView: ({ view, token, hovercardData }) =>
-                              new HovercardView(view, token, hovercardData),
+                              new HovercardView(view, token, hovercardData, apolloClient),
                           openImplementations(_view, documentInfo, occurrence) {
                               navigate(
                                   toPrettyBlobURL({
@@ -670,35 +647,28 @@ function useCodeIntelExtension(
                       },
                       pin: {
                           onPin(position) {
-                              const search = new URLSearchParams(locationRef.current.search)
-                              search.set('popover', 'pinned')
-
                               updateBrowserHistoryIfChanged(
                                   navigate,
                                   locationRef.current,
-                                  // It may seem strange to set start and end to the same value, but that what's the old blob view is doing as well
-                                  addLineRangeQueryParameter(
-                                      search,
-                                      toPositionOrRangeQueryParameter({
-                                          position,
-                                          range: { start: position, end: position },
-                                      })
-                                  )
+                                  SourcegraphURL.from(locationRef.current)
+                                      .setSearchParameter('popover', 'pinned')
+                                      .setLineRange(position)
                               )
                               void navigator.clipboard.writeText(window.location.href)
                           },
                           onUnpin() {
-                              const parameters = new URLSearchParams(locationRef.current.search)
-                              parameters.delete('popover')
-
-                              updateBrowserHistoryIfChanged(navigate, locationRef.current, parameters)
+                              updateBrowserHistoryIfChanged(
+                                  navigate,
+                                  locationRef.current,
+                                  SourcegraphURL.from(locationRef.current).deleteSearchParameter('popover')
+                              )
                           },
                       },
                       navigate,
                   })
                 : [],
         ],
-        [repoName, filePath, commitID, revision, mode, api, navigate, locationRef, languages]
+        [repoName, filePath, commitID, revision, mode, codeIntelAPI, navigate, locationRef, languages, apolloClient]
     )
 }
 
@@ -710,6 +680,7 @@ function useBlameDecoration(
     { visible, blameHunks }: { visible: boolean; blameHunks?: BlameHunkData }
 ): Extension {
     const navigate = useNavigate()
+    const apolloClient = useApolloClient()
 
     // Blame support is split into two compartments because we only want to trigger
     // `lockFirstVisibleLine` when blame is enabled, not when data is received
@@ -723,14 +694,15 @@ function useBlameDecoration(
                           createBlameDecoration(container, { line, hunk, onSelect, onDeselect, externalURLs }) {
                               const root = createRoot(container)
                               root.render(
-                                  <BlameDecoration
-                                      navigate={navigate}
-                                      line={line ?? 0}
-                                      blameHunk={hunk}
-                                      onSelect={onSelect}
-                                      onDeselect={onDeselect}
-                                      externalURLs={externalURLs}
-                                  />
+                                  <CodeMirrorContainer navigate={navigate} graphQLClient={apolloClient}>
+                                      <BlameDecoration
+                                          line={line ?? 0}
+                                          blameHunk={hunk}
+                                          onSelect={onSelect}
+                                          onDeselect={onDeselect}
+                                          externalURLs={externalURLs}
+                                      />
+                                  </CodeMirrorContainer>
                               )
                               return {
                                   destroy() {
@@ -740,7 +712,7 @@ function useBlameDecoration(
                           },
                       })
                     : [],
-            [visible, navigate]
+            [visible, navigate, apolloClient]
         ),
         lockFirstVisibleLine
     )
@@ -842,7 +814,7 @@ function useMutableValue<T>(value: T): Readonly<MutableRefObject<T>> {
 export function updateBrowserHistoryIfChanged(
     navigate: NavigateFunction,
     location: Location,
-    newSearchParameters: URLSearchParams,
+    newLocation: SourcegraphURL,
     /** If set to true replace the current history entry instead of adding a new one. */
     replace: boolean = false
 ): void {
@@ -854,15 +826,10 @@ export function updateBrowserHistoryIfChanged(
     // non-existing key in the new search parameters and thus return `null`
     // (whereas it returns an empty string in the current search parameters).
     const needsUpdate =
-        currentSearchParameters.length !== [...newSearchParameters.keys()].length ||
-        currentSearchParameters.some(([key, value]) => newSearchParameters.get(key) !== value)
+        currentSearchParameters.length !== [...newLocation.searchParams.keys()].length ||
+        currentSearchParameters.some(([key, value]) => newLocation.searchParams.get(key) !== value)
 
     if (needsUpdate) {
-        const entry = {
-            ...location,
-            search: formatSearchParameters(newSearchParameters),
-        }
-
-        navigate(entry, { replace })
+        navigate(newLocation.toString(), { replace })
     }
 }

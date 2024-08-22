@@ -11,27 +11,24 @@ import (
 	"time"
 
 	"github.com/derision-test/glock"
-	"github.com/gomodule/redigo/redis"
 	"github.com/stretchr/testify/require"
 
 	"github.com/sourcegraph/log/logtest"
 
+	"github.com/sourcegraph/sourcegraph/internal/database"
+	"github.com/sourcegraph/sourcegraph/internal/database/dbmocks"
 	"github.com/sourcegraph/sourcegraph/internal/license"
 	"github.com/sourcegraph/sourcegraph/internal/licensing"
-	"github.com/sourcegraph/sourcegraph/internal/redispool"
+	"github.com/sourcegraph/sourcegraph/internal/rcache"
 	"github.com/sourcegraph/sourcegraph/lib/pointers"
 )
 
 func Test_calcDurationToWaitForNextHandle(t *testing.T) {
-	// Connect to local redis for testing, this is the same URL used in rcache.SetupForTest
-	store = redispool.NewKeyValue("127.0.0.1:6379", &redis.Pool{
-		MaxIdle:     3,
-		IdleTimeout: 5 * time.Second,
-	})
+	kv := rcache.SetupForTest(t)
 
 	cleanupStore := func() {
-		_ = store.Del(licensing.LicenseValidityStoreKey)
-		_ = store.Del(lastCalledAtStoreKey)
+		_ = kv.Del(licensing.LicenseValidityStoreKey)
+		_ = kv.Del(lastCalledAtStoreKey)
 	}
 
 	now := time.Now().Round(time.Second)
@@ -78,10 +75,10 @@ func Test_calcDurationToWaitForNextHandle(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cleanupStore()
 			if test.lastCalledAt != "" {
-				_ = store.Set(lastCalledAtStoreKey, test.lastCalledAt)
+				_ = kv.Set(lastCalledAtStoreKey, test.lastCalledAt)
 			}
 
-			got, err := calcDurationSinceLastCalled(clock)
+			got, err := calcDurationSinceLastCalled(kv, clock)
 			if test.wantErr {
 				require.Error(t, err)
 			} else {
@@ -106,106 +103,79 @@ func mockDotcomURL(t *testing.T, u *string) {
 }
 
 func Test_licenseChecker(t *testing.T) {
-	// Connect to local redis for testing, this is the same URL used in rcache.SetupForTest
-	store = redispool.NewKeyValue("127.0.0.1:6379", &redis.Pool{
-		MaxIdle:     3,
-		IdleTimeout: 5 * time.Second,
-	})
+	kv := rcache.SetupForTest(t)
 
 	cleanupStore := func() {
-		_ = store.Del(licensing.LicenseValidityStoreKey)
-		_ = store.Del(lastCalledAtStoreKey)
+		_ = kv.Del(licensing.LicenseValidityStoreKey)
+		_ = kv.Del(lastCalledAtStoreKey)
 	}
 
 	siteID := "some-site-id"
-	token := "test-token"
 
-	t.Run("skips check if license is air-gapped", func(t *testing.T) {
-		cleanupStore()
-		var featureChecked licensing.Feature
-		defaultMock := licensing.MockCheckFeature
-		licensing.MockCheckFeature = func(feature licensing.Feature) error {
-			featureChecked = feature
-			return nil
-		}
-
-		t.Cleanup(func() {
-			licensing.MockCheckFeature = defaultMock
-		})
-
-		doer := &mockDoer{
-			status:   '1',
-			response: []byte(``),
-		}
-		handler := licenseChecker{
-			siteID: siteID,
-			token:  token,
-			doer:   doer,
-			logger: logtest.NoOp(t),
-		}
-
-		err := handler.Handle(context.Background())
-		require.NoError(t, err)
-
-		// check feature was checked
-		require.Equal(t, licensing.FeatureAllowAirGapped, featureChecked)
-
-		// check doer NOT called
-		require.False(t, doer.DoCalled)
-
-		// check result was set to true
-		valid, err := store.Get(licensing.LicenseValidityStoreKey).Bool()
-		require.NoError(t, err)
-		require.True(t, valid)
-
-		// check last called at was set
-		lastCalledAt, err := store.Get(lastCalledAtStoreKey).String()
-		require.NoError(t, err)
-		require.NotEmpty(t, lastCalledAt)
-	})
-
-	t.Run("skips check if license has dev tag", func(t *testing.T) {
-		defaultMockGetLicense := licensing.MockGetConfiguredProductLicenseInfo
-		licensing.MockGetConfiguredProductLicenseInfo = func() (*license.Info, string, error) {
-			return &license.Info{
+	skipTests := map[string]struct {
+		license *license.Info
+	}{
+		"skips check if license is air gapped": {
+			license: &license.Info{
+				Tags: []string{string(licensing.FeatureAllowAirGapped)},
+			},
+		},
+		"skips check on dev license": {
+			license: &license.Info{
 				Tags: []string{"dev"},
-			}, "", nil
-		}
+			},
+		},
+		"skips check on free license": {
+			license: &licensing.GetFreeLicenseInfo().Info,
+		},
+	}
 
-		t.Cleanup(func() {
-			licensing.MockGetConfiguredProductLicenseInfo = defaultMockGetLicense
+	for name, test := range skipTests {
+		t.Run(name, func(t *testing.T) {
+			cleanupStore()
+			defaultMockGetLicense := licensing.MockGetConfiguredProductLicenseInfo
+			licensing.MockGetConfiguredProductLicenseInfo = func() (*license.Info, string, error) {
+				return test.license, "", nil
+			}
+
+			t.Cleanup(func() {
+				licensing.MockGetConfiguredProductLicenseInfo = defaultMockGetLicense
+			})
+
+			doer := &mockDoer{
+				status:   '1',
+				response: []byte(``),
+			}
+			mockDB := dbmocks.NewMockDB()
+			gs := dbmocks.NewMockGlobalStateStore()
+			mockDB.GlobalStateFunc.SetDefaultReturn(gs)
+			gs.GetFunc.SetDefaultReturn(database.GlobalState{
+				SiteID: siteID,
+			}, nil)
+			handler := licenseChecker{
+				db:     mockDB,
+				doer:   doer,
+				logger: logtest.NoOp(t),
+				kv:     kv,
+			}
+
+			err := handler.Handle(context.Background())
+			require.NoError(t, err)
+
+			// check doer NOT called
+			require.False(t, doer.DoCalled)
+
+			// check result was set to true
+			valid, err := kv.Get(licensing.LicenseValidityStoreKey).Bool()
+			require.NoError(t, err)
+			require.True(t, valid)
+
+			// check last called at was set
+			lastCalledAt, err := kv.Get(lastCalledAtStoreKey).String()
+			require.NoError(t, err)
+			require.NotEmpty(t, lastCalledAt)
 		})
-
-		_ = store.Del(licensing.LicenseValidityStoreKey)
-		_ = store.Del(lastCalledAtStoreKey)
-
-		doer := &mockDoer{
-			status:   '1',
-			response: []byte(``),
-		}
-		handler := licenseChecker{
-			siteID: siteID,
-			token:  token,
-			doer:   doer,
-			logger: logtest.NoOp(t),
-		}
-
-		err := handler.Handle(context.Background())
-		require.NoError(t, err)
-
-		// check doer NOT called
-		require.False(t, doer.DoCalled)
-
-		// check result was set to true
-		valid, err := store.Get(licensing.LicenseValidityStoreKey).Bool()
-		require.NoError(t, err)
-		require.True(t, valid)
-
-		// check last called at was set
-		lastCalledAt, err := store.Get(lastCalledAtStoreKey).String()
-		require.NoError(t, err)
-		require.NotEmpty(t, lastCalledAt)
-	})
+	}
 
 	tests := map[string]struct {
 		response []byte
@@ -247,6 +217,13 @@ func Test_licenseChecker(t *testing.T) {
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			cleanupStore()
+			defaultMockGetLicense := licensing.MockGetConfiguredProductLicenseInfo
+			licensing.MockGetConfiguredProductLicenseInfo = func() (*license.Info, string, error) {
+				return &license.Info{Tags: []string{"plan:enterprise-0"}}, "", nil
+			}
+			t.Cleanup(func() {
+				licensing.MockGetConfiguredProductLicenseInfo = defaultMockGetLicense
+			})
 
 			mockDotcomURL(t, test.baseUrl)
 
@@ -254,11 +231,17 @@ func Test_licenseChecker(t *testing.T) {
 				status:   test.status,
 				response: test.response,
 			}
+			mockDB := dbmocks.NewMockDB()
+			gs := dbmocks.NewMockGlobalStateStore()
+			mockDB.GlobalStateFunc.SetDefaultReturn(gs)
+			gs.GetFunc.SetDefaultReturn(database.GlobalState{
+				SiteID: siteID,
+			}, nil)
 			checker := licenseChecker{
-				siteID: siteID,
-				token:  token,
+				db:     mockDB,
 				doer:   doer,
 				logger: logtest.NoOp(t),
+				kv:     kv,
 			}
 
 			err := checker.Handle(context.Background())
@@ -266,25 +249,25 @@ func Test_licenseChecker(t *testing.T) {
 				require.Error(t, err)
 
 				// check result was NOT set
-				require.True(t, store.Get(licensing.LicenseValidityStoreKey).IsNil())
+				require.True(t, kv.Get(licensing.LicenseValidityStoreKey).IsNil())
 			} else {
 				require.NoError(t, err)
 
 				// check result was set
-				got, err := store.Get(licensing.LicenseValidityStoreKey).Bool()
+				got, err := kv.Get(licensing.LicenseValidityStoreKey).Bool()
 				require.NoError(t, err)
 				require.Equal(t, test.want, got)
 
 				// check result reason was set
 				if test.reason != nil {
-					got, err := store.Get(licensing.LicenseInvalidReason).String()
+					got, err := kv.Get(licensing.LicenseInvalidReason).String()
 					require.NoError(t, err)
 					require.Equal(t, *test.reason, got)
 				}
 			}
 
 			// check last called at was set
-			lastCalledAt, err := store.Get(lastCalledAtStoreKey).String()
+			lastCalledAt, err := kv.Get(lastCalledAtStoreKey).String()
 			require.NoError(t, err)
 			require.NotEmpty(t, lastCalledAt)
 
@@ -294,7 +277,8 @@ func Test_licenseChecker(t *testing.T) {
 			require.Equal(t, "POST", doer.Request.Method)
 			require.Equal(t, rUrl, doer.Request.URL.String())
 			require.Equal(t, "application/json", doer.Request.Header.Get("Content-Type"))
-			require.Equal(t, "Bearer "+token, doer.Request.Header.Get("Authorization"))
+			// The token for the license.
+			require.Equal(t, "Bearer slk_e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", doer.Request.Header.Get("Authorization"))
 			var body struct {
 				SiteID string `json:"siteID"`
 			}

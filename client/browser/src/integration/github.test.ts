@@ -52,8 +52,8 @@ describe('GitHub', () => {
         })
 
         testContext.overrideGraphQL({
-            ViewerConfiguration: () => ({
-                viewerConfiguration: {
+            ViewerSettings: () => ({
+                viewerSettings: {
                     subjects: [],
                     merged: { contents: '', messages: [] },
                 },
@@ -158,8 +158,8 @@ describe('GitHub', () => {
     //         extensions: extensionSettings,
     //     }
     //     testContext.overrideGraphQL({
-    //         ViewerConfiguration: () => ({
-    //             viewerConfiguration: {
+    //         ViewerSettings: () => ({
+    //             viewerSettings: {
     //                 subjects: [
     //                     {
     //                         __typename: 'User',
@@ -285,8 +285,6 @@ describe('GitHub', () => {
     //         },
     //     })
 
-    //     await percySnapshot(driver.page, 'Browser extension: GitHub - blob view with code intel popup')
-
     //     // 2. Check that token click does not do anything by default
     //     await token.click()
     //     await driver.page.waitForTimeout(1000)
@@ -323,8 +321,8 @@ describe('GitHub', () => {
                     extensions: extensionSettings,
                 }
                 testContext.overrideGraphQL({
-                    ViewerConfiguration: () => ({
-                        viewerConfiguration: {
+                    ViewerSettings: () => ({
+                        viewerSettings: {
                             subjects: [
                                 {
                                     __typename: 'User',
@@ -645,8 +643,8 @@ describe('GitHub', () => {
                     extensions: extensionSettings,
                 }
                 testContext.overrideGraphQL({
-                    ViewerConfiguration: () => ({
-                        viewerConfiguration: {
+                    ViewerSettings: () => ({
+                        viewerSettings: {
                             subjects: [
                                 {
                                     __typename: 'User',

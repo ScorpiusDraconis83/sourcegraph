@@ -36,10 +36,10 @@
                 padding: 0,
             },
             '&.cm-focused .cm-selectionLayer .cm-selectionBackground': {
-                backgroundColor: 'var(--code-selection-bg-2)',
+                backgroundColor: 'var(--code-selection-bg-2) !important',
             },
             '.cm-selectionLayer .cm-selectionBackground': {
-                backgroundColor: 'var(--code-selection-bg)',
+                backgroundColor: 'var(--code-selection-bg) !important',
             },
         }),
         defaultTheme,
@@ -54,6 +54,7 @@
     import { multiline, parseInputAsQuery, searchInputEventHandlers, toSingleLine } from '$lib/branded'
     import type { SearchPatternType } from '$lib/graphql-operations'
     import { createCompartments } from '$lib/codemirror/utils'
+    import { afterNavigate } from '$app/navigation'
 
     export let value: string
     export let patternType: SearchPatternType
@@ -97,8 +98,10 @@
     }))
 
     function createEditor(container: HTMLDivElement, doc: string, extensions: Extension): EditorView {
+        // Moves the cursor to the end of the document by default
+        const selection = { anchor: doc.length }
         const view = new EditorView({
-            state: EditorState.create({ doc, extensions }),
+            state: EditorState.create({ doc, extensions, selection }),
             parent: container,
         })
         return view
@@ -127,16 +130,25 @@
             staticExtensions,
         ])
 
-        if (autoFocus) {
-            window.requestAnimationFrame(() => view!.focus())
+        // This is only run once when the view is created
+        if (view && autoFocus) {
+            view.focus()
         }
     }
+
+    afterNavigate(() => {
+        // We also set focus after navigation because SvelteKit resets the focus
+        // when navigating to a new page.
+        if (autoFocus) {
+            view?.focus()
+        }
+    })
 </script>
 
 {#if browser}
-    <div bind:this={container} class="root test-query-input test-editor" data-editor="codemirror6" />
+    <div bind:this={container} class="root test-query-input test-editor" data-editor="codemirror6" data-query-input />
 {:else}
-    <div class="root">
+    <div class="root" data-query-input>
         <input value={normalizedValue} {placeholder} />
     </div>
 {/if}
@@ -152,7 +164,6 @@
     .root {
         flex: 1;
         box-sizing: border-box;
-        background-color: var(--color-bg-1);
         min-width: 0;
         padding-left: 1px;
 

@@ -206,8 +206,8 @@ func (r *NodeResolver) ToGitCommit() (*GitCommitResolver, bool) {
 	return n, ok
 }
 
-func (r *NodeResolver) ToSavedSearch() (*savedSearchResolver, bool) {
-	n, ok := r.Node.(*savedSearchResolver)
+func (r *NodeResolver) ToSavedSearch() (SavedSearchResolver, bool) {
+	n, ok := r.Node.(SavedSearchResolver)
 	return n, ok
 }
 
@@ -223,16 +223,6 @@ func (r *NodeResolver) ToNotebook() (NotebookResolver, bool) {
 
 func (r *NodeResolver) ToSite() (*siteResolver, bool) {
 	n, ok := r.Node.(*siteResolver)
-	return n, ok
-}
-
-func (r *NodeResolver) ToVulnerability() (resolverstubs.VulnerabilityResolver, bool) {
-	n, ok := r.Node.(resolverstubs.VulnerabilityResolver)
-	return n, ok
-}
-
-func (r *NodeResolver) ToVulnerabilityMatch() (resolverstubs.VulnerabilityMatchResolver, bool) {
-	n, ok := r.Node.(resolverstubs.VulnerabilityMatchResolver)
 	return n, ok
 }
 
@@ -382,7 +372,22 @@ func (r *NodeResolver) ToGitserverInstance() (*gitserverResolver, bool) {
 	return n, ok
 }
 
+func (r *NodeResolver) ToIndexedSearchInstance() (*indexedSearchInstance, bool) {
+	n, ok := r.Node.(*indexedSearchInstance)
+	return n, ok
+}
+
 func (r *NodeResolver) ToSearchJob() (SearchJobResolver, bool) {
 	n, ok := r.Node.(SearchJobResolver)
+	return n, ok
+}
+
+func (r *NodeResolver) ToCodeGraphData() (resolverstubs.CodeGraphDataResolver, bool) {
+	n, ok := r.Node.(resolverstubs.CodeGraphDataResolver)
+	return n, ok
+}
+
+func (r *NodeResolver) ToPrompt() (PromptResolver, bool) {
+	n, ok := r.Node.(PromptResolver)
 	return n, ok
 }

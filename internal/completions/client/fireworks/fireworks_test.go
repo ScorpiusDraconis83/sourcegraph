@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/hexops/autogold/v2"
+	"github.com/sourcegraph/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -32,8 +33,23 @@ func TestErrStatusNotOK(t *testing.T) {
 		},
 	}, "", "")
 
+	compRequest := types.CompletionRequest{
+		Feature:         types.CompletionsFeatureCode,
+		Version:         types.CompletionsVersionLegacy,
+		ModelConfigInfo: types.ModelConfigInfo{
+			// No provider or model information available.
+			// We expect tests that need these values to fail.
+		},
+		Parameters: types.CompletionRequestParameters{
+			Messages: []types.Message{
+				{Text: "Hey"},
+			},
+		},
+	}
+
 	t.Run("Complete", func(t *testing.T) {
-		resp, err := mockClient.Complete(context.Background(), types.CompletionsFeatureCode, types.CompletionRequestParameters{Messages: []types.Message{{Text: "Hey"}}})
+		logger := log.Scoped("completions")
+		resp, err := mockClient.Complete(context.Background(), logger, compRequest)
 		require.Error(t, err)
 		assert.Nil(t, resp)
 
@@ -43,7 +59,9 @@ func TestErrStatusNotOK(t *testing.T) {
 	})
 
 	t.Run("Stream", func(t *testing.T) {
-		err := mockClient.Stream(context.Background(), types.CompletionsFeatureCode, types.CompletionRequestParameters{Messages: []types.Message{{Text: "Hey"}}}, func(event types.CompletionResponse) error { return nil })
+		logger := log.Scoped("completions")
+		sendEventFn := func(event types.CompletionResponse) error { return nil }
+		err := mockClient.Stream(context.Background(), logger, compRequest, sendEventFn)
 		require.Error(t, err)
 
 		autogold.Expect("Fireworks: unexpected status code 429: oh no, please slow down!").Equal(t, err.Error())

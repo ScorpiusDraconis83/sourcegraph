@@ -1,4 +1,5 @@
-// NOTE(naman): Remember to add events to allow list: https://docs.sourcegraph.com/dev/background-information/data-usage-pipeline#allow-list
+import type { AuthProvider } from '../jscontext'
+
 export const enum EventName {
     CODY_CHAT_PAGE_VIEWED = 'web:codyChat:pageViewed',
     CODY_CHAT_SUBMIT = 'web:codyChat:submit',
@@ -15,7 +16,6 @@ export const enum EventName {
     CODY_CHAT_SCOPE_INFERRED_REPO_DISABLED = 'web:codyChat:inferredRepoDisabled',
     CODY_CHAT_SCOPE_INFERRED_FILE_ENABLED = 'web:codyChat:inferredFileEnabled',
     CODY_CHAT_SCOPE_INFERRED_FILE_DISABLED = 'web:codyChat:inferredFileDisabled',
-    VIEW_GET_CODY = 'GetCody',
 
     CODY_EDITOR_WIDGET_VIEWED = 'web:codyEditorWidget:viewed',
     CODY_SIDEBAR_CHAT_OPENED = 'web:codySidebar:chatOpened',
@@ -39,19 +39,39 @@ export const enum EventName {
     DOWNLOAD_IDE = 'DownloadIDE',
     DOWNLOAD_APP = 'DownloadApp',
 
+    CODY_EDITOR_SETUP_VIEWED = 'CodyEditorSetUpViewed',
+    CODY_EDITOR_SETUP_OPEN_MARKETPLACE = 'CodyEditorSetUpOpenMarketplace',
+    CODY_EDITOR_FEATURES_VIEWED = 'CodyEditorFeaturesViewed',
     CODY_MANAGEMENT_PAGE_VIEWED = 'CodyManageViewed',
     CODY_SUBSCRIPTION_PAGE_VIEWED = 'CodyPlanSelectionViewed',
     CODY_SUBSCRIPTION_PLAN_CLICKED = 'CodyPlanSelectionClicked',
     CODY_SUBSCRIPTION_PLAN_CONFIRMED = 'CodyPlanSelectionConfirmed',
+    CODY_SUBSCRIPTION_ADD_CREDIT_CARD_CLICKED = 'CodyAddCreditCard',
+    CODY_MANAGE_SUBSCRIPTION_CLICKED = 'CodyManageSubscriptionClicked',
     CODY_ONBOARDING_WELCOME_VIEWED = 'CodyWelcomeViewed',
     CODY_ONBOARDING_PURPOSE_VIEWED = 'CodyUseCaseViewed',
     CODY_ONBOARDING_PURPOSE_SELECTED = 'CodyUseCaseSelected',
     CODY_ONBOARDING_CHOOSE_EDITOR_VIEWED = 'CodyEditorViewed',
     CODY_ONBOARDING_CHOOSE_EDITOR_SKIPPED = 'CodyEditorSkipped',
     CODY_ONBOARDING_CHOOSE_EDITOR_SELECTED = 'CodyEditorSelected',
+    CODY_HANDRAISER_TEST_ENROLLMENT = 'HubspotFormFromWorkPersonalToHandRaiserTestEnrollment',
 }
 
 export const enum EventLocation {
     NAV_BAR = 'NavBar',
     CHAT_RESPONSE = 'ChatResponse',
+}
+
+export const V2AuthProviderTypes: { [k in AuthProvider['serviceType']]: number } = {
+    github: 0,
+    gitlab: 1,
+    bitbucketCloud: 2,
+    'http-header': 3,
+    openidconnect: 4,
+    'sourcegraph-operator': 5,
+    saml: 6,
+    builtin: 7,
+    gerrit: 8,
+    azuredevops: 9,
+    bitbucketServer: 10,
 }

@@ -12,17 +12,20 @@ import (
 )
 
 type operations struct {
-	getReferences          *observation.Operation
-	getImplementations     *observation.Operation
-	getPrototypes          *observation.Operation
-	getDiagnostics         *observation.Operation
-	getHover               *observation.Operation
-	getDefinitions         *observation.Operation
-	getRanges              *observation.Operation
-	getStencil             *observation.Operation
-	getClosestDumpsForBlob *observation.Operation
-	snapshotForDocument    *observation.Operation
-	visibleUploadsForPath  *observation.Operation
+	getReferences                     *observation.Operation
+	getImplementations                *observation.Operation
+	getPrototypes                     *observation.Operation
+	getDiagnostics                    *observation.Operation
+	getHover                          *observation.Operation
+	getDefinitions                    *observation.Operation
+	getRanges                         *observation.Operation
+	getStencil                        *observation.Operation
+	getClosestCompletedUploadsForBlob *observation.Operation
+	snapshotForDocument               *observation.Operation
+	visibleUploadsForPath             *observation.Operation
+	preciseUsages                     *observation.Operation
+	syntacticUsages                   *observation.Operation
+	searchBasedUsages                 *observation.Operation
 }
 
 var m = new(metrics.SingletonREDMetrics)
@@ -46,17 +49,20 @@ func newOperations(observationCtx *observation.Context) *operations {
 	}
 
 	return &operations{
-		getReferences:          op("getReferences"),
-		getImplementations:     op("getImplementations"),
-		getPrototypes:          op("getPrototypes"),
-		getDiagnostics:         op("getDiagnostics"),
-		getHover:               op("getHover"),
-		getDefinitions:         op("getDefinitions"),
-		getRanges:              op("getRanges"),
-		getStencil:             op("getStencil"),
-		getClosestDumpsForBlob: op("GetClosestDumpsForBlob"),
-		snapshotForDocument:    op("SnapshotForDocument"),
-		visibleUploadsForPath:  op("VisibleUploadsForPath"),
+		getReferences:                     op("getReferences"),
+		getImplementations:                op("getImplementations"),
+		getPrototypes:                     op("getPrototypes"),
+		getDiagnostics:                    op("getDiagnostics"),
+		getHover:                          op("getHover"),
+		getDefinitions:                    op("getDefinitions"),
+		getRanges:                         op("getRanges"),
+		getStencil:                        op("getStencil"),
+		getClosestCompletedUploadsForBlob: op("GetClosestCompletedUploadsForBlob"),
+		snapshotForDocument:               op("SnapshotForDocument"),
+		visibleUploadsForPath:             op("VisibleUploadsForPath"),
+		preciseUsages:                     op("PreciseUsages"),
+		syntacticUsages:                   op("SyntacticUsages"),
+		searchBasedUsages:                 op("SearchBasedUsages"),
 	}
 }
 

@@ -8,6 +8,8 @@ import (
 	"github.com/coreos/go-oidc"
 	"golang.org/x/oauth2"
 
+	"github.com/sourcegraph/log"
+
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/auth"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/hubspot"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/hubspot/hubspotutil"
@@ -15,7 +17,10 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/encryption"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
+	"github.com/sourcegraph/sourcegraph/internal/telemetry"
+	"github.com/sourcegraph/sourcegraph/internal/telemetry/telemetryrecorder"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
+	"github.com/sourcegraph/sourcegraph/schema"
 )
 
 type ExternalAccountData struct {
@@ -27,7 +32,19 @@ type ExternalAccountData struct {
 // getOrCreateUser gets or creates a user account based on the OpenID Connect token. It returns the
 // authenticated actor if successful; otherwise it returns a friendly error message (safeErrMsg)
 // that is safe to display to users, and a non-nil err with lower-level error details.
-func getOrCreateUser(ctx context.Context, db database.DB, p *Provider, token *oauth2.Token, idToken *oidc.IDToken, userInfo *oidc.UserInfo, claims *userClaims, usernamePrefix string, hubSpotProps *hubspot.ContactProperties) (newUserCreated bool, _ *actor.Actor, safeErrMsg string, err error) {
+func getOrCreateUser(
+	ctx context.Context,
+	logger log.Logger,
+	db database.DB,
+	p schema.OpenIDConnectAuthProvider,
+	token *oauth2.Token,
+	idToken *oidc.IDToken,
+	userInfo *oidc.UserInfo,
+	claims *userClaims,
+	usernamePrefix string,
+	userCreateEventProperties telemetry.EventMetadata,
+	hubSpotProps *hubspot.ContactProperties,
+) (newUserCreated bool, _ *actor.Actor, safeErrMsg string, err error) {
 	if userInfo.Email == "" {
 		return false, nil, "Only users with an email address may authenticate to Sourcegraph.", errors.New("no email address in claims")
 	}
@@ -37,24 +54,9 @@ func getOrCreateUser(ctx context.Context, db database.DB, p *Provider, token *oa
 		return false, nil, fmt.Sprintf("Only users with verified email addresses may authenticate to Sourcegraph. The email address %q is not verified on the external authentication provider.", userInfo.Email), errors.Errorf("refusing unverified user email address %q", userInfo.Email)
 	}
 
-	pi, err := p.getCachedInfoAndError()
-	if err != nil {
-		return false, nil, "", err
-	}
-
-	login := claims.PreferredUsername
-	if login == "" {
-		login = userInfo.Email
-	}
+	login := getLogin(claims, userInfo)
 	email := userInfo.Email
-	displayName := claims.GivenName
-	if displayName == "" {
-		if claims.Name == "" {
-			displayName = claims.Name
-		} else {
-			displayName = login
-		}
-	}
+	displayName := getDisplayName(claims, login)
 
 	if usernamePrefix != "" {
 		login = usernamePrefix + login
@@ -62,7 +64,7 @@ func getOrCreateUser(ctx context.Context, db database.DB, p *Provider, token *oa
 	login, err = auth.NormalizeUsername(login)
 	if err != nil {
 		return false, nil,
-			fmt.Sprintf("Error normalizing the username %q. See https://docs.sourcegraph.com/admin/auth/#username-normalization.", login),
+			fmt.Sprintf("Error normalizing the username %q. See https://sourcegraph.com/docs/admin/auth/#username-normalization.", login),
 			errors.Wrap(err, "normalize username")
 	}
 
@@ -83,7 +85,8 @@ func getOrCreateUser(ctx context.Context, db database.DB, p *Provider, token *oa
 		Data:     extsvc.NewUnencryptedData(serializedUser),
 	}
 
-	newUserCreated, userID, safeErrMsg, err := auth.GetAndSaveUser(ctx, db, auth.GetAndSaveUserOp{
+	recorder := telemetryrecorder.New(db)
+	newUserCreated, userID, safeErrMsg, err := auth.GetAndSaveUser(ctx, logger, db, recorder, auth.GetAndSaveUserOp{
 		UserProps: database.NewUser{
 			Username:        login,
 			Email:           email,
@@ -92,13 +95,15 @@ func getOrCreateUser(ctx context.Context, db database.DB, p *Provider, token *oa
 			AvatarURL:       claims.Picture,
 		},
 		ExternalAccount: extsvc.AccountSpec{
-			ServiceType: p.config.Type,
-			ServiceID:   pi.ServiceID,
-			ClientID:    pi.ClientID,
+			ServiceType: p.Type,
+			ServiceID:   p.Issuer,
+			ClientID:    p.ClientID,
 			AccountID:   idToken.Subject,
 		},
-		ExternalAccountData: data,
-		CreateIfNotExist:    p.config.AllowSignup == nil || *p.config.AllowSignup,
+		UserCreateEventProperties: userCreateEventProperties,
+		ExternalAccountData:       data,
+		CreateIfNotExist:          p.AllowSignup == nil || *p.AllowSignup,
+		SingleIdentityPerUser:     p.SingleIdentityPerUser,
 	})
 	if err != nil {
 		return false, nil, safeErrMsg, err

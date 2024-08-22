@@ -11,13 +11,13 @@ import (
 	"github.com/gomodule/redigo/redis"
 	"github.com/inconshreveable/log15" //nolint:logging // TODO move all logging to sourcegraph/log
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/hooks"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/conf/validation"
 	"github.com/sourcegraph/sourcegraph/internal/actor"
 	"github.com/sourcegraph/sourcegraph/internal/auth"
 	"github.com/sourcegraph/sourcegraph/internal/codygateway"
 	"github.com/sourcegraph/sourcegraph/internal/conf"
-	"github.com/sourcegraph/sourcegraph/internal/conf/conftypes"
 	"github.com/sourcegraph/sourcegraph/internal/conf/deploy"
+	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/env"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc/versions"
@@ -66,6 +66,7 @@ type AlertFuncArgs struct {
 	IsAuthenticated     bool             // whether the viewer is authenticated
 	IsSiteAdmin         bool             // whether the viewer is a site admin
 	ViewerFinalSettings *schema.Settings // the viewer's final user/org/global settings
+	DB                  database.DB
 }
 
 func (r *siteResolver) Alerts(ctx context.Context) ([]*Alert, error) {
@@ -78,6 +79,7 @@ func (r *siteResolver) Alerts(ctx context.Context) ([]*Alert, error) {
 		IsAuthenticated:     actor.FromContext(ctx).IsAuthenticated(),
 		IsSiteAdmin:         auth.CheckCurrentUserIsSiteAdmin(ctx, r.db) == nil,
 		ViewerFinalSettings: settings,
+		DB:                  r.db,
 	}
 
 	var alerts []*Alert
@@ -93,16 +95,6 @@ func (r *siteResolver) Alerts(ctx context.Context) ([]*Alert, error) {
 var disableSecurity, _ = strconv.ParseBool(env.Get("DISABLE_SECURITY", "false", "disables security upgrade notices"))
 
 func init() {
-	conf.ContributeWarning(func(c conftypes.SiteConfigQuerier) (problems conf.Problems) {
-		if deploy.IsDeployTypeSingleDockerContainer(deploy.Type()) {
-			return nil
-		}
-		if c.SiteConfig().ExternalURL == "" {
-			problems = append(problems, conf.NewSiteProblem("`externalURL` is required to be set for many features of Sourcegraph to work correctly."))
-		}
-		return problems
-	})
-
 	// Warn if email sending is not configured.
 	AlertFuncs = append(AlertFuncs, emailSendingNotConfiguredAlert)
 
@@ -115,8 +107,6 @@ func init() {
 
 	// Notify when updates are available, if the instance can access the public internet.
 	AlertFuncs = append(AlertFuncs, updateAvailableAlert)
-
-	AlertFuncs = append(AlertFuncs, storageLimitReachedAlert)
 
 	// Notify admins if critical alerts are firing, if Prometheus is configured.
 	prom, err := srcprometheus.NewClient(srcprometheus.PrometheusURL)
@@ -157,7 +147,7 @@ func init() {
 			}
 		}
 
-		warnings, err := conf.GetWarnings()
+		warnings, err := validation.GetWarnings(args.DB)
 		if err != nil {
 			return []*Alert{
 				{
@@ -197,26 +187,6 @@ func init() {
 	AlertFuncs = append(AlertFuncs, gitlabVersionAlert)
 
 	AlertFuncs = append(AlertFuncs, codyGatewayUsageAlert)
-}
-
-func storageLimitReachedAlert(args AlertFuncArgs) []*Alert {
-	licenseInfo := hooks.GetLicenseInfo()
-	if licenseInfo == nil {
-		return nil
-	}
-
-	if licenseInfo.CodeScaleCloseToLimit {
-		return []*Alert{{
-			TypeValue:    AlertTypeWarning,
-			MessageValue: "You're about to reach the 100GiB storage limit. Upgrade to [Sourcegraph Enterprise](https://sourcegraph.com/pricing) for unlimited storage for your code.",
-		}}
-	} else if licenseInfo.CodeScaleExceededLimit {
-		return []*Alert{{
-			TypeValue:    AlertTypeError,
-			MessageValue: "You've used all 100GiB of storage. Upgrade to [Sourcegraph Enterprise](https://sourcegraph.com/pricing) for unlimited storage for your code.",
-		}}
-	}
-	return nil
 }
 
 func updateAvailableAlert(args AlertFuncArgs) []*Alert {

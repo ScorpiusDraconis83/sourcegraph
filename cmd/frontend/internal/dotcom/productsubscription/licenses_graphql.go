@@ -11,7 +11,6 @@ import (
 	"github.com/sourcegraph/log"
 
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/auth"
 	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/database"
@@ -92,6 +91,7 @@ func (r *productLicense) Info() (*graphqlbackend.ProductLicenseInfo, error) {
 	}
 	hashedKeyValue := conf.HashedLicenseKeyForAnalytics(r.v.LicenseKey)
 	return &graphqlbackend.ProductLicenseInfo{
+		Plan:                          info.Plan(),
 		TagsValue:                     info.Tags,
 		UserCountValue:                info.UserCount,
 		ExpiresAtValue:                info.ExpiresAt,
@@ -160,7 +160,7 @@ func (r ProductSubscriptionLicensingResolver) GenerateProductLicenseForSubscript
 
 func (r ProductSubscriptionLicensingResolver) ProductLicenses(ctx context.Context, args *graphqlbackend.ProductLicensesArgs) (graphqlbackend.ProductLicenseConnection, error) {
 	// 🚨 SECURITY: Only site admins may list product licenses.
-	if _, err := serviceAccountOrSiteAdmin(ctx, r.DB, true); err != nil {
+	if _, err := hasRBACPermsOrSiteAdmin(ctx, r.DB, true); err != nil {
 		return nil, err
 	}
 
@@ -260,10 +260,10 @@ func (r *productLicenseConnection) TotalCount(ctx context.Context) (int32, error
 	return int32(count), err
 }
 
-func (r *productLicenseConnection) PageInfo(ctx context.Context) (*graphqlutil.PageInfo, error) {
+func (r *productLicenseConnection) PageInfo(ctx context.Context) (*gqlutil.PageInfo, error) {
 	results, err := r.compute(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return graphqlutil.HasNextPage(r.opt.LimitOffset != nil && len(results) > r.opt.Limit), nil
+	return gqlutil.HasNextPage(r.opt.LimitOffset != nil && len(results) > r.opt.Limit), nil
 }

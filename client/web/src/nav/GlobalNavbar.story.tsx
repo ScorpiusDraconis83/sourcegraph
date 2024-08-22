@@ -36,6 +36,7 @@ const defaultProps: GlobalNavbarProps = {
     setFuzzyFinderIsVisible: () => {},
     notebooksEnabled: true,
     codeMonitoringEnabled: true,
+    searchJobsEnabled: true,
     ownEnabled: true,
     showFeedbackModal: () => undefined,
 }
@@ -73,36 +74,131 @@ const decorator: Decorator<GlobalNavbarProps> = Story => {
 const config: Meta<typeof GlobalNavbar> = {
     title: 'web/nav/GlobalNav',
     decorators: [decorator],
-    parameters: {
-        chromatic: {
-            disableSnapshot: false,
-            viewports: [
-                // 320, // TODO: Mobile size detection is not working in Storybook
-                576, 978,
-            ],
-        },
-    },
+    parameters: {},
 }
 
 export default config
 
-export const Default: StoryFn<GlobalNavbarProps> = props => (
-    <Grid columnCount={1}>
-        <div>
-            <H3 className="ml-2">Anonymous viewer</H3>
-            <GlobalNavbar {...props} />
-        </div>
-        <div>
-            <H3 className="ml-2">Anonymous viewer with all possible nav items</H3>
-            <GlobalNavbar {...props} {...allNavItemsProps} />
-        </div>
-        <div>
-            <H3 className="ml-2">Authenticated user with all possible nav items</H3>
-            <GlobalNavbar {...props} {...allNavItemsProps} {...allAuthenticatedNavItemsProps} />
-        </div>
-        <div>
-            <H3 className="ml-2">Authenticated user with all possible nav items and search input</H3>
-            <GlobalNavbar {...props} {...allNavItemsProps} {...allAuthenticatedNavItemsProps} showSearchBox={true} />
-        </div>
-    </Grid>
-)
+export const Default: StoryFn<GlobalNavbarProps> = props => {
+    window.context.codeSearchEnabledOnInstance = true
+    window.context.codyEnabledOnInstance = true
+    window.context.codyEnabledForCurrentUser = true
+    return (
+        <Grid columnCount={1}>
+            <div>
+                <H3 className="ml-2">Anonymous viewer</H3>
+                <GlobalNavbar {...props} />
+            </div>
+            <div>
+                <H3 className="ml-2">Anonymous viewer with all possible nav items</H3>
+                <GlobalNavbar {...props} {...allNavItemsProps} />
+            </div>
+            <div>
+                <H3 className="ml-2">Authenticated user with all possible nav items</H3>
+                <GlobalNavbar {...props} {...allNavItemsProps} {...allAuthenticatedNavItemsProps} />
+            </div>
+            <div>
+                <H3 className="ml-2">Authenticated user with all possible nav items and search input</H3>
+                <GlobalNavbar
+                    {...props}
+                    {...allNavItemsProps}
+                    {...allAuthenticatedNavItemsProps}
+                    showSearchBox={true}
+                />
+            </div>
+        </Grid>
+    )
+}
+
+export const CodyOnly: StoryFn<GlobalNavbarProps> = props => {
+    window.context.codeSearchEnabledOnInstance = false
+    window.context.codyEnabledOnInstance = true
+    window.context.codyEnabledForCurrentUser = true
+    return (
+        <Grid columnCount={1}>
+            <div>
+                <H3 className="ml-2">Anonymous viewer</H3>
+                <GlobalNavbar {...props} />
+            </div>
+            <div>
+                <H3 className="ml-2">Anonymous viewer with all possible nav items</H3>
+                <GlobalNavbar {...props} {...allNavItemsProps} />
+            </div>
+            <div>
+                <H3 className="ml-2">Authenticated user with all possible nav items</H3>
+                <GlobalNavbar {...props} {...allNavItemsProps} {...allAuthenticatedNavItemsProps} />
+            </div>
+            <div>
+                <H3 className="ml-2">Authenticated user with all possible nav items and search input</H3>
+                <GlobalNavbar
+                    {...props}
+                    {...allNavItemsProps}
+                    {...allAuthenticatedNavItemsProps}
+                    showSearchBox={true}
+                />
+            </div>
+        </Grid>
+    )
+}
+
+export const UserNotLicensedForCody: StoryFn<GlobalNavbarProps> = props => {
+    window.context.codeSearchEnabledOnInstance = true
+    window.context.codyEnabledOnInstance = true
+    window.context.codyEnabledForCurrentUser = false
+    return (
+        <Grid columnCount={1}>
+            <div>
+                <H3 className="ml-2">Anonymous viewer</H3>
+                <GlobalNavbar {...props} />
+            </div>
+            <div>
+                <H3 className="ml-2">Anonymous viewer with all possible nav items</H3>
+                <GlobalNavbar {...props} {...allNavItemsProps} />
+            </div>
+            <div>
+                <H3 className="ml-2">Authenticated user with all possible nav items</H3>
+                <GlobalNavbar {...props} {...allNavItemsProps} {...allAuthenticatedNavItemsProps} />
+            </div>
+            <div>
+                <H3 className="ml-2">Authenticated user with all possible nav items and search input</H3>
+                <GlobalNavbar
+                    {...props}
+                    {...allNavItemsProps}
+                    {...allAuthenticatedNavItemsProps}
+                    showSearchBox={true}
+                />
+            </div>
+        </Grid>
+    )
+}
+
+export const CodeSearchOnly: StoryFn<GlobalNavbarProps> = props => {
+    window.context.codeSearchEnabledOnInstance = true
+    window.context.codyEnabledOnInstance = false
+    window.context.codyEnabledForCurrentUser = false
+    return (
+        <Grid columnCount={1}>
+            <div>
+                <H3 className="ml-2">Anonymous viewer</H3>
+                <GlobalNavbar {...props} />
+            </div>
+            <div>
+                <H3 className="ml-2">Anonymous viewer with all possible nav items</H3>
+                <GlobalNavbar {...props} {...allNavItemsProps} />
+            </div>
+            <div>
+                <H3 className="ml-2">Authenticated user with all possible nav items</H3>
+                <GlobalNavbar {...props} {...allNavItemsProps} {...allAuthenticatedNavItemsProps} />
+            </div>
+            <div>
+                <H3 className="ml-2">Authenticated user with all possible nav items and search input</H3>
+                <GlobalNavbar
+                    {...props}
+                    {...allNavItemsProps}
+                    {...allAuthenticatedNavItemsProps}
+                    showSearchBox={true}
+                />
+            </div>
+        </Grid>
+    )
+}

@@ -1,33 +1,25 @@
-import React, { useMemo, useEffect, useState, useLayoutEffect, useCallback } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 
 import { mdiPlus } from '@mdi/js'
 import classNames from 'classnames'
-import { type Location, useNavigate, useLocation, type NavigateFunction } from 'react-router-dom'
+import { useLocation, useNavigate, type Location, type NavigateFunction } from 'react-router-dom'
 import { of } from 'rxjs'
 import { catchError, map } from 'rxjs/operators'
 
 import { asError, isErrorLike } from '@sourcegraph/common'
 import type { Settings } from '@sourcegraph/shared/src/schema/settings.schema'
 import type { SettingsCascadeProps } from '@sourcegraph/shared/src/settings/settings'
-import {
-    PageHeader,
-    LoadingSpinner,
-    useObservable,
-    Button,
-    Link,
-    ProductStatusBadge,
-    Icon,
-    ButtonLink,
-} from '@sourcegraph/wildcard'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import { EVENT_LOGGER } from '@sourcegraph/shared/src/telemetry/web/eventLogger'
+import { Button, ButtonLink, Icon, Link, LoadingSpinner, PageHeader, useObservable } from '@sourcegraph/wildcard'
 
 import type { AuthenticatedUser } from '../../auth'
 import { CodeMonitoringLogo } from '../../code-monitoring/CodeMonitoringLogo'
 import { PageTitle } from '../../components/PageTitle'
-import { eventLogger } from '../../tracking/eventLogger'
 
 import {
-    fetchUserCodeMonitors as _fetchUserCodeMonitors,
     fetchCodeMonitors as _fetchCodeMonitors,
+    fetchUserCodeMonitors as _fetchUserCodeMonitors,
     toggleCodeMonitorEnabled as _toggleCodeMonitorEnabled,
 } from './backend'
 import { CodeMonitoringGettingStarted } from './CodeMonitoringGettingStarted'
@@ -65,7 +57,7 @@ function setSelectedLocationTab(location: Location, navigate: NavigateFunction, 
     }
 }
 
-export interface CodeMonitoringPageProps extends SettingsCascadeProps<Settings> {
+export interface CodeMonitoringPageProps extends SettingsCascadeProps<Settings>, TelemetryV2Props {
     authenticatedUser: AuthenticatedUser | null
     fetchUserCodeMonitors?: typeof _fetchUserCodeMonitors
     fetchCodeMonitors?: typeof _fetchCodeMonitors
@@ -80,6 +72,7 @@ export const CodeMonitoringPage: React.FunctionComponent<React.PropsWithChildren
     fetchCodeMonitors = _fetchCodeMonitors,
     toggleCodeMonitorEnabled = _toggleCodeMonitorEnabled,
     testForceTab,
+    telemetryRecorder,
 }) => {
     const userHasCodeMonitors = useObservable(
         useMemo(
@@ -125,19 +118,22 @@ export const CodeMonitoringPage: React.FunctionComponent<React.PropsWithChildren
         if (userHasCodeMonitors !== undefined) {
             switch (currentTab) {
                 case 'getting-started': {
-                    eventLogger.logPageView('CodeMonitoringGettingStartedPage')
+                    EVENT_LOGGER.logPageView('CodeMonitoringGettingStartedPage')
+                    telemetryRecorder.recordEvent('codeMonitor.gettingStarted', 'view')
                     break
                 }
                 case 'logs': {
-                    eventLogger.logPageView('CodeMonitoringLogsPage')
+                    EVENT_LOGGER.logPageView('CodeMonitoringLogsPage')
+                    telemetryRecorder.recordEvent('codeMonitor.logs', 'view')
                     break
                 }
                 case 'list': {
-                    eventLogger.logPageView('CodeMonitoringPage')
+                    EVENT_LOGGER.logPageView('CodeMonitoringPage')
+                    telemetryRecorder.recordEvent('codeMonitor.list', 'view')
                 }
             }
         }
-    }, [currentTab, userHasCodeMonitors])
+    }, [currentTab, userHasCodeMonitors, telemetryRecorder])
 
     const showList = userHasCodeMonitors !== undefined && !isErrorLike(userHasCodeMonitors) && currentTab === 'list'
 
@@ -200,10 +196,7 @@ export const CodeMonitoringPage: React.FunctionComponent<React.PropsWithChildren
                                         }}
                                         className={classNames('nav-link', isActive && 'active')}
                                     >
-                                        <span>
-                                            {title}
-                                            {tab === 'logs' && <ProductStatusBadge status="beta" className="ml-2" />}
-                                        </span>
+                                        <span>{title}</span>
                                     </ButtonLink>
                                 </div>
                             ))}
@@ -211,7 +204,10 @@ export const CodeMonitoringPage: React.FunctionComponent<React.PropsWithChildren
                     </div>
 
                     {currentTab === 'getting-started' && (
-                        <CodeMonitoringGettingStarted authenticatedUser={authenticatedUser} />
+                        <CodeMonitoringGettingStarted
+                            authenticatedUser={authenticatedUser}
+                            telemetryRecorder={telemetryRecorder}
+                        />
                     )}
 
                     {currentTab === 'logs' && <CodeMonitoringLogs />}
@@ -222,6 +218,7 @@ export const CodeMonitoringPage: React.FunctionComponent<React.PropsWithChildren
                             fetchUserCodeMonitors={fetchUserCodeMonitors}
                             fetchCodeMonitors={fetchCodeMonitors}
                             toggleCodeMonitorEnabled={toggleCodeMonitorEnabled}
+                            telemetryRecorder={telemetryRecorder}
                         />
                     )}
                 </div>

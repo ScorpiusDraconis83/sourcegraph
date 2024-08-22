@@ -1,16 +1,19 @@
-<script lang="ts">
-    import { mdiDotsHorizontal } from '@mdi/js'
+<svelte:options immutable />
 
-    import type { Commit } from './Commit.gql'
+<script lang="ts">
+    import Avatar from '$lib/Avatar.svelte'
     import Icon from '$lib/Icon.svelte'
-    import UserAvatar from '$lib/UserAvatar.svelte'
     import Timestamp from '$lib/Timestamp.svelte'
     import Tooltip from '$lib/Tooltip.svelte'
+
+    import type { Commit } from './Commit.gql'
+    import { isViewportMobile } from './stores'
+    import Button from './wildcard/Button.svelte'
 
     export let commit: Commit
     export let alwaysExpanded: boolean = false
 
-    function getCommitter({ committer }: Commit): NonNullable<Commit['committer']>['person'] | null {
+    function getCommitter({ committer }: Commit): NonNullable<Commit['committer']> | null {
         if (!committer) {
             return null
         }
@@ -18,110 +21,155 @@
         if (committer.person.name === 'GitHub' && committer.person.email === 'noreply@github.com') {
             return null
         }
-        return committer.person
+        return committer
     }
 
-    $: commitDate = new Date(commit.committer ? commit.committer.date : commit.author.date)
-    $: author = commit.author.person
-    $: committer = getCommitter(commit)
-    $: authorAvatarTooltip = author.name + (committer ? ' (author)' : '')
-    let expanded = alwaysExpanded
+    $: expanded = alwaysExpanded
+
+    $: author = commit.author
+    $: committer = getCommitter(commit) ?? author
+    $: committerIsAuthor = committer.person.email === author.person.email
+    $: commitDate = new Date(committer.date)
+    $: authorAvatarTooltip = author.person.name + (committer ? ' (author)' : '')
 </script>
 
 <div class="root">
     <div class="avatar">
         <Tooltip tooltip={authorAvatarTooltip}>
-            <UserAvatar user={author} />
+            <Avatar avatar={author.person} />
         </Tooltip>
-    </div>
-    {#if committer && committer.name !== author.name}
-        <div class="avatar">
-            <Tooltip tooltip="{committer.name} (committer)">
-                <UserAvatar user={committer} />
+        {#if !committerIsAuthor}
+            <Tooltip tooltip="{committer.person.name} (committer)">
+                <Avatar avatar={committer.person} />
             </Tooltip>
-        </div>
-    {/if}
-    <div class="info">
-        <span class="d-flex">
-            <a class="subject" href={commit.canonicalURL}>{commit.subject}</a>
-            {#if !alwaysExpanded}
-                <button type="button" on:click={() => (expanded = !expanded)}>
-                    <Icon svgPath={mdiDotsHorizontal} inline />
-                </button>
-            {/if}
-        </span>
-        <span>committed by <strong>{commit.author.person.name}</strong> <Timestamp date={commitDate} /></span>
-        {#if expanded}
-            <pre>{commit.body}</pre>
         {/if}
     </div>
-    {#if !alwaysExpanded}
-        <div class="buttons">
-            <a href={commit.canonicalURL}>{commit.abbreviatedOID}</a>
+    <div class="title">
+        <a class="subject" href={commit.canonicalURL}>{commit.subject}</a>
+        {#if !alwaysExpanded && commit.body && !$isViewportMobile}
+            <Button
+                variant="secondary"
+                size="sm"
+                on:click={() => (expanded = !expanded)}
+                aria-label="{expanded ? 'Hide' : 'Show'} commit message"
+            >
+                <Icon icon={ILucideEllipsis} inline aria-hidden />
+            </Button>
+        {/if}
+    </div>
+    <div class="author">
+        {#if !committerIsAuthor}authored by <strong>{author.person.name}</strong> and{/if}
+        committed by <strong>{committer.person.name}</strong>
+        <Timestamp date={commitDate} />
+    </div>
+    {#if commit.body}
+        <div class="message" class:expanded>
+            {#if $isViewportMobile}
+                {#if expanded}
+                    <Button variant="secondary" size="lg" display="block" on:click={() => (expanded = false)}>
+                        Close
+                    </Button>
+                {:else}
+                    <Button variant="secondary" size="sm" display="block" on:click={() => (expanded = true)}>
+                        Show commit message
+                    </Button>
+                {/if}
+            {/if}
+
+            <pre>{commit.body}</pre>
         </div>
     {/if}
 </div>
 
 <style lang="scss">
     .root {
-        display: flex;
-    }
-
-    .info {
-        display: flex;
-        flex-direction: column;
-        margin: 0 0.5rem;
-        flex: 1;
-        min-width: 0;
-    }
-
-    .subject {
-        font-weight: 600;
-        flex: 0 1 auto;
-        padding-right: 0.5rem;
+        display: grid;
         overflow: hidden;
-        white-space: nowrap;
-        text-overflow: ellipsis;
-        color: var(--body-color);
-        min-width: 0;
+        grid-template-columns: auto 1fr;
+        grid-template-areas: 'avatar title' 'avatar author' '. message';
+        column-gap: 1rem;
+
+        @media (--mobile) {
+            grid-template-columns: auto 1fr;
+            grid-template-areas: 'avatar title' 'author author' 'message message';
+            row-gap: 0.5rem;
+        }
     }
 
     .avatar {
-        flex: 0 0 auto;
+        grid-area: avatar;
         display: flex;
-        width: 2.75rem;
-        height: 2.75rem;
-        margin-right: 0.5rem;
-        font-size: 1.5rem;
+        gap: 0.25rem;
+        align-self: center;
     }
 
-    span {
+    .title {
+        grid-area: title;
+        align-self: center;
+
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+        overflow: hidden;
+
+        .subject {
+            font-weight: 600;
+            flex: 0 1 auto;
+            color: var(--body-color);
+            min-width: 0;
+
+            @media (--sm-breakpoint-up) {
+                overflow: hidden;
+                white-space: nowrap;
+                text-overflow: ellipsis;
+            }
+        }
+    }
+
+    .author {
+        grid-area: author;
         color: var(--text-muted);
     }
 
-    button {
-        color: var(--body-color);
-        border: 1px solid var(--secondary);
-        cursor: pointer;
+    .message {
+        grid-area: message;
+        overflow: hidden;
+
+        @media (--mobile) {
+            &.expanded {
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                margin: 0;
+
+                display: flex;
+                flex-direction: column;
+
+                background-color: var(--color-bg-1);
+            }
+        }
     }
+
     pre {
+        display: none;
         margin-top: 0.5rem;
         margin-bottom: 1.5rem;
+
         font-size: 0.75rem;
-        overflow: visible;
         max-width: 100%;
         word-wrap: break-word;
         white-space: pre-wrap;
-    }
 
-    .buttons {
-        align-self: center;
+        .expanded & {
+            display: block;
+        }
 
-        a {
-            display: inline-block;
-            padding: 0.125rem;
-            font-family: var(--code-font-family);
-            font-size: 0.75rem;
+        @media (--mobile) {
+            padding: 0.5rem;
+            overflow: auto;
+            margin: 0;
         }
     }
 </style>

@@ -22,8 +22,10 @@ go_library(
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_sourcegraph_log//:log",
         "@com_github_sourcegraph_log//logtest",
+        "@com_github_wk8_go_ordered_map_v2//:go-ordered-map",
         "@io_opentelemetry_go_otel//attribute",
         "@io_opentelemetry_go_otel_trace//:trace",
+        "@io_opentelemetry_go_otel_trace//noop",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -32,8 +34,13 @@ go_test(
     name = "observation_test",
     timeout = "short",
     srcs = [
+        "fields_test.go",
         "snakecase_test.go",
         "util_test.go",
     ],
     embed = [":observation"],
+    deps = [
+        "@com_github_stretchr_testify//require",
+        "@io_opentelemetry_go_otel//attribute",
+    ],
 )

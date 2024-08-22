@@ -63,7 +63,6 @@ go_library(
     srcs = [
         "bitbucket_server_util.go",
         "bitbucketcloud_util.go",
-        "extension_schema.go",
         "github_util.go",
         "gitlab_util.go",
         "schema.go",
@@ -96,8 +95,8 @@ go_library(
         "opencodegraph-protocol.schema.json",
     ],
     importpath = "github.com/sourcegraph/sourcegraph/schema",
+    tags = [TAG_PLATFORM_SOURCE],
     visibility = ["//visibility:public"],
-    deps = ["@com_github_sourcegraph_go_jsonschema//jsonschema"],
 )
 
 js_library(
@@ -115,6 +114,7 @@ go_test(
     name = "schema_test",
     srcs = ["validation_test.go"],
     embed = [":schema"],
+    tags = [TAG_PLATFORM_SOURCE],
     deps = [
         "//internal/jsonc",
         "//lib/errors",

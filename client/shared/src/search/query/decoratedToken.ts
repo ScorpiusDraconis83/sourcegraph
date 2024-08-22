@@ -13,8 +13,8 @@ import type {
 
 import { SearchPatternType } from '../../graphql-operations'
 
-import { type Predicate, scanPredicate } from './predicates'
-import { scanSearchQuery } from './scanner'
+import { type PredicateInstance, scanPredicate } from './predicates'
+import { quoted, scanSearchQuery, oneOf, ScanResult, toPatternResult } from './scanner'
 import { type Token, type Pattern, type Literal, PatternKind, type CharacterRange, createLiteral } from './token'
 
 /* eslint-disable unicorn/better-regex */
@@ -41,6 +41,7 @@ type MetaToken =
     | MetaSelector
     | MetaPath
     | MetaPredicate
+    | MetaKeyword
 
 /**
  * Defines common properties for meta tokens.
@@ -113,7 +114,7 @@ interface MetaFilterSeparator extends BaseMetaToken {
 /**
  * A token that is labeled and interpreted as repository revision syntax in Sourcegraph. Note: there
  * are syntactic differences from pure Git ref syntax.
- * See https://docs.sourcegraph.com/code_search/reference/queries#repository-revisions.
+ * See https://sourcegraph.com/docs/code_search/reference/queries#repository-revisions.
  */
 export interface MetaRevision extends BaseMetaToken {
     type: 'metaRevision'
@@ -199,7 +200,19 @@ export interface MetaPredicate {
     range: CharacterRange
     groupRange?: CharacterRange
     kind: MetaPredicateKind
-    value: Predicate
+    value: PredicateInstance
+}
+
+enum MetaKeywordKind {
+    EscapedCharacter = 'EscapedCharacter',
+}
+
+/**
+ * Keyword tokens, which can be quoted and contain escape sequences.
+ */
+interface MetaKeyword extends BaseMetaToken {
+    type: 'metaKeyword'
+    kind: MetaKeywordKind
 }
 
 /**
@@ -800,6 +813,41 @@ const mapStructuralMeta = (pattern: Pattern): DecoratedToken[] => {
 }
 
 /**
+ * Adds decorations for a quoted pattern, like "foo" and "foo \" bar" for
+ * escaped quotes inside the pattern. The result always contains the
+ * original token so that hover tooltips can show information about the
+ * whole pattern.
+ */
+const mapQuotedPattern = (token: Pattern): DecoratedToken[] => {
+    // We always include the original token so that hover tooltips can show
+    // information about the whole pattern.
+    const tokens: DecoratedToken[] = [token]
+    const { value, delimiter } = token
+
+    if (delimiter) {
+        // + 1 because `value` is the value without delimiters, but token.range.start is the position of the first delimiter
+        const startOffset = token.range.start + 1
+        let i = 0
+
+        while (i < value.length) {
+            if (value[i] === '\\' && value[i + 1] === delimiter) {
+                tokens.push({
+                    type: 'metaKeyword',
+                    kind: MetaKeywordKind.EscapedCharacter,
+                    value: value.slice(i, i + 2),
+                    range: {
+                        start: startOffset + i,
+                        end: startOffset + i + 2,
+                    },
+                })
+                i += 1
+            }
+            i += 1
+        }
+    }
+    return tokens
+}
+/**
  * Returns true for filter values that have regexp values, e.g., repo, file.
  * Excludes FilterType.content because that depends on the pattern kind.
  */
@@ -966,33 +1014,48 @@ const decorateRepoHasMetaBody = (body: string, offset: number): DecoratedToken[]
         return undefined
     }
 
+    const offsetToken = (offset: number) => (token: DecoratedToken) => {
+        token.range.start += offset
+        token.range.end += offset
+        return token
+    }
+
     return [
-        {
-            type: 'literal',
-            value: matches[1],
-            range: { start: offset, end: offset + matches[1].length },
-            quoted: false,
-        },
+        ...(decoratePattern(matches[1])?.map(offsetToken(offset)) ?? []),
         {
             type: 'metaFilterSeparator',
             range: { start: offset + matches[1].length, end: offset + matches[1].length + 1 },
             value: ':',
         },
-        {
-            type: 'literal',
-            value: matches[1],
-            range: { start: offset + matches[1].length + 1, end: offset + matches[1].length + 1 + matches[2].length },
-            quoted: false,
-        },
+        ...(decoratePattern(matches[2])?.map(offsetToken(offset + matches[1].length + 1)) ?? []),
     ]
+}
+
+const decoratePattern = (token: string): DecoratedToken[] | undefined => {
+    const plainString = (token: string, offset: number): ScanResult<Literal> => ({
+        type: 'success',
+        term: createLiteral(token, { start: offset, end: offset + token.length }),
+    })
+
+    const scanner = oneOf<Pattern>(
+        toPatternResult(quoted("'"), PatternKind.Literal),
+        toPatternResult(quoted('"'), PatternKind.Literal),
+        toPatternResult(quoted('/'), PatternKind.Regexp),
+        toPatternResult(plainString, PatternKind.Literal)
+    )
+    const scanResult = scanner(token, 0)
+    if (scanResult.type === 'error') {
+        return undefined
+    }
+    return decorate(scanResult.term)
 }
 
 /**
  * Decorates the body part of predicate syntax `name(body)`.
  */
-const decoratePredicateBody = (path: string[], body: string, offset: number): DecoratedToken[] => {
+const decoratePredicateBody = (name: string, body: string, offset: number): DecoratedToken[] => {
     const decorated: DecoratedToken[] = []
-    switch (path.join('.')) {
+    switch (name) {
         case 'contains.file':
         case 'has.file': {
             const result = decorateContainsFileBody(body, offset)
@@ -1040,6 +1103,16 @@ const decoratePredicateBody = (path: string[], body: string, offset: number): De
                 },
             ]
         }
+        case 'at.time': {
+            return [
+                {
+                    type: 'literal',
+                    range: { start: offset, end: offset + body.length },
+                    value: body,
+                    quoted: false,
+                },
+            ]
+        }
     }
     decorated.push({
         type: 'literal',
@@ -1050,18 +1123,18 @@ const decoratePredicateBody = (path: string[], body: string, offset: number): De
     return decorated
 }
 
-const decoratePredicate = (predicate: Predicate, range: CharacterRange): DecoratedToken[] => {
+const decoratePredicate = (predicate: PredicateInstance, range: CharacterRange): DecoratedToken[] => {
     let offset = range.start
     const decorated: DecoratedToken[] = []
-    for (const nameAccess of predicate.path) {
+    for (const namePart of predicate.name.split('.')) {
         decorated.push({
             type: 'metaPredicate',
             kind: MetaPredicateKind.NameAccess,
-            range: { start: offset, end: offset + nameAccess.length },
+            range: { start: offset, end: offset + namePart.length },
             groupRange: range,
             value: predicate,
         })
-        offset = offset + nameAccess.length
+        offset = offset + namePart.length
         decorated.push({
             type: 'metaPredicate',
             kind: MetaPredicateKind.Dot,
@@ -1082,7 +1155,7 @@ const decoratePredicate = (predicate: Predicate, range: CharacterRange): Decorat
         value: predicate,
     })
     offset = offset + 1
-    decorated.push(...decoratePredicateBody(predicate.path, body, offset))
+    decorated.push(...decoratePredicateBody(predicate.name, body, offset))
     offset = offset + body.length
     decorated.push({
         type: 'metaPredicate',
@@ -1108,7 +1181,11 @@ export const decorate = (token: Token): DecoratedToken[] => {
                     break
                 }
                 case PatternKind.Literal: {
-                    decorated.push(token)
+                    if (token.delimited) {
+                        decorated.push(...mapQuotedPattern(token))
+                    } else {
+                        decorated.push(token)
+                    }
                     break
                 }
             }
@@ -1162,7 +1239,10 @@ export const decorate = (token: Token): DecoratedToken[] => {
     return decorated
 }
 
-const tokenKindToCSSName: Record<MetaRevisionKind | MetaRegexpKind | MetaPredicateKind | MetaStructuralKind, string> = {
+const tokenKindToCSSName: Record<
+    MetaRevisionKind | MetaRegexpKind | MetaPredicateKind | MetaStructuralKind | MetaKeywordKind,
+    string
+> = {
     Separator: 'separator',
     IncludeGlobMarker: 'include-glob-marker',
     ExcludeGlobMarker: 'exclude-glob-marker',
@@ -1217,6 +1297,7 @@ export const toCSSClassName = (token: DecoratedToken): string => {
             return `search-revision-${tokenKindToCSSName[token.kind]}`
         }
 
+        case 'metaKeyword':
         case 'metaRegexp': {
             return `search-regexp-meta-${tokenKindToCSSName[token.kind]}`
         }

@@ -19,7 +19,7 @@ import (
 )
 
 // TestDBPaginationWithRepoFilter exercises a bug filed in #58313 where
-// a unscoped default ordering column from graphqlutil.ConnectionResolver ("id")
+// a unscoped default ordering column from gqlutil.ConnectionResolver ("id")
 // makes into a query joining two tables (both having an id column),
 // causing ambiguous SQL.
 func TestDBPaginationWithRepoFilter(t *testing.T) {
@@ -39,6 +39,8 @@ func TestDBPaginationWithRepoFilter(t *testing.T) {
 	require.NoError(t, err)
 
 	// Enable embeddings, so that resolvers work:
+	conf.MockForceAllowEmbeddings(t, true)
+
 	conf.Mock(&conf.Unified{
 		SiteConfiguration: schema.SiteConfiguration{
 			CodyEnabled: pointers.Ptr(true),
@@ -59,7 +61,7 @@ func TestDBPaginationWithRepoFilter(t *testing.T) {
 	ctx = actor.WithActor(ctx, a)
 
 	// Exercise pagination and filtering via graphQL:
-	schema, err := graphqlbackend.NewSchema(db, nil, []graphqlbackend.OptionalResolver{{EmbeddingsResolver: NewResolver(db, logger, nil, nil, jobs)}})
+	schema, err := graphqlbackend.NewSchema(db, nil, nil, []graphqlbackend.OptionalResolver{{EmbeddingsResolver: NewResolver(db, logger, nil, nil, jobs)}})
 	require.NoError(t, err)
 	graphqlbackend.RunTest(t, &graphqlbackend.Test{
 		Schema:  schema,

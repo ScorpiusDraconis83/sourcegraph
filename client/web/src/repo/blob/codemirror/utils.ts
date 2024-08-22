@@ -1,4 +1,4 @@
-import type { Line, SelectionRange, Text } from '@codemirror/state'
+import { type Line, type SelectionRange, type Text } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 
 import type { LineOrPositionOrRange } from '@sourcegraph/common'
@@ -229,7 +229,7 @@ export function isValidLineRange(
 }
 
 export function locationToURL(
-    documentInfo: { repoName: string; filePath: string; commitID: string; revision?: string },
+    documentInfo: { repoName: string; filePath: string; commitID: string; revision: string },
     location: Location,
     viewState?: BlobViewState
 ): string {

@@ -58,6 +58,11 @@ type dbLicenses struct {
 	db database.DB
 }
 
+// For package dotcomproductsubscriptiontest only; DO NOT USE.
+func NewLicensesDB(db database.DB) *dbLicenses {
+	return &dbLicenses{db: db}
+}
+
 const createLicenseQuery = `
 INSERT INTO product_licenses(id, product_subscription_id, license_key, license_version, license_tags, license_user_count, license_expires_at, license_check_token, salesforce_sub_id, salesforce_opp_id)
 VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id
@@ -99,8 +104,15 @@ func (s dbLicenses) Create(ctx context.Context, subscriptionID, licenseKey strin
 	}
 
 	if featureflag.FromContext(ctx).GetBoolOr("auditlog-expansion", false) {
+		arg := struct {
+			SubscriptionID string    `json:"subscriptionID"`
+			NewUUID        uuid.UUID `json:"newUUID"`
+		}{
+			SubscriptionID: subscriptionID,
+			NewUUID:        newUUID,
+		}
 		// Log an event when a license is created in DotCom
-		if err := s.db.SecurityEventLogs().LogSecurityEvent(ctx, database.SecurityEventNameDotComLicenseCreated, "", uint32(actor.FromContext(ctx).UID), "", "BACKEND", nil); err != nil {
+		if err := s.db.SecurityEventLogs().LogSecurityEvent(ctx, database.SecurityEventNameDotComLicenseCreated, "", uint32(actor.FromContext(ctx).UID), "", "BACKEND", arg); err != nil {
 			logger.Warn("Error logging security event", log.Error(err))
 		}
 	}
@@ -141,7 +153,7 @@ A new license was created by *%s* for subscription <https://sourcegraph.com/site
 • *User count*: %s
 • *License tags*: %s
 • *Salesforce subscription ID*: %s
-• *Salesforce opportunity ID*: <https://sourcegraph2020.lightning.force.com/lightning/r/Opportunity/%s|%s>
+• *Salesforce opportunity ID*: <https://sourcegraph2020.lightning.force.com/lightning/r/Opportunity/%s/view|%s>
 
 Reply with a :approved_stamp: when this is approved
 Reply with a :white_check_mark: when this has been sent to the customer

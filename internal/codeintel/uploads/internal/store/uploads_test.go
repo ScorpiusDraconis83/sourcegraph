@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"fmt"
-	"math"
 	"sort"
 	"strings"
 	"testing"
@@ -14,9 +13,11 @@ import (
 	"github.com/lib/pq"
 	"github.com/sourcegraph/log/logtest"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/globals"
+	"github.com/sourcegraph/sourcegraph/internal/actor"
+	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/uploads/internal/commitgraph"
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/uploads/shared"
+	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbtest"
 	"github.com/sourcegraph/sourcegraph/internal/observation"
@@ -27,8 +28,8 @@ import (
 func TestGetUploads(t *testing.T) {
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
-	store := New(&observation.TestContext, db)
-	ctx := context.Background()
+	store := New(observation.TestContextTB(t), db)
+	ctx := actor.WithInternalActor(context.Background())
 
 	t1 := time.Unix(1587396557, 0).UTC()
 	t2 := t1.Add(-time.Minute * 1)
@@ -79,15 +80,15 @@ func TestGetUploads(t *testing.T) {
 
 	// upload 10 depends on uploads 7 and 8
 	insertPackages(t, store, []shared.Package{
-		{DumpID: 7, Scheme: "npm", Name: "foo", Version: "0.1.0"},
-		{DumpID: 8, Scheme: "npm", Name: "bar", Version: "1.2.3"},
-		{DumpID: 11, Scheme: "npm", Name: "foo", Version: "0.1.0"}, // duplicate package
+		{UploadID: 7, Scheme: "npm", Name: "foo", Version: "0.1.0"},
+		{UploadID: 8, Scheme: "npm", Name: "bar", Version: "1.2.3"},
+		{UploadID: 11, Scheme: "npm", Name: "foo", Version: "0.1.0"}, // duplicate package
 	})
 	insertPackageReferences(t, store, []shared.PackageReference{
-		{Package: shared.Package{DumpID: 7, Scheme: "npm", Name: "bar", Version: "1.2.3"}},
-		{Package: shared.Package{DumpID: 10, Scheme: "npm", Name: "foo", Version: "0.1.0"}},
-		{Package: shared.Package{DumpID: 10, Scheme: "npm", Name: "bar", Version: "1.2.3"}},
-		{Package: shared.Package{DumpID: 11, Scheme: "npm", Name: "bar", Version: "1.2.3"}},
+		{Package: shared.Package{UploadID: 7, Scheme: "npm", Name: "bar", Version: "1.2.3"}},
+		{Package: shared.Package{UploadID: 10, Scheme: "npm", Name: "foo", Version: "0.1.0"}},
+		{Package: shared.Package{UploadID: 10, Scheme: "npm", Name: "bar", Version: "1.2.3"}},
+		{Package: shared.Package{UploadID: 11, Scheme: "npm", Name: "bar", Version: "1.2.3"}},
 	})
 
 	dirtyRepositoryQuery := sqlf.Sprintf(
@@ -206,8 +207,8 @@ func TestGetUploads(t *testing.T) {
 		if n := len(testCase.expectedIDs); n == 0 {
 			runTest(testCase, 0, 0)
 		} else {
-			for lo := 0; lo < n; lo++ {
-				if numErrors := runTest(testCase, lo, int(math.Min(float64(lo)+3, float64(n)))); numErrors > 0 {
+			for lo := range n {
+				if numErrors := runTest(testCase, lo, min(lo+3, n)); numErrors > 0 {
 					break
 				}
 			}
@@ -215,14 +216,8 @@ func TestGetUploads(t *testing.T) {
 	}
 
 	t.Run("enforce repository permissions", func(t *testing.T) {
-		// Enable permissions user mapping forces checking repository permissions
-		// against permissions tables in the database, which should effectively block
-		// all access because permissions tables are empty.
-		before := globals.PermissionsUserMapping()
-		globals.SetPermissionsUserMapping(&schema.PermissionsUserMapping{Enabled: true})
-		defer globals.SetPermissionsUserMapping(before)
-
-		uploads, totalCount, err := store.GetUploads(ctx,
+		// Use an actorless context to test permissions.
+		uploads, totalCount, err := store.GetUploads(context.Background(),
 			shared.GetUploadsOptions{
 				Limit: 1,
 			},
@@ -237,10 +232,10 @@ func TestGetUploads(t *testing.T) {
 }
 
 func TestGetUploadByID(t *testing.T) {
-	ctx := context.Background()
+	ctx := actor.WithInternalActor(context.Background())
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
-	store := New(&observation.TestContext, db)
+	store := New(observation.TestContextTB(t), db)
 
 	// Upload does not exist initially
 	if _, exists, err := store.GetUploadByID(ctx, 1); err != nil {
@@ -282,14 +277,8 @@ func TestGetUploadByID(t *testing.T) {
 	}
 
 	t.Run("enforce repository permissions", func(t *testing.T) {
-		// Enable permissions user mapping forces checking repository permissions
-		// against permissions tables in the database, which should effectively block
-		// all access because permissions tables are empty.
-		before := globals.PermissionsUserMapping()
-		globals.SetPermissionsUserMapping(&schema.PermissionsUserMapping{Enabled: true})
-		defer globals.SetPermissionsUserMapping(before)
-
-		_, exists, err := store.GetUploadByID(ctx, 1)
+		// Use an actorless context to test permissions.
+		_, exists, err := store.GetUploadByID(context.Background(), 1)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -302,10 +291,10 @@ func TestGetUploadByID(t *testing.T) {
 func TestGetUploadByIDDeleted(t *testing.T) {
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
-	store := New(&observation.TestContext, db)
+	store := New(observation.TestContextTB(t), db)
 
 	// Upload does not exist initially
-	if _, exists, err := store.GetUploadByID(context.Background(), 1); err != nil {
+	if _, exists, err := store.GetUploadByID(actor.WithInternalActor(context.Background()), 1); err != nil {
 		t.Fatalf("unexpected error getting upload: %s", err)
 	} else if exists {
 		t.Fatal("unexpected record")
@@ -334,22 +323,22 @@ func TestGetUploadByIDDeleted(t *testing.T) {
 	insertUploads(t, db, expected)
 
 	// Should still not be queryable
-	if _, exists, err := store.GetUploadByID(context.Background(), 1); err != nil {
+	if _, exists, err := store.GetUploadByID(actor.WithInternalActor(context.Background()), 1); err != nil {
 		t.Fatalf("unexpected error getting upload: %s", err)
 	} else if exists {
 		t.Fatal("unexpected record")
 	}
 }
 
-func TestGetDumpsByIDs(t *testing.T) {
+func TestGetCompletedUploadsByIDs(t *testing.T) {
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
-	store := New(&observation.TestContext, db)
+	store := New(observation.TestContextTB(t), db)
 
-	// Dumps do not exist initially
-	if dumps, err := store.GetDumpsByIDs(context.Background(), []int{1, 2}); err != nil {
+	// Indexes do not exist initially
+	if uploads, err := store.GetCompletedUploadsByIDs(context.Background(), []int{1, 2}); err != nil {
 		t.Fatalf("unexpected error getting dump: %s", err)
-	} else if len(dumps) > 0 {
+	} else if len(uploads) > 0 {
 		t.Fatal("unexpected record")
 	}
 
@@ -357,7 +346,7 @@ func TestGetDumpsByIDs(t *testing.T) {
 	startedAt := uploadedAt.Add(time.Minute)
 	finishedAt := uploadedAt.Add(time.Minute * 2)
 	expectedAssociatedIndexID := 42
-	expected1 := shared.Dump{
+	expected1 := shared.CompletedUpload{
 		ID:                1,
 		Commit:            makeCommit(1),
 		Root:              "sub/",
@@ -373,7 +362,7 @@ func TestGetDumpsByIDs(t *testing.T) {
 		IndexerVersion:    "latest",
 		AssociatedIndexID: &expectedAssociatedIndexID,
 	}
-	expected2 := shared.Dump{
+	expected2 := shared.CompletedUpload{
 		ID:                2,
 		Commit:            makeCommit(2),
 		Root:              "other/",
@@ -390,33 +379,33 @@ func TestGetDumpsByIDs(t *testing.T) {
 		AssociatedIndexID: nil,
 	}
 
-	insertUploads(t, db, dumpToUpload(expected1), dumpToUpload(expected2))
+	insertUploads(t, db, expected1.ConvertToUpload(), expected2.ConvertToUpload())
 	insertVisibleAtTip(t, db, 50, 1)
 
-	if dumps, err := store.GetDumpsByIDs(context.Background(), []int{1}); err != nil {
+	if uploads, err := store.GetCompletedUploadsByIDs(context.Background(), []int{1}); err != nil {
 		t.Fatalf("unexpected error getting dump: %s", err)
-	} else if len(dumps) != 1 {
+	} else if len(uploads) != 1 {
 		t.Fatal("expected one record")
-	} else if diff := cmp.Diff(expected1, dumps[0]); diff != "" {
+	} else if diff := cmp.Diff(expected1, uploads[0]); diff != "" {
 		t.Errorf("unexpected dump (-want +got):\n%s", diff)
 	}
 
-	if dumps, err := store.GetDumpsByIDs(context.Background(), []int{1, 2}); err != nil {
+	if uploads, err := store.GetCompletedUploadsByIDs(context.Background(), []int{1, 2}); err != nil {
 		t.Fatalf("unexpected error getting dump: %s", err)
-	} else if len(dumps) != 2 {
+	} else if len(uploads) != 2 {
 		t.Fatal("expected two records")
-	} else if diff := cmp.Diff(expected1, dumps[0]); diff != "" {
+	} else if diff := cmp.Diff(expected1, uploads[0]); diff != "" {
 		t.Errorf("unexpected dump (-want +got):\n%s", diff)
-	} else if diff := cmp.Diff(expected2, dumps[1]); diff != "" {
+	} else if diff := cmp.Diff(expected2, uploads[1]); diff != "" {
 		t.Errorf("unexpected dump (-want +got):\n%s", diff)
 	}
 }
 
 func TestGetUploadsByIDs(t *testing.T) {
-	ctx := context.Background()
+	ctx := actor.WithInternalActor(context.Background())
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
-	store := New(&observation.TestContext, db)
+	store := New(observation.TestContextTB(t), db)
 
 	insertUploads(t, db,
 		shared.Upload{ID: 1},
@@ -449,14 +438,8 @@ func TestGetUploadsByIDs(t *testing.T) {
 	})
 
 	t.Run("enforce repository permissions", func(t *testing.T) {
-		// Enable permissions user mapping forces checking repository permissions
-		// against permissions tables in the database, which should effectively block
-		// all access because permissions tables are empty.
-		before := globals.PermissionsUserMapping()
-		globals.SetPermissionsUserMapping(&schema.PermissionsUserMapping{Enabled: true})
-		defer globals.SetPermissionsUserMapping(before)
-
-		indexes, err := store.GetUploadsByIDs(ctx, 1, 2, 3, 4)
+		// Use an actorless context to test permissions.
+		indexes, err := store.GetUploadsByIDs(context.Background(), 1, 2, 3, 4)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -469,7 +452,7 @@ func TestGetUploadsByIDs(t *testing.T) {
 func TestGetVisibleUploadsMatchingMonikers(t *testing.T) {
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
-	store := New(&observation.TestContext, db)
+	store := New(observation.TestContextTB(t), db)
 
 	insertUploads(t, db,
 		shared.Upload{ID: 1, Commit: makeCommit(2), Root: "sub1/"},
@@ -479,29 +462,29 @@ func TestGetVisibleUploadsMatchingMonikers(t *testing.T) {
 		shared.Upload{ID: 5, Commit: makeCommit(2), Root: "sub5/"},
 	)
 
-	insertNearestUploads(t, db, 50, map[string][]commitgraph.UploadMeta{
-		makeCommit(1): {
+	insertNearestUploads(t, db, 50, map[api.CommitID][]commitgraph.UploadMeta{
+		api.CommitID(makeCommit(1)): {
 			{UploadID: 1, Distance: 1},
 			{UploadID: 2, Distance: 2},
 			{UploadID: 3, Distance: 3},
 			{UploadID: 4, Distance: 2},
 			{UploadID: 5, Distance: 1},
 		},
-		makeCommit(2): {
+		api.CommitID(makeCommit(2)): {
 			{UploadID: 1, Distance: 0},
 			{UploadID: 2, Distance: 1},
 			{UploadID: 3, Distance: 2},
 			{UploadID: 4, Distance: 1},
 			{UploadID: 5, Distance: 0},
 		},
-		makeCommit(3): {
+		api.CommitID(makeCommit(3)): {
 			{UploadID: 1, Distance: 1},
 			{UploadID: 2, Distance: 0},
 			{UploadID: 3, Distance: 1},
 			{UploadID: 4, Distance: 0},
 			{UploadID: 5, Distance: 1},
 		},
-		makeCommit(4): {
+		api.CommitID(makeCommit(4)): {
 			{UploadID: 1, Distance: 2},
 			{UploadID: 2, Distance: 1},
 			{UploadID: 3, Distance: 0},
@@ -511,11 +494,11 @@ func TestGetVisibleUploadsMatchingMonikers(t *testing.T) {
 	})
 
 	insertPackageReferences(t, store, []shared.PackageReference{
-		{Package: shared.Package{DumpID: 1, Scheme: "gomod", Name: "leftpad", Version: "0.1.0"}},
-		{Package: shared.Package{DumpID: 2, Scheme: "gomod", Name: "leftpad", Version: "0.1.0"}},
-		{Package: shared.Package{DumpID: 3, Scheme: "gomod", Name: "leftpad", Version: "0.1.0"}},
-		{Package: shared.Package{DumpID: 4, Scheme: "gomod", Name: "leftpad", Version: "0.1.0"}},
-		{Package: shared.Package{DumpID: 5, Scheme: "gomod", Name: "leftpad", Version: "0.1.0"}},
+		{Package: shared.Package{UploadID: 1, Scheme: "gomod", Name: "leftpad", Version: "0.1.0"}},
+		{Package: shared.Package{UploadID: 2, Scheme: "gomod", Name: "leftpad", Version: "0.1.0"}},
+		{Package: shared.Package{UploadID: 3, Scheme: "gomod", Name: "leftpad", Version: "0.1.0"}},
+		{Package: shared.Package{UploadID: 4, Scheme: "gomod", Name: "leftpad", Version: "0.1.0"}},
+		{Package: shared.Package{UploadID: 5, Scheme: "gomod", Name: "leftpad", Version: "0.1.0"}},
 	})
 
 	moniker := precise.QualifiedMonikerData{
@@ -529,11 +512,11 @@ func TestGetVisibleUploadsMatchingMonikers(t *testing.T) {
 	}
 
 	refs := []shared.PackageReference{
-		{Package: shared.Package{DumpID: 1, Scheme: "gomod", Name: "leftpad", Version: "0.1.0"}},
-		{Package: shared.Package{DumpID: 2, Scheme: "gomod", Name: "leftpad", Version: "0.1.0"}},
-		{Package: shared.Package{DumpID: 3, Scheme: "gomod", Name: "leftpad", Version: "0.1.0"}},
-		{Package: shared.Package{DumpID: 4, Scheme: "gomod", Name: "leftpad", Version: "0.1.0"}},
-		{Package: shared.Package{DumpID: 5, Scheme: "gomod", Name: "leftpad", Version: "0.1.0"}},
+		{Package: shared.Package{UploadID: 1, Scheme: "gomod", Name: "leftpad", Version: "0.1.0"}},
+		{Package: shared.Package{UploadID: 2, Scheme: "gomod", Name: "leftpad", Version: "0.1.0"}},
+		{Package: shared.Package{UploadID: 3, Scheme: "gomod", Name: "leftpad", Version: "0.1.0"}},
+		{Package: shared.Package{UploadID: 4, Scheme: "gomod", Name: "leftpad", Version: "0.1.0"}},
+		{Package: shared.Package{UploadID: 5, Scheme: "gomod", Name: "leftpad", Version: "0.1.0"}},
 	}
 
 	testCases := []struct {
@@ -549,7 +532,7 @@ func TestGetVisibleUploadsMatchingMonikers(t *testing.T) {
 
 	for i, testCase := range testCases {
 		t.Run(fmt.Sprintf("i=%d", i), func(t *testing.T) {
-			scanner, totalCount, err := store.GetVisibleUploadsMatchingMonikers(context.Background(), 50, makeCommit(1), []precise.QualifiedMonikerData{moniker}, testCase.limit, testCase.offset)
+			scanner, totalCount, err := store.GetVisibleUploadsMatchingMonikers(actor.WithInternalActor(context.Background()), 50, makeCommit(1), []precise.QualifiedMonikerData{moniker}, testCase.limit, testCase.offset)
 			if err != nil {
 				t.Fatalf("unexpected error getting scanner: %s", err)
 			}
@@ -573,9 +556,15 @@ func TestGetVisibleUploadsMatchingMonikers(t *testing.T) {
 		// Enable permissions user mapping forces checking repository permissions
 		// against permissions tables in the database, which should effectively block
 		// all access because permissions tables are empty.
-		before := globals.PermissionsUserMapping()
-		globals.SetPermissionsUserMapping(&schema.PermissionsUserMapping{Enabled: true})
-		defer globals.SetPermissionsUserMapping(before)
+		conf.Mock(&conf.Unified{
+			SiteConfiguration: schema.SiteConfiguration{
+				PermissionsUserMapping: &schema.PermissionsUserMapping{
+					Enabled: true,
+					BindID:  "email",
+				},
+			},
+		})
+		t.Cleanup(func() { conf.Mock(nil) })
 
 		_, totalCount, err := store.GetVisibleUploadsMatchingMonikers(context.Background(), 50, makeCommit(1), []precise.QualifiedMonikerData{moniker}, 50, 0)
 		if err != nil {
@@ -590,7 +579,7 @@ func TestGetVisibleUploadsMatchingMonikers(t *testing.T) {
 func TestDefinitionDumps(t *testing.T) {
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
-	store := New(&observation.TestContext, db)
+	store := New(observation.TestContextTB(t), db)
 
 	moniker1 := precise.QualifiedMonikerData{
 		MonikerData: precise.MonikerData{
@@ -613,16 +602,16 @@ func TestDefinitionDumps(t *testing.T) {
 	}
 
 	// Package does not exist initially
-	if dumps, err := store.GetDumpsWithDefinitionsForMonikers(context.Background(), []precise.QualifiedMonikerData{moniker1}); err != nil {
+	if uploads, err := store.GetCompletedUploadsWithDefinitionsForMonikers(actor.WithInternalActor(context.Background()), []precise.QualifiedMonikerData{moniker1}); err != nil {
 		t.Fatalf("unexpected error getting package: %s", err)
-	} else if len(dumps) != 0 {
+	} else if len(uploads) != 0 {
 		t.Fatal("unexpected record")
 	}
 
 	uploadedAt := time.Unix(1587396557, 0).UTC()
 	startedAt := uploadedAt.Add(time.Minute)
 	finishedAt := uploadedAt.Add(time.Minute * 2)
-	expected1 := shared.Dump{
+	expected1 := shared.CompletedUpload{
 		ID:             1,
 		Commit:         makeCommit(1),
 		Root:           "sub/",
@@ -637,7 +626,7 @@ func TestDefinitionDumps(t *testing.T) {
 		Indexer:        "lsif-go",
 		IndexerVersion: "latest",
 	}
-	expected2 := shared.Dump{
+	expected2 := shared.CompletedUpload{
 		ID:                2,
 		Commit:            makeCommit(2),
 		Root:              "other/",
@@ -653,7 +642,7 @@ func TestDefinitionDumps(t *testing.T) {
 		IndexerVersion:    "1.2.3",
 		AssociatedIndexID: nil,
 	}
-	expected3 := shared.Dump{
+	expected3 := shared.CompletedUpload{
 		ID:             3,
 		Commit:         makeCommit(3),
 		Root:           "sub/",
@@ -669,7 +658,7 @@ func TestDefinitionDumps(t *testing.T) {
 		IndexerVersion: "latest",
 	}
 
-	insertUploads(t, db, dumpToUpload(expected1), dumpToUpload(expected2), dumpToUpload(expected3))
+	insertUploads(t, db, expected1.ConvertToUpload(), expected2.ConvertToUpload(), expected3.ConvertToUpload())
 	insertVisibleAtTip(t, db, 50, 1)
 
 	if err := store.UpdatePackages(context.Background(), 1, []precise.Package{
@@ -691,37 +680,30 @@ func TestDefinitionDumps(t *testing.T) {
 		t.Fatalf("unexpected error updating packages: %s", err)
 	}
 
-	if dumps, err := store.GetDumpsWithDefinitionsForMonikers(context.Background(), []precise.QualifiedMonikerData{moniker1}); err != nil {
+	if uploads, err := store.GetCompletedUploadsWithDefinitionsForMonikers(actor.WithInternalActor(context.Background()), []precise.QualifiedMonikerData{moniker1}); err != nil {
 		t.Fatalf("unexpected error getting package: %s", err)
-	} else if len(dumps) != 1 {
+	} else if len(uploads) != 1 {
 		t.Fatal("expected one record")
-	} else if diff := cmp.Diff(expected1, dumps[0]); diff != "" {
+	} else if diff := cmp.Diff(expected1, uploads[0]); diff != "" {
 		t.Errorf("unexpected dump (-want +got):\n%s", diff)
 	}
 
-	if dumps, err := store.GetDumpsWithDefinitionsForMonikers(context.Background(), []precise.QualifiedMonikerData{moniker1, moniker2}); err != nil {
+	if uploads, err := store.GetCompletedUploadsWithDefinitionsForMonikers(actor.WithInternalActor(context.Background()), []precise.QualifiedMonikerData{moniker1, moniker2}); err != nil {
 		t.Fatalf("unexpected error getting package: %s", err)
-	} else if len(dumps) != 2 {
+	} else if len(uploads) != 2 {
 		t.Fatal("expected two records")
-	} else if diff := cmp.Diff(expected1, dumps[0]); diff != "" {
+	} else if diff := cmp.Diff(expected1, uploads[0]); diff != "" {
 		t.Errorf("unexpected dump (-want +got):\n%s", diff)
-	} else if diff := cmp.Diff(expected2, dumps[1]); diff != "" {
+	} else if diff := cmp.Diff(expected2, uploads[1]); diff != "" {
 		t.Errorf("unexpected dump (-want +got):\n%s", diff)
 	}
 
 	t.Run("enforce repository permissions", func(t *testing.T) {
-		// Turning on explicit permissions forces checking repository permissions
-		// against permissions tables in the database, which should effectively block
-		// all access because permissions tables are empty and repo that dumps belong
-		// to are private.
-		before := globals.PermissionsUserMapping()
-		globals.SetPermissionsUserMapping(&schema.PermissionsUserMapping{Enabled: true})
-		defer globals.SetPermissionsUserMapping(before)
-
-		if dumps, err := store.GetDumpsWithDefinitionsForMonikers(context.Background(), []precise.QualifiedMonikerData{moniker1, moniker2}); err != nil {
+		// Use an actorless context to test permissions.
+		if uploads, err := store.GetCompletedUploadsWithDefinitionsForMonikers(context.Background(), []precise.QualifiedMonikerData{moniker1, moniker2}); err != nil {
 			t.Fatalf("unexpected error getting package: %s", err)
-		} else if len(dumps) != 0 {
-			t.Errorf("unexpected count. want=%d have=%d", 0, len(dumps))
+		} else if len(uploads) != 0 {
+			t.Errorf("unexpected count. want=%d have=%d", 0, len(uploads))
 		}
 	})
 }
@@ -730,12 +712,12 @@ func TestUploadAuditLogs(t *testing.T) {
 	logger := logtest.Scoped(t)
 	sqlDB := dbtest.NewDB(t)
 	db := database.NewDB(logger, sqlDB)
-	store := New(&observation.TestContext, db)
+	store := New(observation.TestContextTB(t), db)
 
 	insertUploads(t, db, shared.Upload{ID: 1})
 	updateUploads(t, db, shared.Upload{ID: 1, State: "deleting"})
 
-	logs, err := store.GetAuditLogsForUpload(context.Background(), 1)
+	logs, err := store.GetAuditLogsForUpload(actor.WithInternalActor(context.Background()), 1)
 	if err != nil {
 		t.Fatalf("unexpected error fetching audit logs: %s", err)
 	}
@@ -763,7 +745,7 @@ func transitionForColumn(t *testing.T, key string, transitions []map[string]*str
 func TestDeleteUploads(t *testing.T) {
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
-	store := New(&observation.TestContext, db)
+	store := New(observation.TestContextTB(t), db)
 
 	t1 := time.Unix(1587396557, 0).UTC()
 	t2 := t1.Add(time.Minute * 1)
@@ -779,7 +761,7 @@ func TestDeleteUploads(t *testing.T) {
 		shared.Upload{ID: 5, Commit: makeCommit(1115), UploadedAt: t5, State: "uploading"}, // will be deleted
 	)
 
-	err := store.DeleteUploads(context.Background(), shared.DeleteUploadsOptions{
+	err := store.DeleteUploads(actor.WithInternalActor(context.Background()), shared.DeleteUploadsOptions{
 		States:       []string{"uploading"},
 		Term:         "",
 		VisibleAtTip: false,
@@ -788,7 +770,7 @@ func TestDeleteUploads(t *testing.T) {
 		t.Fatalf("unexpected error deleting uploads: %s", err)
 	}
 
-	uploads, totalCount, err := store.GetUploads(context.Background(), shared.GetUploadsOptions{Limit: 5})
+	uploads, totalCount, err := store.GetUploads(actor.WithInternalActor(context.Background()), shared.GetUploadsOptions{Limit: 5})
 	if err != nil {
 		t.Fatalf("unexpected error getting uploads: %s", err)
 	}
@@ -812,7 +794,7 @@ func TestDeleteUploads(t *testing.T) {
 func TestDeleteUploadsWithIndexerKey(t *testing.T) {
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
-	store := New(&observation.TestContext, db)
+	store := New(observation.TestContextTB(t), db)
 
 	// note: queued so we delete, not go to deleting state first (makes assertion simpler)
 	insertUploads(t, db, shared.Upload{ID: 1, State: "queued", Indexer: "sourcegraph/scip-go@sha256:123456"})
@@ -820,7 +802,7 @@ func TestDeleteUploadsWithIndexerKey(t *testing.T) {
 	insertUploads(t, db, shared.Upload{ID: 3, State: "queued", Indexer: "sourcegraph/scip-typescript"})
 	insertUploads(t, db, shared.Upload{ID: 4, State: "queued", Indexer: "sourcegraph/scip-typescript"})
 
-	err := store.DeleteUploads(context.Background(), shared.DeleteUploadsOptions{
+	err := store.DeleteUploads(actor.WithInternalActor(context.Background()), shared.DeleteUploadsOptions{
 		IndexerNames: []string{"scip-go"},
 		Term:         "",
 		VisibleAtTip: false,
@@ -829,7 +811,7 @@ func TestDeleteUploadsWithIndexerKey(t *testing.T) {
 		t.Fatalf("unexpected error deleting uploads: %s", err)
 	}
 
-	uploads, totalCount, err := store.GetUploads(context.Background(), shared.GetUploadsOptions{Limit: 5})
+	uploads, totalCount, err := store.GetUploads(actor.WithInternalActor(context.Background()), shared.GetUploadsOptions{Limit: 5})
 	if err != nil {
 		t.Fatalf("unexpected error getting uploads: %s", err)
 	}
@@ -853,13 +835,13 @@ func TestDeleteUploadsWithIndexerKey(t *testing.T) {
 func TestDeleteUploadByID(t *testing.T) {
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
-	store := New(&observation.TestContext, db)
+	store := New(observation.TestContextTB(t), db)
 
 	insertUploads(t, db,
 		shared.Upload{ID: 1, RepositoryID: 50},
 	)
 
-	if found, err := store.DeleteUploadByID(context.Background(), 1); err != nil {
+	if found, err := store.DeleteUploadByID(actor.WithInternalActor(context.Background()), 1); err != nil {
 		t.Fatalf("unexpected error deleting upload: %s", err)
 	} else if !found {
 		t.Fatalf("expected record to exist")
@@ -891,9 +873,9 @@ func TestDeleteUploadByID(t *testing.T) {
 func TestDeleteUploadByIDMissingRow(t *testing.T) {
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
-	store := New(&observation.TestContext, db)
+	store := New(observation.TestContextTB(t), db)
 
-	if found, err := store.DeleteUploadByID(context.Background(), 1); err != nil {
+	if found, err := store.DeleteUploadByID(actor.WithInternalActor(context.Background()), 1); err != nil {
 		t.Fatalf("unexpected error deleting upload: %s", err)
 	} else if found {
 		t.Fatalf("unexpected record")
@@ -903,13 +885,13 @@ func TestDeleteUploadByIDMissingRow(t *testing.T) {
 func TestDeleteUploadByIDNotCompleted(t *testing.T) {
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
-	store := New(&observation.TestContext, db)
+	store := New(observation.TestContextTB(t), db)
 
 	insertUploads(t, db,
 		shared.Upload{ID: 1, RepositoryID: 50, State: "uploading"},
 	)
 
-	if found, err := store.DeleteUploadByID(context.Background(), 1); err != nil {
+	if found, err := store.DeleteUploadByID(actor.WithInternalActor(context.Background()), 1); err != nil {
 		t.Fatalf("unexpected error deleting upload: %s", err)
 	} else if !found {
 		t.Fatalf("expected record to exist")
@@ -941,12 +923,12 @@ func TestDeleteUploadByIDNotCompleted(t *testing.T) {
 func TestReindexUploads(t *testing.T) {
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
-	store := New(&observation.TestContext, db)
+	store := New(observation.TestContextTB(t), db)
 
 	insertUploads(t, db, shared.Upload{ID: 1, State: "completed"})
 	insertUploads(t, db, shared.Upload{ID: 2, State: "errored"})
 
-	if err := store.ReindexUploads(context.Background(), shared.ReindexUploadsOptions{
+	if err := store.ReindexUploads(actor.WithInternalActor(context.Background()), shared.ReindexUploadsOptions{
 		States:       []string{"errored"},
 		Term:         "",
 		RepositoryID: 0,
@@ -955,7 +937,7 @@ func TestReindexUploads(t *testing.T) {
 	}
 
 	// Upload has been marked for reindexing
-	if upload, exists, err := store.GetUploadByID(context.Background(), 2); err != nil {
+	if upload, exists, err := store.GetUploadByID(actor.WithInternalActor(context.Background()), 2); err != nil {
 		t.Fatalf("unexpected error getting upload: %s", err)
 	} else if !exists {
 		t.Fatal("upload missing")
@@ -967,14 +949,14 @@ func TestReindexUploads(t *testing.T) {
 func TestReindexUploadsWithIndexerKey(t *testing.T) {
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
-	store := New(&observation.TestContext, db)
+	store := New(observation.TestContextTB(t), db)
 
 	insertUploads(t, db, shared.Upload{ID: 1, Indexer: "sourcegraph/scip-go@sha256:123456"})
 	insertUploads(t, db, shared.Upload{ID: 2, Indexer: "sourcegraph/scip-go"})
 	insertUploads(t, db, shared.Upload{ID: 3, Indexer: "sourcegraph/scip-typescript"})
 	insertUploads(t, db, shared.Upload{ID: 4, Indexer: "sourcegraph/scip-typescript"})
 
-	if err := store.ReindexUploads(context.Background(), shared.ReindexUploadsOptions{
+	if err := store.ReindexUploads(actor.WithInternalActor(context.Background()), shared.ReindexUploadsOptions{
 		IndexerNames: []string{"scip-go"},
 		Term:         "",
 		RepositoryID: 0,
@@ -987,7 +969,7 @@ func TestReindexUploadsWithIndexerKey(t *testing.T) {
 		1: true, 2: true,
 		3: false, 4: false,
 	} {
-		if upload, exists, err := store.GetUploadByID(context.Background(), id); err != nil {
+		if upload, exists, err := store.GetUploadByID(actor.WithInternalActor(context.Background()), id); err != nil {
 			t.Fatalf("unexpected error getting upload: %s", err)
 		} else if !exists {
 			t.Fatal("upload missing")
@@ -1000,7 +982,7 @@ func TestReindexUploadsWithIndexerKey(t *testing.T) {
 func TestReindexUploadByID(t *testing.T) {
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
-	store := New(&observation.TestContext, db)
+	store := New(observation.TestContextTB(t), db)
 
 	insertUploads(t, db, shared.Upload{ID: 1, State: "completed"})
 	insertUploads(t, db, shared.Upload{ID: 2, State: "errored"})
@@ -1010,37 +992,12 @@ func TestReindexUploadByID(t *testing.T) {
 	}
 
 	// Upload has been marked for reindexing
-	if upload, exists, err := store.GetUploadByID(context.Background(), 2); err != nil {
+	if upload, exists, err := store.GetUploadByID(actor.WithInternalActor(context.Background()), 2); err != nil {
 		t.Fatalf("unexpected error getting upload: %s", err)
 	} else if !exists {
 		t.Fatal("upload missing")
 	} else if !upload.ShouldReindex {
 		t.Fatal("upload not marked for reindexing")
-	}
-}
-
-//
-//
-//
-
-func dumpToUpload(expected shared.Dump) shared.Upload {
-	return shared.Upload{
-		ID:                expected.ID,
-		Commit:            expected.Commit,
-		Root:              expected.Root,
-		UploadedAt:        expected.UploadedAt,
-		State:             expected.State,
-		FailureMessage:    expected.FailureMessage,
-		StartedAt:         expected.StartedAt,
-		FinishedAt:        expected.FinishedAt,
-		ProcessAfter:      expected.ProcessAfter,
-		NumResets:         expected.NumResets,
-		NumFailures:       expected.NumFailures,
-		RepositoryID:      expected.RepositoryID,
-		RepositoryName:    expected.RepositoryName,
-		Indexer:           expected.Indexer,
-		IndexerVersion:    expected.IndexerVersion,
-		AssociatedIndexID: expected.AssociatedIndexID,
 	}
 }
 

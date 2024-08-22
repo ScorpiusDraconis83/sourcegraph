@@ -11,7 +11,7 @@ import (
 	"github.com/sourcegraph/log"
 
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/auth"
-	"github.com/sourcegraph/sourcegraph/internal/auth/providers"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/auth/providers"
 	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/conf/conftypes"
 	"github.com/sourcegraph/sourcegraph/internal/httpcli"
@@ -41,26 +41,29 @@ func GetProvider(id string) *Provider {
 	return nil
 }
 
-// GetProviderAndRefresh retrieves the authentication provider with the given
-// type and ID, and refreshes the token used by the provider.
-func GetProviderAndRefresh(ctx context.Context, id string, getProvider func(id string) *Provider) (p *Provider, safeErrMsg string, err error) {
+var errNoSuchProvider = errors.New("no such authentication provider")
+
+// GetProviderAndClient retrieves the authentication provider with the given
+// type and ID, and creates an oidcProvider client for it.
+func GetProviderAndClient(ctx context.Context, id string, getProvider func(id string) *Provider) (p *Provider, oidcClient *oidcProvider, safeErrMsg string, err error) {
 	p = getProvider(id)
 	if p == nil {
-		return nil,
+		return nil, nil,
 			"Misconfigured authentication provider.",
-			errors.Errorf("no authentication provider found with ID %q", id)
+			errNoSuchProvider
 	}
 	if p.config.Issuer == "" {
-		return nil,
+		return nil, nil,
 			"Misconfigured authentication provider.",
 			errors.Errorf("No issuer set for authentication provider with ID %q (set the authentication provider's issuer property).", p.ConfigID())
 	}
-	if err = p.Refresh(ctx); err != nil {
-		return nil,
-			"Unexpected error refreshing authentication provider. This may be due to an incorrect issuer URL. Check the logs for more details.",
-			errors.Wrapf(err, "refreshing authentication provider with ID %q", p.ConfigID())
+	oidcClient, err = newOIDCProvider(p.config.Issuer, p.httpClient)
+	if err != nil {
+		return nil, nil,
+			"Unexpected error creating authentication provider. This may be due to an incorrect issuer URL. Check the logs for more details.",
+			errors.Wrapf(err, "creating authentication provider with ID %q", p.ConfigID())
 	}
-	return p, "", nil
+	return p, oidcClient, "", nil
 }
 
 func Init() {
@@ -82,13 +85,6 @@ func Init() {
 				return
 			}
 
-			for _, p := range ps {
-				go func(p providers.Provider) {
-					if err := p.Refresh(context.Background()); err != nil {
-						logger.Error("Error prefetching OpenID Connect service provider metadata.", log.Error(err))
-					}
-				}(p)
-			}
 			providers.Update(pkgName, ps)
 		})
 	}()

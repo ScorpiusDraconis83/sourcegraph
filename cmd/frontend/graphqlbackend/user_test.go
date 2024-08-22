@@ -6,19 +6,17 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	gqlerrors "github.com/graph-gophers/graphql-go/errors"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/envvar"
 	"github.com/sourcegraph/sourcegraph/internal/actor"
 	"github.com/sourcegraph/sourcegraph/internal/auth"
 	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbmocks"
+	"github.com/sourcegraph/sourcegraph/internal/dotcom"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
-	"github.com/sourcegraph/sourcegraph/internal/gqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 	"github.com/sourcegraph/sourcegraph/schema"
@@ -58,10 +56,48 @@ func TestUser(t *testing.T) {
 		db.UsersFunc.SetDefaultReturn(users)
 
 		t.Run("allowed on Sourcegraph.com", func(t *testing.T) {
-			orig := envvar.SourcegraphDotComMode()
-			envvar.MockSourcegraphDotComMode(true)
-			defer envvar.MockSourcegraphDotComMode(orig)
+			dotcom.MockSourcegraphDotComMode(t, true)
+			checkUserByUsername(t)
+		})
 
+		t.Run("allowed on non-Sourcegraph.com", func(t *testing.T) {
+			checkUserByUsername(t)
+		})
+	})
+
+	t.Run("by databaseID", func(t *testing.T) {
+		checkUserByUsername := func(t *testing.T) {
+			t.Helper()
+			RunTests(t, []*Test{
+				{
+					Schema: mustParseGraphQLSchema(t, db),
+					Query: `
+				{
+					user(databaseID:1) {
+						username
+					}
+				}
+			`,
+					ExpectedResult: `
+				{
+					"user": {
+						"username": "alice"
+					}
+				}
+			`,
+				},
+			})
+		}
+
+		users := dbmocks.NewMockUserStore()
+		users.GetByIDFunc.SetDefaultHook(func(ctx context.Context, id int32) (*types.User, error) {
+			assert.Equal(t, int32(1), id)
+			return &types.User{ID: 1, Username: "alice"}, nil
+		})
+		db.UsersFunc.SetDefaultReturn(users)
+
+		t.Run("allowed on Sourcegraph.com", func(t *testing.T) {
+			dotcom.MockSourcegraphDotComMode(t, true)
 			checkUserByUsername(t)
 		})
 
@@ -103,9 +139,7 @@ func TestUser(t *testing.T) {
 				})
 			}
 
-			orig := envvar.SourcegraphDotComMode()
-			envvar.MockSourcegraphDotComMode(true)
-			defer envvar.MockSourcegraphDotComMode(orig)
+			dotcom.MockSourcegraphDotComMode(t, true)
 
 			t.Run("for anonymous viewer", func(t *testing.T) {
 				users.GetByCurrentAuthUserFunc.SetDefaultReturn(nil, database.ErrNoCurrentUser)
@@ -179,217 +213,63 @@ func TestUser_Email(t *testing.T) {
 
 func TestUser_LatestSettings(t *testing.T) {
 	db := dbmocks.NewMockDB()
-	t.Run("only allowed by authenticated user on Sourcegraph.com", func(t *testing.T) {
-		users := dbmocks.NewMockUserStore()
-		db.UsersFunc.SetDefaultReturn(users)
+	users := dbmocks.NewMockUserStore()
+	db.UsersFunc.SetDefaultReturn(users)
+	db.SettingsFunc.SetDefaultReturn(dbmocks.NewMockSettingsStore())
 
-		orig := envvar.SourcegraphDotComMode()
-		envvar.MockSourcegraphDotComMode(true)
-		defer envvar.MockSourcegraphDotComMode(orig)
+	tests := []struct {
+		name     string
+		ctx      context.Context
+		isDotcom bool
+		wantErr  string
+		setup    func()
+	}{
+		{
+			name:    "unauthenticated",
+			ctx:     context.Background(),
+			wantErr: auth.ErrMustBeSiteAdminOrSameUser.Error(),
+			setup: func() {
+				users.GetByIDFunc.SetDefaultReturn(&types.User{ID: 1}, nil)
+			},
+		},
+		{
+			name:    "another user",
+			ctx:     actor.WithActor(context.Background(), &actor.Actor{UID: 2}),
+			wantErr: auth.ErrMustBeSiteAdminOrSameUser.Error(),
+			setup: func() {
+				users.GetByIDFunc.SetDefaultHook(func(ctx context.Context, id int32) (*types.User, error) {
+					return &types.User{ID: id}, nil
+				})
+			},
+		},
+		{
+			name: "site admin",
+			ctx:  actor.WithActor(context.Background(), &actor.Actor{UID: 2}),
+			setup: func() {
+				users.GetByIDFunc.SetDefaultHook(func(ctx context.Context, id int32) (*types.User, error) {
+					return &types.User{ID: id, SiteAdmin: true}, nil
+				})
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			test.setup()
+			dotcom.MockSourcegraphDotComMode(t, test.isDotcom)
 
-		tests := []struct {
-			name  string
-			ctx   context.Context
-			setup func()
-		}{
-			{
-				name: "unauthenticated",
-				ctx:  context.Background(),
-				setup: func() {
-					users.GetByIDFunc.SetDefaultReturn(&types.User{ID: 1}, nil)
-				},
-			},
-			{
-				name: "another user",
-				ctx:  actor.WithActor(context.Background(), &actor.Actor{UID: 2}),
-				setup: func() {
-					users.GetByIDFunc.SetDefaultHook(func(ctx context.Context, id int32) (*types.User, error) {
-						return &types.User{ID: id}, nil
-					})
-				},
-			},
-			{
-				name: "site admin",
-				ctx:  actor.WithActor(context.Background(), &actor.Actor{UID: 2}),
-				setup: func() {
-					users.GetByIDFunc.SetDefaultHook(func(ctx context.Context, id int32) (*types.User, error) {
-						return &types.User{ID: id, SiteAdmin: true}, nil
-					})
-				},
-			},
-		}
-		for _, test := range tests {
-			t.Run(test.name, func(t *testing.T) {
-				test.setup()
+			_, err := NewUserResolver(test.ctx, db, &types.User{ID: 1}).LatestSettings(test.ctx)
 
-				_, err := NewUserResolver(test.ctx, db, &types.User{ID: 1}).LatestSettings(test.ctx)
-				got := fmt.Sprintf("%v", err)
-				want := "must be authenticated as user with id 1"
-				assert.Equal(t, want, got)
-			})
-		}
-	})
-}
-
-func TestUser_CodyCurrentPeriod(t *testing.T) {
-	db := dbmocks.NewMockDB()
-
-	orig := envvar.SourcegraphDotComMode()
-	envvar.MockSourcegraphDotComMode(true)
-	t.Cleanup(func() {
-		envvar.MockSourcegraphDotComMode(orig)
-	})
-
-	t.Run("allowed by same user or site admin", func(t *testing.T) {
-		users := dbmocks.NewMockUserStore()
-		db.UsersFunc.SetDefaultReturn(users)
-		now := time.Now()
-
-		tests := []struct {
-			name    string
-			ctx     context.Context
-			success bool
-		}{
-			{
-				name:    "same user",
-				ctx:     actor.WithActor(context.Background(), &actor.Actor{UID: 1}),
-				success: true,
-			},
-			{
-				name:    "another user",
-				ctx:     actor.WithActor(context.Background(), &actor.Actor{UID: 2}),
-				success: false,
-			},
-			{
-				name:    "another user, but site admin",
-				ctx:     actor.WithActor(context.Background(), actor.FromActualUser(&types.User{ID: 2, SiteAdmin: true})),
-				success: true,
-			},
-		}
-		for _, test := range tests {
-			t.Run(test.name, func(t *testing.T) {
-				user := &types.User{ID: 1, CreatedAt: now}
-				users.GetByIDFunc.SetDefaultReturn(user, nil)
-
-				date, _ := NewUserResolver(test.ctx, db, user).CodyCurrentPeriodStartDate(test.ctx)
-
-				assert.Equal(t, test.success, date != nil, "CodyCurrentPeriodStartDate")
-			})
-		}
-	})
-
-	t.Run("success", func(t *testing.T) {
-		users := dbmocks.NewMockUserStore()
-		db.UsersFunc.SetDefaultReturn(users)
-		now := time.Now()
-
-		tests := []struct {
-			name      string
-			user      *types.User
-			today     time.Time
-			createdAt time.Time
-			pro       bool
-			start     time.Time
-			end       time.Time
-		}{
-			{
-				name:      "before release for community user created before december 14th",
-				createdAt: time.Date(2023, 10, 5, 0, 0, 0, 0, now.Location()),
-				today:     time.Date(2023, 12, 1, 0, 0, 0, 0, now.Location()),
-				start:     time.Date(2023, 11, 5, 0, 0, 0, 0, now.Location()),
-				end:       time.Date(2023, 12, 4, 23, 59, 59, 59, now.Location()),
-			},
-			{
-				name:      "after release for community user created before december 14th",
-				createdAt: time.Date(2023, 11, 5, 0, 0, 0, 0, now.Location()),
-				today:     time.Date(2023, 12, 25, 0, 0, 0, 0, now.Location()),
-				start:     time.Date(2023, 12, 14, 0, 0, 0, 0, now.Location()),
-				end:       time.Date(2024, 1, 13, 23, 59, 59, 59, now.Location()),
-			},
-			{
-				name:      "community user created before current day",
-				createdAt: time.Date(2024, 9, 5, 0, 0, 0, 0, now.Location()),
-				today:     time.Date(2025, 1, 15, 0, 0, 0, 0, now.Location()),
-				start:     time.Date(2025, 1, 5, 0, 0, 0, 0, now.Location()),
-				end:       time.Date(2025, 2, 4, 23, 59, 59, 59, now.Location()),
-			},
-			{
-				name:      "community user created after current day",
-				createdAt: time.Date(2024, 9, 25, 0, 0, 0, 0, now.Location()),
-				today:     time.Date(2025, 1, 15, 0, 0, 0, 0, now.Location()),
-				start:     time.Date(2024, 12, 25, 0, 0, 0, 0, now.Location()),
-				end:       time.Date(2025, 1, 24, 23, 59, 59, 59, now.Location()),
-			},
-			{
-				name:      "community user created on 31st Jan",
-				createdAt: time.Date(2025, 1, 31, 0, 0, 0, 0, now.Location()),
-				today:     time.Date(2025, 2, 15, 0, 0, 0, 0, now.Location()),
-				start:     time.Date(2025, 1, 31, 0, 0, 0, 0, now.Location()),
-				end:       time.Date(2025, 2, 28, 23, 59, 59, 59, now.Location()),
-			},
-			{
-				name:      "before release for pro user subscribed before december 14th",
-				createdAt: time.Date(2022, 9, 5, 0, 0, 0, 0, now.Location()),
-				today:     time.Date(2023, 1, 15, 0, 0, 0, 0, now.Location()),
-				start:     time.Date(2023, 1, 5, 0, 0, 0, 0, now.Location()),
-				end:       time.Date(2023, 2, 4, 23, 59, 59, 59, now.Location()),
-				pro:       true,
-			},
-			{
-				name:      "after release for community user subscribed before december 14th",
-				createdAt: time.Date(2022, 9, 5, 0, 0, 0, 0, now.Location()),
-				today:     time.Date(2023, 1, 15, 0, 0, 0, 0, now.Location()),
-				start:     time.Date(2023, 1, 5, 0, 0, 0, 0, now.Location()),
-				end:       time.Date(2023, 2, 4, 23, 59, 59, 59, now.Location()),
-				pro:       true,
-			},
-			{
-				name:      "pro user subscribed before current day",
-				createdAt: time.Date(2024, 9, 5, 0, 0, 0, 0, now.Location()),
-				today:     time.Date(2025, 1, 15, 0, 0, 0, 0, now.Location()),
-				start:     time.Date(2025, 1, 5, 0, 0, 0, 0, now.Location()),
-				end:       time.Date(2025, 2, 4, 23, 59, 59, 59, now.Location()),
-				pro:       true,
-			},
-			{
-				name:      "pro user subscribed after current day",
-				createdAt: time.Date(2024, 9, 25, 0, 0, 0, 0, now.Location()),
-				today:     time.Date(2025, 1, 15, 0, 0, 0, 0, now.Location()),
-				start:     time.Date(2024, 12, 25, 0, 0, 0, 0, now.Location()),
-				end:       time.Date(2025, 1, 24, 23, 59, 59, 59, now.Location()),
-				pro:       true,
-			},
-			{
-				name:      "pro user subscribed on 31st Jan",
-				createdAt: time.Date(2025, 1, 31, 0, 0, 0, 0, now.Location()),
-				today:     time.Date(2025, 2, 15, 0, 0, 0, 0, now.Location()),
-				start:     time.Date(2025, 1, 31, 0, 0, 0, 0, now.Location()),
-				end:       time.Date(2025, 2, 28, 23, 59, 59, 59, now.Location()),
-				pro:       true,
-			},
-		}
-		for _, test := range tests {
-			t.Run(test.name, func(t *testing.T) {
-				user := &types.User{ID: 1}
-				if test.pro {
-					user.CodyProEnabledAt = &test.createdAt
-				} else {
-					user.CreatedAt = test.createdAt
+			if test.wantErr != "" {
+				if err.Error() != test.wantErr {
+					t.Errorf("got error %q, want %q", err, test.wantErr)
 				}
-
-				users.GetByIDFunc.SetDefaultReturn(test.user, nil)
-
-				ctx := actor.WithActor(context.Background(), &actor.Actor{UID: user.ID})
-				ctx = withCurrentTimeMock(ctx, test.today)
-
-				startDate, _ := NewUserResolver(ctx, db, user).CodyCurrentPeriodStartDate(ctx)
-				assert.Equal(t, &gqlutil.DateTime{Time: test.start}, startDate, "CodyCurrentPeriodStartDate")
-
-				endDate, _ := NewUserResolver(ctx, db, user).CodyCurrentPeriodEndDate(ctx)
-				assert.Equal(t, &gqlutil.DateTime{Time: test.end}, endDate, "CodyCurrentPeriodEndDate")
-			})
-		}
-	})
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %s", err)
+				}
+			}
+		})
+	}
 }
 
 func TestUser_ViewerCanAdminister(t *testing.T) {
@@ -398,11 +278,7 @@ func TestUser_ViewerCanAdminister(t *testing.T) {
 		users := dbmocks.NewMockUserStore()
 		db.UsersFunc.SetDefaultReturn(users)
 
-		orig := envvar.SourcegraphDotComMode()
-		envvar.MockSourcegraphDotComMode(true)
-		t.Cleanup(func() {
-			envvar.MockSourcegraphDotComMode(orig)
-		})
+		dotcom.MockSourcegraphDotComMode(t, true)
 
 		tests := []struct {
 			name string
@@ -505,7 +381,7 @@ func TestUpdateUser(t *testing.T) {
 		users.GetByCurrentAuthUserFunc.SetDefaultReturn(&types.User{ID: 2, Username: "2"}, nil)
 		db.UsersFunc.SetDefaultReturn(users)
 
-		result, err := newSchemaResolver(db, gitserver.NewTestClient(t)).UpdateUser(context.Background(),
+		result, err := newSchemaResolver(db, gitserver.NewTestClient(t), nil).UpdateUser(context.Background(),
 			&updateUserArgs{
 				User: "VXNlcjox",
 			},
@@ -517,16 +393,15 @@ func TestUpdateUser(t *testing.T) {
 	})
 
 	t.Run("disallow suspicious names", func(t *testing.T) {
-		orig := envvar.SourcegraphDotComMode()
-		envvar.MockSourcegraphDotComMode(true)
-		defer envvar.MockSourcegraphDotComMode(orig)
+
+		dotcom.MockSourcegraphDotComMode(t, true)
 
 		users := dbmocks.NewMockUserStore()
 		users.GetByCurrentAuthUserFunc.SetDefaultReturn(&types.User{ID: 1}, nil)
 		db.UsersFunc.SetDefaultReturn(users)
 
 		ctx := actor.WithActor(context.Background(), &actor.Actor{UID: 1})
-		_, err := newSchemaResolver(db, gitserver.NewTestClient(t)).UpdateUser(ctx,
+		_, err := newSchemaResolver(db, gitserver.NewTestClient(t), nil).UpdateUser(ctx,
 			&updateUserArgs{
 				User:     MarshalUserID(1),
 				Username: strptr("about"),
@@ -553,7 +428,7 @@ func TestUpdateUser(t *testing.T) {
 		db.UsersFunc.SetDefaultReturn(users)
 
 		ctx := actor.WithActor(context.Background(), &actor.Actor{UID: 1})
-		result, err := newSchemaResolver(db, gitserver.NewTestClient(t)).UpdateUser(ctx,
+		result, err := newSchemaResolver(db, gitserver.NewTestClient(t), nil).UpdateUser(ctx,
 			&updateUserArgs{
 				User:     "VXNlcjox",
 				Username: strptr("alice"),
@@ -613,29 +488,97 @@ func TestUpdateUser(t *testing.T) {
 		})
 	})
 
+	t.Run("scim controlled user cannot change display or username", func(t *testing.T) {
+		conf.Mock(&conf.Unified{
+			SiteConfiguration: schema.SiteConfiguration{
+				AuthEnableUsernameChanges: false,
+			},
+		})
+		defer conf.Mock(nil)
+
+		mockUser := &types.User{
+			ID:             1,
+			SCIMControlled: true,
+			Username:       "alice",
+			DisplayName:    "alice-updated",
+			AvatarURL:      "http://www.example.com/alice.png",
+		}
+		users := dbmocks.NewMockUserStore()
+		users.GetByIDFunc.SetDefaultReturn(mockUser, nil)
+		users.GetByCurrentAuthUserFunc.SetDefaultReturn(mockUser, nil)
+		users.UpdateFunc.SetDefaultReturn(nil)
+		db.UsersFunc.SetDefaultReturn(users)
+
+		RunTests(t, []*Test{
+			{
+				Context: actor.WithActor(context.Background(), &actor.Actor{UID: 1}),
+				Schema:  mustParseGraphQLSchema(t, db),
+				Query: `
+			mutation {
+				updateUser(
+					user: "VXNlcjox",
+					displayName: "alice-changed"
+				) {
+					displayName,
+				}
+			}
+			`,
+				ExpectedResult: `null`,
+				ExpectedErrors: []*gqlerrors.QueryError{
+					{
+						Path:    []any{string("updateUser")},
+						Message: "cannot update externally managed user",
+					},
+				},
+			},
+			{
+				Context: actor.WithActor(context.Background(), &actor.Actor{UID: 1}),
+				Schema:  mustParseGraphQLSchema(t, db),
+				Query: `
+			mutation {
+				updateUser(
+					user: "VXNlcjox",
+					username: "alice-updated"
+				) {
+					username,
+				}
+			}
+			`,
+				ExpectedResult: `null`,
+				ExpectedErrors: []*gqlerrors.QueryError{
+					{
+						Path:    []any{string("updateUser")},
+						Message: "cannot update externally managed user",
+					},
+				},
+			},
+		})
+	})
+
 	t.Run("only allowed by authenticated user on Sourcegraph.com", func(t *testing.T) {
 		users := dbmocks.NewMockUserStore()
 		db.UsersFunc.SetDefaultReturn(users)
 
-		orig := envvar.SourcegraphDotComMode()
-		envvar.MockSourcegraphDotComMode(true)
-		defer envvar.MockSourcegraphDotComMode(orig)
+		dotcom.MockSourcegraphDotComMode(t, true)
 
 		tests := []struct {
-			name  string
-			ctx   context.Context
-			setup func()
+			name       string
+			ctx        context.Context
+			shouldFail bool
+			setup      func()
 		}{
 			{
-				name: "unauthenticated",
-				ctx:  context.Background(),
+				name:       "unauthenticated",
+				ctx:        context.Background(),
+				shouldFail: true,
 				setup: func() {
 					users.GetByIDFunc.SetDefaultReturn(&types.User{ID: 1}, nil)
 				},
 			},
 			{
-				name: "another user",
-				ctx:  actor.WithActor(context.Background(), &actor.Actor{UID: 2}),
+				name:       "another user",
+				ctx:        actor.WithActor(context.Background(), &actor.Actor{UID: 2}),
+				shouldFail: true,
 				setup: func() {
 					users.GetByIDFunc.SetDefaultHook(func(ctx context.Context, id int32) (*types.User, error) {
 						return &types.User{ID: id}, nil
@@ -643,8 +586,9 @@ func TestUpdateUser(t *testing.T) {
 				},
 			},
 			{
-				name: "site admin",
-				ctx:  actor.WithActor(context.Background(), &actor.Actor{UID: 2}),
+				name:       "site admin",
+				ctx:        actor.WithActor(context.Background(), &actor.Actor{UID: 2}),
+				shouldFail: false,
 				setup: func() {
 					users.GetByIDFunc.SetDefaultHook(func(ctx context.Context, id int32) (*types.User, error) {
 						return &types.User{ID: id, SiteAdmin: true}, nil
@@ -656,15 +600,21 @@ func TestUpdateUser(t *testing.T) {
 			t.Run(test.name, func(t *testing.T) {
 				test.setup()
 
-				_, err := newSchemaResolver(db, gitserver.NewTestClient(t)).UpdateUser(
+				_, err := newSchemaResolver(db, gitserver.NewTestClient(t), nil).UpdateUser(
 					test.ctx,
 					&updateUserArgs{
 						User: MarshalUserID(1),
 					},
 				)
-				got := fmt.Sprintf("%v", err)
-				want := "must be authenticated as user with id 1"
-				assert.Equal(t, want, got)
+				if test.shouldFail {
+					got := fmt.Sprintf("%v", err)
+					want := "must be authenticated as the authorized user or site admin"
+					assert.Equal(t, want, got)
+				} else {
+					if err != nil {
+						t.Errorf("unexpected error: %v", err)
+					}
+				}
 			})
 		}
 	})
@@ -688,7 +638,7 @@ func TestUpdateUser(t *testing.T) {
 		}
 		for _, test := range tests {
 			t.Run(test.name, func(t *testing.T) {
-				_, err := newSchemaResolver(db, gitserver.NewTestClient(t)).UpdateUser(
+				_, err := newSchemaResolver(db, gitserver.NewTestClient(t), nil).UpdateUser(
 					actor.WithActor(context.Background(), &actor.Actor{UID: 2}),
 					&updateUserArgs{
 						User:      MarshalUserID(2),
@@ -888,9 +838,8 @@ func TestUser_Organizations(t *testing.T) {
 	}
 
 	t.Run("on Sourcegraph.com", func(t *testing.T) {
-		orig := envvar.SourcegraphDotComMode()
-		envvar.MockSourcegraphDotComMode(true)
-		t.Cleanup(func() { envvar.MockSourcegraphDotComMode(orig) })
+
+		dotcom.MockSourcegraphDotComMode(t, true)
 
 		t.Run("same user", func(t *testing.T) {
 			expectOrgSuccess(t, 1)
@@ -935,7 +884,7 @@ func TestSchema_SetUserCompletionsQuota(t *testing.T) {
 		users.GetByCurrentAuthUserFunc.SetDefaultReturn(&types.User{ID: 2, Username: "2"}, nil)
 		db.UsersFunc.SetDefaultReturn(users)
 
-		result, err := newSchemaResolver(db, gitserver.NewTestClient(t)).SetUserCompletionsQuota(context.Background(),
+		result, err := newSchemaResolver(db, gitserver.NewTestClient(t), nil).SetUserCompletionsQuota(context.Background(),
 			SetUserCompletionsQuotaArgs{
 				User:  MarshalUserID(1),
 				Quota: nil,
@@ -1010,7 +959,7 @@ func TestSchema_SetUserCodeCompletionsQuota(t *testing.T) {
 		users.GetByCurrentAuthUserFunc.SetDefaultReturn(&types.User{ID: 2, Username: "2"}, nil)
 		db.UsersFunc.SetDefaultReturn(users)
 
-		schemaResolver := newSchemaResolver(db, gitserver.NewTestClient(t))
+		schemaResolver := newSchemaResolver(db, gitserver.NewTestClient(t), nil)
 		result, err := schemaResolver.SetUserCodeCompletionsQuota(context.Background(),
 			SetUserCodeCompletionsQuotaArgs{
 				User:  MarshalUserID(1),
@@ -1071,110 +1020,173 @@ func TestSchema_SetUserCodeCompletionsQuota(t *testing.T) {
 	})
 }
 
-func TestSchema_SetCompletedPostSignup(t *testing.T) {
+func TestUser_EvaluateFeatureFlag(t *testing.T) {
+
+	users := dbmocks.NewMockUserStore()
+	users.GetByIDFunc.SetDefaultReturn(&types.User{ID: 1, Username: "alice"}, nil)
+
+	// The actor running this should be different from the user that we're inspecting
+	ctx := actor.WithActor(context.Background(), &actor.Actor{UID: 99})
+
+	flags := dbmocks.NewMockFeatureFlagStore()
+	// The result of GetUserFlags already includes any overrides. Therefore, we don't need to test overrides additionally.
+	flags.GetUserFlagsFunc.SetDefaultHook(func(ctx context.Context, uid int32) (map[string]bool, error) {
+		return map[string]bool{"enabled-flag": true, "disabled-flag": false}, nil
+	})
+
 	db := dbmocks.NewMockDB()
+	db.UsersFunc.SetDefaultReturn(users)
+	db.FeatureFlagsFunc.SetDefaultReturn(flags)
 
-	currentUserID := int32(2)
+	t.Run("with user schema", func(t *testing.T) {
 
-	t.Run("not site admin, not current user", func(t *testing.T) {
-		users := dbmocks.NewMockUserStore()
-		users.GetByIDFunc.SetDefaultHook(func(ctx context.Context, id int32) (*types.User, error) {
-			return &types.User{
-				ID:       id,
-				Username: strconv.Itoa(int(id)),
-			}, nil
+		RunTests(t, []*Test{
+			{
+				Context: ctx,
+				Schema:  mustParseGraphQLSchema(t, db),
+				Query: `
+					{
+						node(id: "VXNlcjox") {
+							...on User {
+								evaluateFeatureFlag(flagName: "enabled-flag")
+							}
+						}
+					}
+				`,
+				ExpectedResult: `
+					{
+						"node": {
+							"evaluateFeatureFlag": true
+						}
+					}
+				`,
+			},
+			{
+				Context: ctx,
+				Schema:  mustParseGraphQLSchema(t, db),
+				Query: `
+					{
+						node(id: "VXNlcjox") {
+							...on User {
+								evaluateFeatureFlag(flagName: "disabled-flag")
+							}
+						}
+					}
+				`,
+				ExpectedResult: `
+					{
+						"node": {
+							"evaluateFeatureFlag": false
+						}
+					}
+				`,
+			},
+			{
+				Context: ctx,
+				Schema:  mustParseGraphQLSchema(t, db),
+				Query: `
+					{
+						node(id: "VXNlcjox") {
+							...on User {
+								evaluateFeatureFlag(flagName: "non-existent-flag")
+							}
+						}
+					}
+				`,
+				ExpectedResult: `
+					{
+						"node": {
+							"evaluateFeatureFlag": null
+						}
+					}
+				`,
+			},
 		})
-		// Different user.
-		users.GetByCurrentAuthUserFunc.SetDefaultReturn(&types.User{ID: currentUserID, Username: "2"}, nil)
-		db.UsersFunc.SetDefaultReturn(users)
-
-		userID := MarshalUserID(1)
-		result, err := newSchemaResolver(db, gitserver.NewTestClient(t)).SetCompletedPostSignup(context.Background(),
-			&userMutationArgs{UserID: &userID},
-		)
-		got := fmt.Sprintf("%v", err)
-		want := auth.ErrMustBeSiteAdminOrSameUser.Error()
-		assert.Equal(t, want, got)
-		assert.Nil(t, result)
 	})
 
-	t.Run("current user can set field on themselves", func(t *testing.T) {
-		currentUser := &types.User{ID: currentUserID, Username: "2", SiteAdmin: true}
+	t.Run("with users schema", func(t *testing.T) {
 
-		users := dbmocks.NewMockUserStore()
-		users.GetByIDFunc.SetDefaultReturn(currentUser, nil)
-		users.GetByCurrentAuthUserFunc.SetDefaultReturn(currentUser, nil)
-		db.UsersFunc.SetDefaultReturn(users)
-		var called bool
-		users.UpdateFunc.SetDefaultHook(func(ctx context.Context, id int32, update database.UserUpdate) error {
-			called = true
-			return nil
-		})
+		users.ListFunc.SetDefaultReturn([]*types.User{{Username: "alice"}}, nil)
 
-		userEmails := dbmocks.NewMockUserEmailsStore()
-		userEmails.HasVerifiedEmailFunc.SetDefaultReturn(true, nil)
-		db.UserEmailsFunc.SetDefaultReturn(userEmails)
-
-		RunTest(t, &Test{
-			Context: actor.WithActor(context.Background(), &actor.Actor{UID: currentUserID}),
-			Schema:  mustParseGraphQLSchema(t, db),
-			Query: `
-			mutation {
-				setCompletedPostSignup(userID: "VXNlcjoy") {
-					alwaysNil
-				}
-			}
-		`,
-			ExpectedResult: `
+		RunTests(t, []*Test{
 			{
-				"setCompletedPostSignup": {
-					"alwaysNil": null
+				Context: ctx,
+				Schema:  mustParseGraphQLSchema(t, db),
+				Query: `
+				{
+					users {
+						nodes {
+							username
+							evaluateFeatureFlag(flagName: "enabled-flag")
+						}
+					}
 				}
-			}
-		`,
-		})
-
-		if !called {
-			t.Errorf("updatefunc was not called, but should have been")
-		}
-	})
-
-	t.Run("site admin can set post-signup complete", func(t *testing.T) {
-		mockUser := &types.User{
-			ID:       1,
-			Username: "alice",
-		}
-		users := dbmocks.NewMockUserStore()
-		users.GetByIDFunc.SetDefaultReturn(mockUser, nil)
-		users.GetByCurrentAuthUserFunc.SetDefaultReturn(&types.User{ID: currentUserID, Username: "2", SiteAdmin: true}, nil)
-		db.UsersFunc.SetDefaultReturn(users)
-		var called bool
-		users.UpdateFunc.SetDefaultHook(func(ctx context.Context, id int32, update database.UserUpdate) error {
-			called = true
-			return nil
-		})
-
-		RunTest(t, &Test{
-			Context: actor.WithActor(context.Background(), &actor.Actor{UID: 1}),
-			Schema:  mustParseGraphQLSchema(t, db),
-			Query: `
-			mutation {
-				setCompletedPostSignup(userID: "VXNlcjox") {
-					alwaysNil
+			`,
+				ExpectedResult: `
+				{
+					"users": {
+						"nodes": [
+							{
+								"username": "alice",
+								"evaluateFeatureFlag": true
+							}
+						]
+					}
 				}
-			}
-		`,
-			ExpectedResult: `
+			`,
+			},
 			{
-				"setCompletedPostSignup": {
-					"alwaysNil": null
+				Context: ctx,
+				Schema:  mustParseGraphQLSchema(t, db),
+				Query: `
+				{
+					users {
+						nodes {
+							username
+							evaluateFeatureFlag(flagName: "disabled-flag")
+						}
+					}
 				}
-			}
-		`,
+			`,
+				ExpectedResult: `
+				{
+					"users": {
+						"nodes": [
+							{
+								"username": "alice",
+								"evaluateFeatureFlag": false
+							}
+						]
+					}
+				}
+			`,
+			},
+			{
+				Context: ctx,
+				Schema:  mustParseGraphQLSchema(t, db),
+				Query: `
+				{
+					users {
+						nodes {
+							username
+							evaluateFeatureFlag(flagName: "non-existent-flag")
+						}
+					}
+				}
+			`,
+				ExpectedResult: `
+				{
+					"users": {
+						"nodes": [
+							{
+								"username": "alice",
+								"evaluateFeatureFlag": null
+							}
+						]
+					}
+				}
+			`,
+			},
 		})
-
-		if !called {
-			t.Errorf("updatefunc was not called, but should have been")
-		}
 	})
 }

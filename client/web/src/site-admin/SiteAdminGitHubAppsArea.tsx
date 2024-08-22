@@ -11,6 +11,7 @@ import { LoadingSpinner, ErrorAlert } from '@sourcegraph/wildcard'
 
 import {
     GitHubAppDomain,
+    GitHubAppKind,
     type SiteExternalServiceConfigResult,
     type SiteExternalServiceConfigVariables,
 } from '../graphql-operations'
@@ -68,15 +69,25 @@ export const SiteAdminGitHubAppsArea: FC<Props> = props => {
 
     return (
         <Routes>
-            <Route index={true} element={<GitHubAppsPage batchChangesEnabled={props.batchChangesEnabled} />} />
+            <Route
+                index={true}
+                element={
+                    <GitHubAppsPage
+                        batchChangesEnabled={props.batchChangesEnabled}
+                        telemetryRecorder={props.platformContext.telemetryRecorder}
+                    />
+                }
+            />
 
             <Route
                 path="new"
                 element={
                     <CreateGitHubAppPage
+                        appKind={GitHubAppKind.REPO_SYNC}
                         defaultEvents={DEFAULT_EVENTS}
                         defaultPermissions={DEFAULT_PERMISSIONS}
                         appDomain={GitHubAppDomain.REPOS}
+                        telemetryRecorder={props.platformContext.telemetryRecorder}
                         {...props}
                     />
                 }
@@ -86,6 +97,7 @@ export const SiteAdminGitHubAppsArea: FC<Props> = props => {
                 element={
                     <GitHubAppPage
                         headerParentBreadcrumb={{ to: '/site-admin/github-apps', text: 'GitHub Apps' }}
+                        telemetryRecorder={props.platformContext.telemetryRecorder}
                         {...props}
                     />
                 }

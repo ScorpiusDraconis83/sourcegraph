@@ -32,7 +32,7 @@ func TestStoreQueuedCount(t *testing.T) {
 		t.Fatalf("unexpected error inserting records: %s", err)
 	}
 
-	count, err := testStore(db, defaultTestStoreOptions(nil, testScanRecord)).QueuedCount(context.Background(), false)
+	count, err := testStore(db, defaultTestStoreOptions(nil, testScanRecord)).CountByState(context.Background(), StateQueued|StateErrored)
 	if err != nil {
 		t.Fatalf("unexpected error getting queued count: %s", err)
 	}
@@ -56,13 +56,48 @@ func TestStoreQueuedCountIncludeProcessing(t *testing.T) {
 		t.Fatalf("unexpected error inserting records: %s", err)
 	}
 
-	count, err := testStore(db, defaultTestStoreOptions(nil, testScanRecord)).QueuedCount(context.Background(), true)
+	count, err := testStore(db, defaultTestStoreOptions(nil, testScanRecord)).CountByState(context.Background(), StateQueued|StateErrored|StateProcessing)
 	if err != nil {
 		t.Fatalf("unexpected error getting queued count: %s", err)
 	}
 	if count != 4 {
 		t.Errorf("unexpected count. want=%d have=%d", 4, count)
 	}
+}
+
+func TestStoreExists(t *testing.T) {
+	db := setupStoreTest(t)
+
+	if _, err := db.ExecContext(context.Background(), `
+		INSERT INTO workerutil_test (id, state, created_at)
+		VALUES
+			(1, 'queued', NOW() - '1 minute'::interval),
+			(2, 'queued', NOW() - '2 minute'::interval),
+			(3, 'state2', NOW() - '3 minute'::interval),
+			(4, 'queued', NOW() - '4 minute'::interval),
+			(5, 'processing', NOW() - '5 minute'::interval)
+	`); err != nil {
+		t.Fatalf("unexpected error inserting records: %s", err)
+	}
+
+	myStore := testStore(db, defaultTestStoreOptions(nil, testScanRecord))
+	ctx := context.Background()
+
+	hasQueued, err := myStore.Exists(ctx, StateQueued)
+	require.NoError(t, err)
+	require.True(t, hasQueued)
+
+	hasErrored, err := myStore.Exists(ctx, StateErrored)
+	require.NoError(t, err)
+	require.False(t, hasErrored)
+
+	hasQueuedOrErrored, err := myStore.Exists(ctx, StateQueued|StateErrored)
+	require.NoError(t, err)
+	require.True(t, hasQueuedOrErrored)
+
+	_, err = myStore.Exists(ctx, 0)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "should contain at least one state")
 }
 
 func TestStoreQueuedCountFailed(t *testing.T) {
@@ -81,7 +116,7 @@ func TestStoreQueuedCountFailed(t *testing.T) {
 		t.Fatalf("unexpected error inserting records: %s", err)
 	}
 
-	count, err := testStore(db, defaultTestStoreOptions(nil, testScanRecord)).QueuedCount(context.Background(), false)
+	count, err := testStore(db, defaultTestStoreOptions(nil, testScanRecord)).CountByState(context.Background(), StateQueued|StateErrored)
 	if err != nil {
 		t.Fatalf("unexpected error getting queued count: %s", err)
 	}
@@ -476,7 +511,7 @@ func TestStoreAddExecutionLogEntry(t *testing.T) {
 
 	numEntries := 5
 
-	for i := 0; i < numEntries; i++ {
+	for i := range numEntries {
 		command := []string{"ls", "-a", fmt.Sprintf("%d", i+1)}
 		payload := fmt.Sprintf("<load payload %d>", i+1)
 
@@ -503,7 +538,7 @@ func TestStoreAddExecutionLogEntry(t *testing.T) {
 		t.Fatalf("unexpected number of payloads. want=%d have=%d", numEntries, len(contents))
 	}
 
-	for i := 0; i < numEntries; i++ {
+	for i := range numEntries {
 		var entry executor.ExecutionLogEntry
 		if err := json.Unmarshal([]byte(contents[i]), &entry); err != nil {
 			t.Fatalf("unexpected error decoding entry: %s", err)
@@ -545,7 +580,7 @@ func TestStoreUpdateExecutionLogEntry(t *testing.T) {
 	}
 
 	numEntries := 5
-	for i := 0; i < numEntries; i++ {
+	for i := range numEntries {
 		command := []string{"ls", "-a", fmt.Sprintf("%d", i+1)}
 		payload := fmt.Sprintf("<load payload %d>", i+1)
 
@@ -577,7 +612,7 @@ func TestStoreUpdateExecutionLogEntry(t *testing.T) {
 		t.Fatalf("unexpected number of payloads. want=%d have=%d", numEntries, len(contents))
 	}
 
-	for i := 0; i < numEntries; i++ {
+	for i := range numEntries {
 		var entry executor.ExecutionLogEntry
 		if err := json.Unmarshal([]byte(contents[i]), &entry); err != nil {
 			t.Fatalf("unexpected error decoding entry: %s", err)
@@ -609,7 +644,7 @@ func TestStoreUpdateExecutionLogEntryUnknownEntry(t *testing.T) {
 		Out:     "<load payload>",
 	}
 
-	for unknownEntryID := 0; unknownEntryID < 2; unknownEntryID++ {
+	for unknownEntryID := range 2 {
 		err := testStore(db, defaultTestStoreOptions(nil, testScanRecord)).UpdateExecutionLogEntry(context.Background(), 1, unknownEntryID, entry, ExecutionLogEntryOptions{})
 		if err == nil {
 			t.Fatal("expected error but got none")

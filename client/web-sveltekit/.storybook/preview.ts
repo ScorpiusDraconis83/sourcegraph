@@ -1,14 +1,16 @@
 import type { Preview } from '@storybook/svelte'
 import { initialize, mswLoader } from 'msw-storybook-addon'
 
+// Global imports kept in sync with routes/+layout.svelte
 import '../src/routes/styles.scss'
+import '@fontsource-variable/roboto-mono'
+import '@fontsource-variable/inter'
 
 // Initialize MSW
 initialize()
 
 const preview: Preview = {
     parameters: {
-        actions: { argTypesRegex: '^on[A-Z].*' },
         controls: {
             matchers: {
                 color: /(background|color)$/i,

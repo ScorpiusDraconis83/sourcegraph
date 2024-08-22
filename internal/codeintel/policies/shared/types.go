@@ -1,6 +1,8 @@
 package shared
 
-import "time"
+import (
+	"time"
+)
 
 type ConfigurationPolicy struct {
 	ID                        int
@@ -13,7 +15,26 @@ type ConfigurationPolicy struct {
 	RetentionEnabled          bool
 	RetentionDuration         *time.Duration
 	RetainIntermediateCommits bool
-	IndexingEnabled           bool
+	PreciseIndexingEnabled    bool
+	SyntacticIndexingEnabled  bool
+	IndexCommitMaxAge         *time.Duration
+	IndexIntermediateCommits  bool
+	EmbeddingEnabled          bool
+}
+
+type ConfigurationPolicyPatch struct {
+	ID                        int
+	RepositoryID              *int
+	RepositoryPatterns        *[]string
+	Name                      string
+	Type                      GitObjectType
+	Pattern                   string
+	Protected                 bool
+	RetentionEnabled          bool
+	RetentionDuration         *time.Duration
+	RetainIntermediateCommits bool
+	PreciseIndexingEnabled    bool
+	SyntacticIndexingEnabled  *bool
 	IndexCommitMaxAge         *time.Duration
 	IndexIntermediateCommits  bool
 	EmbeddingEnabled          bool
@@ -49,9 +70,13 @@ type GetConfigurationPoliciesOptions struct {
 	// should be returned (or filtered).
 	ForDataRetention *bool
 
-	// ForIndexing indicates that configuration policies with indexing enabled should
+	// ForPreciseIndexing indicates that configuration policies with precise indexing enabled should
 	// be returned (or filtered).
-	ForIndexing *bool
+	ForPreciseIndexing *bool
+
+	// ForSyntacticIndexing indicates that configuration policies with syntactic indexing enabled should
+	// be returned (or filtered).
+	ForSyntacticIndexing *bool
 
 	// ForEmbeddings indicates that configuration policies with embeddings enabled
 	// should be returned (or filtered).

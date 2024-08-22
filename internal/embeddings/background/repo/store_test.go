@@ -15,13 +15,14 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbtest"
+	"github.com/sourcegraph/sourcegraph/internal/dotcom"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 	"github.com/sourcegraph/sourcegraph/lib/pointers"
 	"github.com/sourcegraph/sourcegraph/schema"
 )
 
 func TestRepoEmbeddingJobsStore(t *testing.T) {
-	t.Parallel()
+	dotcom.MockSourcegraphDotComMode(t, true)
 
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
@@ -141,53 +142,7 @@ func TestRepoEmbeddingJobsStore(t *testing.T) {
 	})
 }
 
-func TestRescheduleAll(t *testing.T) {
-	t.Parallel()
-
-	logger := logtest.Scoped(t)
-	db := database.NewDB(logger, dbtest.NewDB(t))
-	repoStore := db.Repos()
-	ctx := context.Background()
-
-	repo1 := &types.Repo{Name: "github.com/sourcegraph/sourcegraph", URI: "github.com/sourcegraph/sourcegraph", ExternalRepo: api.ExternalRepoSpec{}}
-	err := repoStore.Create(ctx, repo1)
-	require.NoError(t, err)
-
-	repo2 := &types.Repo{Name: "github.com/sourcegraph/sourcegraph2", URI: "github.com/sourcegraph/sourcegraph2", ExternalRepo: api.ExternalRepoSpec{}}
-	err = repoStore.Create(ctx, repo2)
-	require.NoError(t, err)
-
-	repo3 := &types.Repo{Name: "github.com/sourcegraph/sourcegraph3", URI: "github.com/sourcegraph/sourcegraph3", ExternalRepo: api.ExternalRepoSpec{}}
-	err = repoStore.Create(ctx, repo3)
-	require.NoError(t, err)
-
-	// Insert three completed jobs from two repos
-	_, err = db.Handle().ExecContext(ctx, fmt.Sprintf(
-		`insert into repo_embedding_jobs (repo_id, revision, state) values
-			(%d, 'rev1', 'completed'),
-			(%d, 'rev2', 'completed'),
-			(%d, 'rev3', 'completed'),
-			(%d, 'rev4', 'failed')
-		`,
-		repo1.ID,
-		repo1.ID,
-		repo2.ID,
-		repo3.ID,
-	))
-	require.NoError(t, err)
-
-	store := NewRepoEmbeddingJobsStore(db)
-	err = store.RescheduleAllRepos(ctx)
-	require.NoError(t, err)
-
-	jobs, err := store.ListRepoEmbeddingJobs(ctx, ListOpts{PaginationArgs: &database.PaginationArgs{}})
-	require.NoError(t, err)
-	require.Len(t, jobs, 6) // 4 jobs to start, added 2
-}
-
 func TestCancelRepoEmbeddingJob(t *testing.T) {
-	t.Parallel()
-
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
 	repoStore := db.Repos()
@@ -242,7 +197,7 @@ func TestCancelRepoEmbeddingJob(t *testing.T) {
 }
 
 func TestGetEmbeddableRepos(t *testing.T) {
-	t.Parallel()
+	dotcom.MockSourcegraphDotComMode(t, true)
 
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
@@ -287,8 +242,6 @@ func TestGetEmbeddableRepos(t *testing.T) {
 }
 
 func TestEmbeddingsPolicyWithFailures(t *testing.T) {
-	t.Parallel()
-
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
 	repoStore := db.Repos()
@@ -395,6 +348,8 @@ func TestGetEmbeddableReposLimit(t *testing.T) {
 }
 
 func TestGetEmbeddableRepoOpts(t *testing.T) {
+	conf.MockForceAllowEmbeddings(t, true)
+
 	conf.Mock(&conf.Unified{})
 	defer conf.Mock(nil)
 	conf.Mock(&conf.Unified{SiteConfiguration: schema.SiteConfiguration{

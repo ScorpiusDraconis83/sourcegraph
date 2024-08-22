@@ -16,7 +16,6 @@ go_library(
         "dbconns.go",
         "diskmetrics.go",
         "executors.go",
-        "frontend.go",
         "gitserver.go",
         "go.go",
         "grpc.go",
@@ -35,6 +34,7 @@ go_library(
         "workerutil_resetter.go",
     ],
     importpath = "github.com/sourcegraph/sourcegraph/monitoring/definitions/shared",
+    tags = [TAG_INFRA_DEVINFRA],
     visibility = ["//visibility:public"],
     deps = [
         "//monitoring/monitoring",

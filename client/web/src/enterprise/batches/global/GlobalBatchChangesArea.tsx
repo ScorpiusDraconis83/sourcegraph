@@ -1,9 +1,10 @@
 import React, { useMemo } from 'react'
 
-import { Routes, Route } from 'react-router-dom'
+import { Route, Routes } from 'react-router-dom'
 
 import type { Scalars } from '@sourcegraph/shared/src/graphql-operations'
 import type { SettingsCascadeProps } from '@sourcegraph/shared/src/settings/settings'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { lazyComponent } from '@sourcegraph/shared/src/util/lazyComponent'
 
@@ -43,9 +44,8 @@ const BatchChangeClosePage = lazyComponent<BatchChangeClosePageProps, 'BatchChan
     'BatchChangeClosePage'
 )
 
-interface Props extends TelemetryProps, SettingsCascadeProps {
+interface Props extends TelemetryProps, TelemetryV2Props, SettingsCascadeProps {
     authenticatedUser: AuthenticatedUser | null
-    isSourcegraphDotCom: boolean
 }
 
 /**
@@ -53,9 +53,9 @@ interface Props extends TelemetryProps, SettingsCascadeProps {
  */
 export const GlobalBatchChangesArea: React.FunctionComponent<React.PropsWithChildren<Props>> = ({
     authenticatedUser,
-    isSourcegraphDotCom,
     ...props
 }) => {
+    const isSourcegraphDotCom = Boolean(window.context?.sourcegraphDotComMode)
     const canCreate: true | string = useMemo(() => {
         if (isSourcegraphDotCom) {
             return NO_ACCESS_SOURCEGRAPH_COM
@@ -76,7 +76,6 @@ export const GlobalBatchChangesArea: React.FunctionComponent<React.PropsWithChil
                             headingElement="h1"
                             canCreate={canCreate}
                             authenticatedUser={authenticatedUser}
-                            isSourcegraphDotCom={isSourcegraphDotCom}
                             {...props}
                         />
                     }
@@ -101,7 +100,7 @@ export const GlobalBatchChangesArea: React.FunctionComponent<React.PropsWithChil
 
 const AuthenticatedCreateBatchChangePage = withAuthenticatedUser<
     CreateBatchChangePageProps & { authenticatedUser: AuthenticatedUser }
->(props => <CreateBatchChangePage {...props} authenticatedUser={props.authenticatedUser} />)
+>(props => <CreateBatchChangePage {...props} />)
 
 export interface NamespaceBatchChangesAreaProps extends Props {
     namespaceID: Scalars['ID']

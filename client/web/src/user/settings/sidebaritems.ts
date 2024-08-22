@@ -1,5 +1,4 @@
 import { canWriteBatchChanges } from '../../batches/utils'
-import { SHOW_BUSINESS_FEATURES } from '../../enterprise/dotcom/productSubscriptions/features'
 
 import type { UserSettingsSidebarItems } from './UserSettingsSidebar'
 
@@ -13,11 +12,6 @@ export const userSettingsSideBarItems: UserSettingsSidebarItems = [
         label: 'Profile',
         to: '/profile',
         exact: true,
-    },
-    {
-        label: 'Subscriptions',
-        to: '/subscriptions',
-        condition: ({ user }) => SHOW_BUSINESS_FEATURES && user.viewerCanAdminister,
     },
     {
         to: '/batch-changes',

@@ -3,6 +3,7 @@
 <script lang="ts" context="module">
     import hljs from 'highlight.js/lib/core'
     import diff from 'highlight.js/lib/languages/diff'
+
     import { highlightRanges } from '$lib/dom'
 
     hljs.registerLanguage('diff', diff)
@@ -33,16 +34,17 @@
 </script>
 
 <script lang="ts">
-    import Timestamp from '$lib/Timestamp.svelte'
-    import { displayRepoName, type CommitMatch, getRepositoryUrl, getMatchUrl } from '$lib/shared'
-    import CodeHostIcon from './CodeHostIcon.svelte'
-    import RepoStars from './RepoStars.svelte'
-    import SearchResult from './SearchResult.svelte'
     import type { Action } from 'svelte/action'
+
+    import RepoStars from '$lib/repo/RepoStars.svelte'
+    import { type CommitMatch, getMatchUrl } from '$lib/shared'
+    import Timestamp from '$lib/Timestamp.svelte'
+
+    import RepoRev from './RepoRev.svelte'
+    import SearchResult from './SearchResult.svelte'
 
     export let result: CommitMatch
 
-    $: repoAtRevisionURL = getRepositoryUrl(result.repository)
     $: commitURL = getMatchUrl(result)
     $: subject = result.message.split('\n', 1)[0]
     $: commitOid = result.oid.slice(0, 7)
@@ -58,18 +60,15 @@
 </script>
 
 <SearchResult>
-    <CodeHostIcon slot="icon" repository={result.repository} />
     <div slot="title" data-sveltekit-preload-data="tap">
-        <a href={repoAtRevisionURL}>{displayRepoName(result.repository)}</a>
-        <span aria-hidden={true}>›</span>
-        <a href={commitURL}>{result.authorName}</a>
-        <span aria-hidden={true}>:&nbsp;</span>
-        <a href={commitURL}>{subject}</a>
+        <RepoRev repoName={result.repository} rev={commitOid} />
+        <span aria-hidden={true} class="interpunct">·</span>
+        <a href={commitURL} data-focusable-search-result>
+            {result.authorName}: {subject}
+        </a>
     </div>
     <svelte:fragment slot="info">
         <a href={commitURL} data-sveltekit-preload-data="tap">
-            <code>{commitOid}</code>
-            &nbsp;
             <Timestamp date={result.committerDate} strict utc />
         </a>
         {#if result.repoStars}
@@ -79,7 +78,7 @@
     </svelte:fragment>
     <!-- #key is needed here to recreate the element because use:highlightCommit changes the DOM -->
     {#key content}
-        <pre class="{highlightCls} p-2" use:highlightCommit={{ ranges: matches }}>{content}</pre>
+        <pre class={highlightCls} use:highlightCommit={{ ranges: matches }}>{content}</pre>
     {/key}
 </SearchResult>
 
@@ -90,15 +89,19 @@
         margin-left: 0.5rem;
     }
 
-    code {
-        background: var(--code-bg);
-        display: inline-block;
-        padding: 0.25rem;
+    .interpunct {
+        margin: 0 0.5rem;
+        color: var(--text-muted);
     }
 
     pre {
+        padding: 0.5rem;
         margin: 0;
         font-family: var(--code-font-family);
         font-size: var(--code-font-size);
+    }
+
+    [data-focusable-search-result]:focus {
+        box-shadow: var(--focus-shadow);
     }
 </style>

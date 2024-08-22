@@ -1,137 +1,70 @@
-import { dirname, join } from 'path'
-import { fileURLToPath } from 'url'
+import { join } from 'path'
 
-import { generate, type CodegenConfig } from '@graphql-codegen/cli'
-import graphql from '@rollup/plugin-graphql'
 import { sveltekit } from '@sveltejs/kit/vite'
-import { defineConfig, mergeConfig, type Plugin, type UserConfig } from 'vite'
+import AutoImport from 'unplugin-auto-import/vite'
+import { FileSystemIconLoader } from 'unplugin-icons/loaders'
+import IconsResolver from 'unplugin-icons/resolver'
+import Icons from 'unplugin-icons/vite'
+import { defineConfig, mergeConfig, type UserConfig } from 'vite'
 import inspect from 'vite-plugin-inspect'
+import type { UserConfig as VitestUserConfig } from 'vitest'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
+import graphqlCodegen from './dev/vite-graphql-codegen'
+import { sgProxy } from './dev/vite-sg-proxy'
 
-// Generates typescript types for gql-tags and .graphql files
-// We don't use vite-plugin-graphql-codegen because it doesn't support watch mode
-// when documents are defined separately for every generated file.
-// Defining a single set of documents at the top level doesn't work either because
-// it would generated unnecessary files (e.g. .qql.d.ts files for .ts file) and also
-// caused duplicate code generation issues.
-function generateGraphQLTypes(): Plugin {
-    const codgegenConfig: CodegenConfig = {
-        generates: {
-            './src/lib/graphql-operations.ts': {
-                documents: ['src/{lib,routes}/**/*.ts', '!src/lib/graphql-{operations,types}.ts'],
-                config: {
-                    onlyOperationTypes: true,
-                    enumValues: '$lib/graphql-types',
-                    //interfaceNameForOperations: 'SvelteKitGraphQlOperations',
-                },
-                plugins: ['typescript', 'typescript-operations'],
-            },
-            'src/lib/graphql-types.ts': {
-                plugins: ['typescript'],
-            },
-            'src/': {
-                documents: ['src/**/*.gql', '!src/**/*.gql.d.ts'],
-                preset: 'near-operation-file',
-                presetConfig: {
-                    baseTypesPath: 'lib/graphql-types',
-                    extension: '.gql.d.ts',
-                },
-                config: {
-                    useTypeImports: true,
-                },
-                plugins: ['typescript-operations', `${__dirname}/dev/typed-document-node.cjs`],
-            },
-        },
-        schema: '../../cmd/frontend/graphqlbackend/*.graphql',
-        errorsOnly: true,
-        config: {
-            // https://the-guild.dev/graphql/codegen/plugins/typescript/typescript-operations#config-api-reference
-            arrayInputCoercion: false,
-            preResolveTypes: true,
-            operationResultSuffix: 'Result',
-            omitOperationSuffix: true,
-            namingConvention: {
-                typeNames: 'keep',
-                enumValues: 'keep',
-                transformUnderscore: true,
-            },
-            declarationKind: 'interface',
-            avoidOptionals: {
-                field: true,
-                inputValue: false,
-                object: true,
-            },
-            scalars: {
-                DateTime: 'string',
-                JSON: 'object',
-                JSONValue: 'unknown',
-                GitObjectID: 'string',
-                JSONCString: 'string',
-                PublishedValue: "boolean | 'draft'",
-                BigInt: 'string',
-            },
-        },
-    }
-
-    // Cheap custom function to check whether we should run codegen for the provided path
-    function shouldRunCodegen(path: string): boolean {
-        // Do not run codegen for generated files
-        if (/(graphql-(operations|types)|\.gql\.d)\.ts$/.test(path)) {
-            return false
-        }
-        if (/\.(ts|gql)$/.test(path)) {
-            return true
-        }
-        return false
-    }
-
-    async function codegen(): Promise<void> {
-        try {
-            await generate(codgegenConfig, true)
-        } catch {
-            // generate already logs errors to the console
-            // but we still need to catch it otherwise vite will terminate
-        }
-    }
-
-    return {
-        name: 'graphql-codegen',
-        buildStart() {
-            return codegen()
-        },
-        configureServer(server) {
-            server.watcher.on('add', path => {
-                if (shouldRunCodegen(path)) {
-                    codegen()
-                }
-            })
-            server.watcher.on('change', path => {
-                if (shouldRunCodegen(path)) {
-                    codegen()
-                }
-            })
-        },
-    }
-}
+const BAZEL = !!process.env.BAZEL
 
 export default defineConfig(({ mode }) => {
-    let config: UserConfig = {
+    // Test mode is used by vitest and we don't want to run the proxy in that case.
+    const DISABLE_PROXY = mode === 'test' || !!process.env.SK_DISABLE_PROXY
+
+    // Using & VitestUserConfig shouldn't be necessary but without it `svelte-check` complains when run
+    // in bazel. It's not clear what needs to be done to make it work without it, just like it does
+    // locally.
+    let config: UserConfig & VitestUserConfig = {
         plugins: [
             sveltekit(),
-            // Generates typescript types for gql-tags and .graphql files
-            generateGraphQLTypes(),
+            AutoImport({
+                // Ignore TS when running Bazel. It would try to write to the file which is not
+                // possible in bazel.
+                dts: BAZEL ? false : './src/auto-imports.d.ts',
+                resolvers: [
+                    IconsResolver({
+                        prefix: 'i',
+                        customCollections: ['sg', 'symbol'],
+                    }),
+                ],
+            }),
+            Icons({
+                compiler: 'svelte',
+                customCollections: {
+                    sg: FileSystemIconLoader('./assets/icons'),
+                    symbol: FileSystemIconLoader('./assets/symbol-icons'),
+                },
+            }),
+            // Generates typescript types for gql-tags and .gql files
+            graphqlCodegen(),
             inspect(),
-            // Parses .graphql files and imports them as AST
-            graphql(),
+            // This plugin proxies requests to resources that are not handled by the SvelteKit app
+            // to a real Sourcegraph instance.
+            // It also extracts the JS context object from the origin server and injects it into the local HTML page.
+            !DISABLE_PROXY &&
+                sgProxy({
+                    target: process.env.SOURCEGRAPH_API_URL || 'https://sourcegraph.sourcegraph.com',
+                }),
         ],
+        build: {
+            sourcemap: true,
+        },
         define:
             mode === 'test'
                 ? {}
                 : {
                       'process.platform': '"browser"',
-                      'process.env.VITEST': 'undefined',
-                      'process.env': '({})',
+                      'process.env.VITEST': 'null',
+                      'process.env.NODE_ENV': `"${mode}"`,
+                      'process.env.SOURCEGRAPH_API_URL': JSON.stringify(process.env.SOURCEGRAPH_API_URL),
+                      'process.env': '{}',
                   },
         css: {
             preprocessorOptions: {
@@ -142,6 +75,7 @@ export default defineConfig(({ mode }) => {
                         // (without it scss @import paths are always relative to the importing file)
                         join(__dirname, '..'),
                     ],
+                    additionalData: `@use '$lib/styles/breakpoints.scss';`,
                 },
             },
             modules: {
@@ -149,19 +83,12 @@ export default defineConfig(({ mode }) => {
             },
         },
         server: {
+            // When running behind caddy we have to listen to a different host.
+            host: process.env.SK_HOST || 'localhost',
             // Allow setting the port via env variables to make it easier to integrate with
             // our existing caddy setup (which proxies requests to a specific port).
             port: process.env.SK_PORT ? +process.env.SK_PORT : undefined,
-            strictPort: !!process.env.SV_PORT,
-            proxy: {
-                // Proxy requests to specific endpoints to a real Sourcegraph
-                // instance.
-                '^(/sign-in|/.assets|/-|/.api|/search/stream|/users|/notebooks|/insights)': {
-                    target: process.env.SOURCEGRAPH_API_URL || 'https://sourcegraph.com',
-                    changeOrigin: true,
-                    secure: false,
-                },
-            },
+            strictPort: !!process.env.SK_PORT,
         },
 
         resolve: {
@@ -176,6 +103,18 @@ export default defineConfig(({ mode }) => {
                     find: /^react-icons\/(.+)$/,
                     replacement: 'react-icons/$1/index.js',
                 },
+                // We generate corresponding .gql.ts files for .gql files.
+                // This alias allows us to import .gql files and have them resolved to the generated .gql.ts files.
+                {
+                    find: /^(.*)\.gql$/,
+                    replacement: '$1.gql.ts',
+                },
+                // Without aliasing lodash to lodash-es we get the following error:
+                // SyntaxError: Named export 'castArray' not found. The requested module 'lodash' is a CommonJS module, which may not support all module.exports as named exports.
+                {
+                    find: /^lodash$/,
+                    replacement: 'lodash-es',
+                },
             ],
         },
 
@@ -188,10 +127,20 @@ export default defineConfig(({ mode }) => {
 
         test: {
             setupFiles: './src/testing/setup.ts',
+            include: ['src/**/*.test.ts'],
+        },
+
+        legacy: {
+            // Our existing codebase imports many CommonJS modules as if they were ES modules. The default
+            // Vite 5 behavior doesn't work with this. Enabling this should be OK since we don't
+            // actually use SSR at the moment, so the difference between the dev and prod builds don't matter.
+            // We should revisit this at some point though.
+            // See https://vitejs.dev/guide/migration.html#ssr-externalized-modules-value-now-matches-production
+            proxySsrExternalModules: true,
         },
     }
 
-    if (process.env.BAZEL) {
+    if (BAZEL) {
         // Merge settings necessary to make the build work with bazel
         config = mergeConfig(config, {
             resolve: {
@@ -223,8 +172,12 @@ export default defineConfig(({ mode }) => {
                 // and processes them as well.
                 // In a bazel sandbox however all @sourcegraph/* dependencies are built packages and thus not processed
                 // by vite without this additional setting.
-                // We have to process those files to apply certain "fixes", such as aliases defined in svelte.config.js.
+                // We have to process those files to apply certain "fixes", such as aliases defined in here
+                // and in svelte.config.js.
                 noExternal: [/@sourcegraph\/.*/],
+                // Exceptions to the above rule. These are packages that are not part of this monorepo and should
+                // not be processed by vite.
+                external: ['@sourcegraph/telemetry'],
             },
         } satisfies UserConfig)
     }

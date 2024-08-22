@@ -1,4 +1,4 @@
-import React, { type FunctionComponent, useCallback, useEffect, useMemo } from 'react'
+import React, { useCallback, useEffect, useMemo, type FunctionComponent } from 'react'
 
 import { useApolloClient } from '@apollo/client'
 import {
@@ -11,14 +11,14 @@ import {
     mdiLock,
     mdiPencil,
     mdiSourceRepository,
-    mdiVectorPolyline,
 } from '@mdi/js'
 import classNames from 'classnames'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { Subject } from 'rxjs'
 
 import { RepoLink } from '@sourcegraph/shared/src/components/RepoLink'
 import { GitObjectType } from '@sourcegraph/shared/src/graphql-operations'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import type { TelemetryProps, TelemetryService } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { Badge, Button, Container, ErrorAlert, H3, Icon, Link, PageHeader, Text, Tooltip } from '@sourcegraph/wildcard'
 
@@ -36,11 +36,11 @@ import { hasGlobalPolicyViolation } from '../shared'
 
 import styles from './CodeIntelConfigurationPage.module.scss'
 
-export interface CodeIntelConfigurationPageProps extends TelemetryProps {
+export interface CodeIntelConfigurationPageProps extends TelemetryProps, TelemetryV2Props {
     authenticatedUser: AuthenticatedUser | null
     queryPolicies?: typeof defaultQueryPolicies
     repo?: { id: string; name: string }
-    indexingEnabled?: boolean
+    preciseIndexingEnabled?: boolean
     telemetryService: TelemetryService
 }
 
@@ -48,10 +48,18 @@ export const CodeIntelConfigurationPage: FunctionComponent<CodeIntelConfiguratio
     authenticatedUser,
     queryPolicies = defaultQueryPolicies,
     repo,
-    indexingEnabled = window.context?.codeIntelAutoIndexingEnabled,
+    preciseIndexingEnabled = window.context?.codeIntelAutoIndexingEnabled,
     telemetryService,
+    telemetryRecorder,
 }) => {
-    useEffect(() => telemetryService.logViewEvent('CodeIntelConfiguration'), [telemetryService])
+    useEffect(() => {
+        telemetryService.logViewEvent('CodeIntelConfiguration')
+        if (repo) {
+            telemetryRecorder.recordEvent('repo.codeIntel.configuration', 'view')
+        } else {
+            telemetryRecorder.recordEvent('admin.codeIntel.configuration', 'view')
+        }
+    }, [telemetryService, telemetryRecorder, repo])
 
     const navigate = useNavigate()
     const location = useLocation()
@@ -60,12 +68,12 @@ export const CodeIntelConfigurationPage: FunctionComponent<CodeIntelConfiguratio
     const apolloClient = useApolloClient()
     const queryDefaultPoliciesCallback = useCallback(
         (args: FilteredConnectionQueryArguments) =>
-            queryPolicies({ ...args, repository: repo?.id, forEmbeddings: false, protected: true }, apolloClient),
+            queryPolicies({ ...args, repository: repo?.id, protected: true }, apolloClient),
         [queryPolicies, repo?.id, apolloClient]
     )
     const queryCustomPoliciesCallback = useCallback(
         (args: FilteredConnectionQueryArguments) =>
-            queryPolicies({ ...args, repository: repo?.id, forEmbeddings: false, protected: false }, apolloClient),
+            queryPolicies({ ...args, repository: repo?.id, protected: false }, apolloClient),
         [queryPolicies, repo?.id, apolloClient]
     )
 
@@ -121,8 +129,8 @@ export const CodeIntelConfigurationPage: FunctionComponent<CodeIntelConfiguratio
                 ]}
                 description={
                     <>
-                        Rules that control{indexingEnabled && <> auto-indexing and</>} data retention behavior of code
-                        graph data.
+                        Rules that control{preciseIndexingEnabled && <> precise auto-indexing and</>} data retention
+                        behavior of code graph data.
                     </>
                 }
                 actions={authenticatedUser?.siteAdmin && <CreatePolicyButtons repo={repo} />}
@@ -151,7 +159,7 @@ export const CodeIntelConfigurationPage: FunctionComponent<CodeIntelConfiguratio
                     noun="configuration policy"
                     pluralNoun="configuration policies"
                     nodeComponent={PoliciesNode}
-                    nodeComponentProps={{ isDeleting, onDelete, indexingEnabled }}
+                    nodeComponentProps={{ isDeleting, onDelete, preciseIndexingEnabled }}
                     queryConnection={queryCustomPoliciesCallback}
                     cursorPaging={true}
                     filters={[
@@ -159,16 +167,16 @@ export const CodeIntelConfigurationPage: FunctionComponent<CodeIntelConfiguratio
                             id: 'filters',
                             label: 'Show',
                             type: 'select',
-                            values: [
+                            options: [
                                 {
                                     label: 'All policies',
                                     value: 'all',
                                     args: {},
                                 },
-                                ...(indexingEnabled
+                                ...(preciseIndexingEnabled
                                     ? [
                                           {
-                                              label: 'Policies affecting auto-indexing',
+                                              label: 'Policies affecting precise precise auto-indexing',
                                               value: 'indexing',
                                               args: { forIndexing: true },
                                           },
@@ -198,7 +206,7 @@ export const CodeIntelConfigurationPage: FunctionComponent<CodeIntelConfiguratio
                     noun="configuration policy"
                     pluralNoun="configuration policies"
                     nodeComponent={PoliciesNode}
-                    nodeComponentProps={{ indexingEnabled }}
+                    nodeComponentProps={{ preciseIndexingEnabled }}
                     queryConnection={queryDefaultPoliciesCallback}
                     emptyElement={<EmptyPoliciesList repo={repo} />}
                     hideSearch={true}
@@ -212,45 +220,39 @@ export const CodeIntelConfigurationPage: FunctionComponent<CodeIntelConfiguratio
 
 interface ProtectedPoliciesNodeProps {
     node: CodeIntelligenceConfigurationPolicyFields
-    indexingEnabled?: boolean
-    domain?: 'scip' | 'embeddings'
+    preciseIndexingEnabled?: boolean
 }
 
 export interface UnprotectedPoliciesNodeProps {
     node: CodeIntelligenceConfigurationPolicyFields
     isDeleting: boolean
     onDelete: (id: string, name: string) => Promise<void>
-    indexingEnabled?: boolean
-    domain?: 'scip' | 'embeddings'
+    preciseIndexingEnabled?: boolean
 }
 
 type PoliciesNodeProps = ProtectedPoliciesNodeProps | UnprotectedPoliciesNodeProps
 
 export const PoliciesNode: FunctionComponent<React.PropsWithChildren<PoliciesNodeProps>> = ({
     node: policy,
-    indexingEnabled = false,
-    domain = 'scip',
+    preciseIndexingEnabled = false,
     ...props
 }) => (
     <>
         <span className={styles.separator} />
 
         <div className={classNames(styles.name, 'd-flex flex-column')}>
-            <PolicyDescription policy={policy} indexingEnabled={indexingEnabled} domain={domain} />
+            <PolicyDescription policy={policy} preciseIndexingEnabled={preciseIndexingEnabled} />
             <RepositoryAndGitObjectDescription policy={policy} />
-            {policy.indexingEnabled && indexingEnabled && <AutoIndexingDescription policy={policy} />}
+            {policy.indexingEnabled && preciseIndexingEnabled && <AutoIndexingDescription policy={policy} />}
             {policy.retentionEnabled && <RetentionDescription policy={policy} />}
-            {policy.embeddingsEnabled && <EmbeddingsDescription policy={policy} />}
         </div>
 
         <div className="h-100">
             <Link
                 to={
                     policy.repository === null
-                        ? `/site-admin/${domain === 'scip' ? 'code-graph' : 'embeddings'}/configuration/${policy.id}`
-                        : `/${policy.repository.name}/-/${
-                              domain === 'scip' ? 'code-graph' : 'embeddings'
-                          }/configuration/${policy.id}`
+                        ? `/site-admin/code-graph/configuration/${policy.id}`
+                        : `/${policy.repository.name}/-/code-graph/configuration/${policy.id}`
                 }
             >
                 <Tooltip content="Edit this policy">
@@ -288,25 +290,21 @@ export const PoliciesNode: FunctionComponent<React.PropsWithChildren<PoliciesNod
 
 interface PolicyDescriptionProps {
     policy: CodeIntelligenceConfigurationPolicyFields
-    indexingEnabled?: boolean
+    preciseIndexingEnabled?: boolean
     allowGlobalPolicies?: boolean
-    domain?: 'scip' | 'embeddings'
 }
 
 const PolicyDescription: FunctionComponent<PolicyDescriptionProps> = ({
     policy,
-    indexingEnabled = false,
+    preciseIndexingEnabled = false,
     allowGlobalPolicies = window.context?.codeIntelAutoIndexingAllowGlobalPolicies,
-    domain = 'scip',
 }) => (
     <div className={styles.policyDescription}>
         <Link
             to={
                 policy.repository === null
-                    ? `/site-admin/${domain === 'scip' ? 'code-graph' : 'embeddings'}/configuration/${policy.id}`
-                    : `/${policy.repository.name}/-/${domain === 'scip' ? 'code-graph' : 'embeddings'}/configuration/${
-                          policy.id
-                      }`
+                    ? `/site-admin/code-graph/configuration/${policy.id}`
+                    : `/${policy.repository.name}/-/code-graph/configuration/${policy.id}`
             }
         >
             <Text weight="bold" className="mb-0">
@@ -314,7 +312,7 @@ const PolicyDescription: FunctionComponent<PolicyDescriptionProps> = ({
             </Text>
         </Link>
 
-        {!policy.retentionEnabled && !(indexingEnabled && policy.indexingEnabled) && !policy.embeddingsEnabled && (
+        {!policy.retentionEnabled && !(preciseIndexingEnabled && policy.indexingEnabled) && (
             <Tooltip content="This policy has no enabled behaviors.">
                 <Icon
                     svgPath={mdiCircleOffOutline}
@@ -325,12 +323,12 @@ const PolicyDescription: FunctionComponent<PolicyDescriptionProps> = ({
             </Tooltip>
         )}
 
-        {indexingEnabled && !allowGlobalPolicies && hasGlobalPolicyViolation(policy) && (
-            <Tooltip content="This Sourcegraph instance has disabled global policies for auto-indexing.">
+        {preciseIndexingEnabled && !allowGlobalPolicies && hasGlobalPolicyViolation(policy) && (
+            <Tooltip content="This Sourcegraph instance has disabled global policies for precise auto-indexing.">
                 <Icon
                     svgPath={mdiAlert}
                     inline={true}
-                    aria-label="This Sourcegraph instance has disabled global policies for auto-indexing."
+                    aria-label="This Sourcegraph instance has disabled global policies for precise auto-indexing."
                     className="text-warning ml-2"
                 />
             </Tooltip>
@@ -456,11 +454,11 @@ interface AutoIndexingDescriptionProps {
 
 const AutoIndexingDescription: FunctionComponent<AutoIndexingDescriptionProps> = ({ policy }) => (
     <div>
-        <Tooltip content="This policy affects auto-indexing.">
+        <Tooltip content="This policy affects precise auto-indexing.">
             <Icon
                 svgPath={mdiDatabaseClock}
                 inline={true}
-                aria-label="This policy affects auto-indexing."
+                aria-label="This policy affects precise auto-indexing."
                 className="mr-2"
             />
         </Tooltip>
@@ -529,24 +527,5 @@ const RetentionDescription: FunctionComponent<RetentionDescriptionProps> = ({ po
             </Badge>
             .
         </span>
-    </div>
-)
-
-interface EmbeddingsDescriptionProps {
-    policy: CodeIntelligenceConfigurationPolicyFields
-}
-
-const EmbeddingsDescription: FunctionComponent<EmbeddingsDescriptionProps> = ({ policy }) => (
-    <div>
-        <Tooltip content="This policy affects embeddings.">
-            <Icon
-                svgPath={mdiVectorPolyline}
-                inline={true}
-                aria-label="This policy affects embeddings."
-                className="mr-2"
-            />
-        </Tooltip>
-
-        <span>Maintains embeddings.</span>
     </div>
 )

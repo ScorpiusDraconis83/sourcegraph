@@ -16,11 +16,11 @@ import (
 	"github.com/sourcegraph/log/logtest"
 
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/externallink"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/highlight"
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver/gitdomain"
-	"github.com/sourcegraph/sourcegraph/internal/highlight"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 	"github.com/sourcegraph/sourcegraph/lib/codeintel/languages"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
@@ -41,7 +41,7 @@ func TestRepositoryComparisonNoMergeBase(t *testing.T) {
 	}
 
 	gsClient := gitserver.NewMockClient()
-	gsClient.MergeBaseFunc.SetDefaultReturn("", errors.Errorf("merge base doesn't exist!"))
+	gsClient.MergeBaseFunc.SetDefaultReturn("", nil)
 	gsClient.ResolveRevisionFunc.SetDefaultHook(func(_ context.Context, _ api.RepoName, spec string, _ gitserver.ResolveRevisionOptions) (api.CommitID, error) {
 		if spec != wantBaseRevision && spec != wantHeadRevision {
 			t.Fatalf("ResolveRevision received wrong spec: %s", spec)
@@ -60,7 +60,48 @@ func TestRepositoryComparisonNoMergeBase(t *testing.T) {
 	require.Equal(t, "..", comp.rangeType)
 }
 
+func TestRepositoryComparisonRootCommit(t *testing.T) {
+	if testing.Short() {
+		t.Skip()
+	}
+
+	logger := logtest.Scoped(t)
+	ctx := context.Background()
+	db := database.NewDB(logger, nil)
+
+	wantBaseRevision := gitserver.DevNullSHA
+	wantHeadRevision := "1ead"
+
+	repo := &types.Repo{
+		ID:        api.RepoID(1),
+		Name:      api.RepoName("test"),
+		CreatedAt: time.Now(),
+	}
+
+	gsClient := gitserver.NewMockClient()
+	gsClient.MergeBaseFunc.SetDefaultReturn("", &gitdomain.RevisionNotFoundError{})
+	gsClient.ResolveRevisionFunc.SetDefaultHook(func(_ context.Context, _ api.RepoName, spec string, _ gitserver.ResolveRevisionOptions) (api.CommitID, error) {
+		if spec != wantBaseRevision && spec != wantHeadRevision {
+			t.Fatalf("ResolveRevision received wrong spec: %s", spec)
+		}
+		return api.CommitID(spec), nil
+	})
+
+	input := &RepositoryComparisonInput{Base: &wantBaseRevision, Head: &wantHeadRevision}
+	repoResolver := NewRepositoryResolver(db, gsClient, repo)
+
+	comp, err := NewRepositoryComparison(ctx, db, gsClient, repoResolver, input)
+	require.Nil(t, err)
+	require.Equal(t, wantBaseRevision, comp.baseRevspec)
+	require.Equal(t, wantHeadRevision, comp.headRevspec)
+	require.Equal(t, "..", comp.rangeType)
+}
+
 func TestRepositoryComparison(t *testing.T) {
+	if testing.Short() {
+		t.Skip()
+	}
+
 	logger := logtest.Scoped(t)
 	ctx := context.Background()
 	db := database.NewDB(logger, nil)
@@ -92,8 +133,8 @@ func TestRepositoryComparison(t *testing.T) {
 		return api.CommitID(spec), nil
 	})
 
-	gsClient.MergeBaseFunc.SetDefaultHook(func(_ context.Context, _ api.RepoName, a, b api.CommitID) (api.CommitID, error) {
-		if string(a) != wantBaseRevision || string(b) != wantHeadRevision {
+	gsClient.MergeBaseFunc.SetDefaultHook(func(_ context.Context, _ api.RepoName, a, b string) (api.CommitID, error) {
+		if a != wantBaseRevision || b != wantHeadRevision {
 			t.Fatalf("gitserver.MergeBase received wrong args: %s %s", a, b)
 		}
 		return api.CommitID(wantMergeBaseRevision), nil
@@ -136,11 +177,9 @@ func TestRepositoryComparison(t *testing.T) {
 
 		mockGSClient := gitserver.NewMockClient()
 		mockGSClient.CommitsFunc.SetDefaultHook(func(_ context.Context, _ api.RepoName, opts gitserver.CommitsOptions) ([]*gitdomain.Commit, error) {
-			wantRange := fmt.Sprintf("%s..%s", wantBaseRevision, wantHeadRevision)
+			wantRanges := []string{fmt.Sprintf("%s..%s", wantBaseRevision, wantHeadRevision)}
 
-			if have, want := opts.Range, wantRange; have != want {
-				t.Fatalf("git.Commits received wrong range. want=%s, have=%s", want, have)
-			}
+			require.Equal(t, wantRanges, opts.Ranges)
 
 			return commits, nil
 		})
@@ -1066,7 +1105,7 @@ func (d *dummyFileResolver) Languages(ctx context.Context) ([]string, error) {
 	})
 }
 
-func (d *dummyFileResolver) ToGitBlob() (*GitTreeEntryResolver, bool) {
+func (d *dummyFileResolver) ToGitBlob() (*GitBlobResolver, bool) {
 	return nil, false
 }
 

@@ -5,6 +5,7 @@ import type { SearchContextProps } from '@sourcegraph/shared/src/search'
 import type { BatchChangesProps } from './batches'
 import type { CodeIntelligenceProps } from './codeintel'
 import type { CodeMonitoringProps } from './codeMonitoring'
+import type { SearchJobsProps } from './enterprise/search-jobs'
 import type { CodeInsightsProps } from './insights/types'
 import type { NotebookProps } from './notebooks'
 import type { OrgAreaRoute } from './org/area/OrgArea'
@@ -24,22 +25,7 @@ import type { UserAreaHeaderNavItem } from './user/area/UserAreaHeader'
 import type { UserSettingsAreaRoute } from './user/settings/UserSettingsArea'
 import type { UserSettingsSidebarItems } from './user/settings/UserSettingsSidebar'
 
-export interface StaticAppConfig
-    extends StaticHardcodedAppConfig,
-        StaticInjectedAppConfig,
-        StaticWindowContextComputedAppConfig {}
-
-/**
- * Primitive configuration values we hardcode at the tip of the React tree.
- */
-export interface StaticHardcodedAppConfig
-    extends Pick<SearchAggregationProps, 'searchAggregationEnabled'>,
-        Pick<CodeMonitoringProps, 'codeMonitoringEnabled'>,
-        Pick<NotebookProps, 'notebooksEnabled'>,
-        Pick<SearchContextProps, 'searchContextsEnabled'>,
-        Pick<CodeInsightsProps, 'codeInsightsEnabled'>,
-        Pick<CodeIntelligenceProps, 'codeIntelligenceEnabled'>,
-        Pick<OwnConfigProps, 'ownEnabled'> {}
+export interface StaticAppConfig extends StaticInjectedAppConfig, StaticWindowContextComputedAppConfig {}
 
 /**
  * Non-primitive values (components, objects) we inject at the tip of the React tree.
@@ -69,7 +55,16 @@ export interface StaticInjectedAppConfig extends Pick<CodeIntelligenceProps, 'br
  * Static in the sense that there are no other ways to change
  * these values except by refetching the entire original value (window.contexxt)
  */
-export interface StaticWindowContextComputedAppConfig extends Pick<BatchChangesProps, 'batchChangesEnabled'> {
+export interface StaticWindowContextComputedAppConfig
+    extends Pick<BatchChangesProps, 'batchChangesEnabled'>,
+        Pick<SearchAggregationProps, 'searchAggregationEnabled'>,
+        Pick<CodeMonitoringProps, 'codeMonitoringEnabled'>,
+        Pick<NotebookProps, 'notebooksEnabled'>,
+        Pick<SearchContextProps, 'searchContextsEnabled'>,
+        Pick<CodeInsightsProps, 'codeInsightsEnabled'>,
+        Pick<CodeIntelligenceProps, 'codeIntelligenceEnabled'>,
+        Pick<OwnConfigProps, 'ownEnabled'>,
+        Pick<SearchJobsProps, 'searchJobsEnabled'> {
     isSourcegraphDotCom: boolean
     needsRepositoryConfiguration: boolean
     batchChangesWebhookLogsEnabled: boolean
@@ -84,4 +79,12 @@ export const windowContextConfig = {
     needsRepositoryConfiguration: window.context.needsRepositoryConfiguration,
     batchChangesWebhookLogsEnabled: window.context.batchChangesWebhookLogsEnabled,
     batchChangesEnabled: window.context.batchChangesEnabled,
+    codeInsightsEnabled: window.context.codeInsightsEnabled,
+    codeIntelligenceEnabled: window.context.codeIntelligenceEnabled,
+    searchContextsEnabled: window.context.searchContextsEnabled,
+    notebooksEnabled: window.context.notebooksEnabled,
+    codeMonitoringEnabled: window.context.codeMonitoringEnabled,
+    searchAggregationEnabled: window.context.searchAggregationEnabled,
+    ownEnabled: window.context.ownEnabled,
+    searchJobsEnabled: window.context.searchJobsEnabled,
 } satisfies StaticWindowContextComputedAppConfig

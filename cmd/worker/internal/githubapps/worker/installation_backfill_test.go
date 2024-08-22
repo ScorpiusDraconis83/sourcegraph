@@ -2,7 +2,6 @@ package worker
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/google/go-github/v55/github"
@@ -22,12 +21,12 @@ type mockGitHubClient struct {
 	mock.Mock
 }
 
-func (m *mockGitHubClient) GetAppInstallations(ctx context.Context) ([]*github.Installation, error) {
-	args := m.Called(ctx)
+func (m *mockGitHubClient) GetAppInstallations(ctx context.Context, page int) ([]*github.Installation, bool, error) {
+	args := m.Called(ctx, page)
 	if args.Get(0) != nil {
-		return args.Get(0).([]*github.Installation), args.Error(1)
+		return args.Get(0).([]*github.Installation), args.Get(1).(bool), args.Error(2)
 	}
-	return nil, args.Error(1)
+	return nil, false, args.Error(1)
 }
 
 func TestGitHubInstallationWorker(t *testing.T) {
@@ -38,7 +37,6 @@ func TestGitHubInstallationWorker(t *testing.T) {
 		return apps, nil
 	})
 	ghStore.SyncInstallationsFunc.SetDefaultHook(func(ctx context.Context, app ghtypes.GitHubApp, logger log.Logger, client ghtypes.GitHubAppClient) (errs errors.MultiError) {
-		fmt.Println("sync installations: ", app.ID)
 		return nil
 	})
 

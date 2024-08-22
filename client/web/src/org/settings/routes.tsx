@@ -31,8 +31,15 @@ export const orgSettingsAreaRoutes: readonly OrgSettingsAreaRoute[] = [
     },
     {
         path: '/executors/secrets',
-        render: props => <OrgExecutorSecretsListPage {...props} orgID={props.org.id} />,
-        condition: ({ org: { viewerCanAdminister } }) => viewerCanAdminister,
+        render: props => (
+            <OrgExecutorSecretsListPage
+                {...props}
+                orgID={props.org.id}
+                telemetryRecorder={props.platformContext.telemetryRecorder}
+            />
+        ),
+        condition: ({ batchChangesEnabled, org: { viewerCanAdminister } }) =>
+            batchChangesEnabled && viewerCanAdminister && window.context?.codeSearchEnabledOnInstance,
     },
 ]
 

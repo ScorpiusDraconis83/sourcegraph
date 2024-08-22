@@ -5,6 +5,8 @@ import classNames from 'classnames'
 import { noop } from 'rxjs'
 
 import { gql, useQuery } from '@sourcegraph/http-client'
+import { useSettingsCascade } from '@sourcegraph/shared/src/settings/settings'
+import { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import {
     Button,
@@ -21,6 +23,8 @@ import {
 } from '@sourcegraph/wildcard'
 
 import type { GetExampleRepositoryResult, GetExampleRepositoryVariables } from '../../../../../../../graphql-operations'
+import { SearchPatternType } from '../../../../../../../graphql-operations'
+import { defaultPatternTypeFromSettings } from '../../../../../../../util/settings'
 import { InsightQueryInput, RepositoriesField, insightRepositoriesValidator } from '../../../../../components'
 import { getQueryPatternTypeFilter } from '../../../../insights/creation/search-insight'
 import { CodeInsightsDescription } from '../code-insights-description/CodeInsightsDescription'
@@ -39,10 +43,13 @@ const INITIAL_INSIGHT_VALUES: CodeInsightExampleFormValues = {
     query: 'TODO',
 }
 
-interface DynamicCodeInsightExampleProps extends TelemetryProps, React.HTMLAttributes<HTMLDivElement> {}
+interface DynamicCodeInsightExampleProps
+    extends TelemetryProps,
+        TelemetryV2Props,
+        React.HTMLAttributes<HTMLDivElement> {}
 
 export const DynamicCodeInsightExample: FC<DynamicCodeInsightExampleProps> = props => {
-    const { telemetryService, ...otherProps } = props
+    const { telemetryService, telemetryRecorder, ...otherProps } = props
 
     const { repositoryUrl, loading: repositoryValueLoading } = useExampleRepositoryUrl()
 
@@ -81,17 +88,20 @@ export const DynamicCodeInsightExample: FC<DynamicCodeInsightExampleProps> = pro
     useEffect(() => {
         if (debouncedQuery !== INITIAL_INSIGHT_VALUES.query) {
             telemetryService.log('InsightsGetStartedPageQueryModification')
+            telemetryRecorder.recordEvent('insights.getStarted.query', 'modify')
         }
-    }, [debouncedQuery, telemetryService])
+    }, [debouncedQuery, telemetryService, telemetryRecorder])
 
     useEffect(() => {
         if (debouncedRepositories !== INITIAL_INSIGHT_VALUES.repositories) {
             telemetryService.log('InsightsGetStartedPageRepositoriesModification')
+            telemetryRecorder.recordEvent('insights.getStarted.repositories', 'modify')
         }
-    }, [debouncedRepositories, telemetryService])
+    }, [debouncedRepositories, telemetryService, telemetryRecorder])
 
     const handleGetStartedClick = (): void => {
         telemetryService.log('InsightsGetStartedPrimaryCTAClick')
+        telemetryRecorder.recordEvent('insights.getStarted.primaryCTA', 'click')
     }
 
     const hasValidLivePreview =
@@ -99,12 +109,15 @@ export const DynamicCodeInsightExample: FC<DynamicCodeInsightExampleProps> = pro
 
     const { status: repositoryStatus, ...repositoryProps } = getDefaultInputProps(repositories)
 
+    const defaultPatternType: SearchPatternType = defaultPatternTypeFromSettings(useSettingsCascade())
+
     return (
         <Card {...otherProps} className={classNames(styles.wrapper, otherProps.className)}>
             {/* eslint-disable-next-line react/forbid-elements */}
             <form ref={form.ref} noValidate={true} onSubmit={form.handleSubmit} className={styles.chartSection}>
                 <DynamicInsightPreview
                     telemetryService={telemetryService}
+                    telemetryRecorder={telemetryRecorder}
                     disabled={!hasValidLivePreview}
                     repositories={repositories.input.value}
                     query={query.input.value}
@@ -117,7 +130,7 @@ export const DynamicCodeInsightExample: FC<DynamicCodeInsightExampleProps> = pro
                     as={InsightQueryInput}
                     repoQuery={null}
                     repositories={repositories.input.value}
-                    patternType={getQueryPatternTypeFilter(query.input.value)}
+                    patternType={getQueryPatternTypeFilter(query.input.value, defaultPatternType)}
                     placeholder="Example: patternType:regexp const\s\w+:\s(React\.)?FunctionComponent"
                     {...getDefaultInputProps(query)}
                     className="mt-3 mb-0"

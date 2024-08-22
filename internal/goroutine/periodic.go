@@ -8,7 +8,7 @@ import (
 	"github.com/derision-test/glock"
 	"github.com/sourcegraph/conc"
 	"github.com/sourcegraph/log"
-	oteltrace "go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/sourcegraph/sourcegraph/internal/goroutine/recorder"
 	"github.com/sourcegraph/sourcegraph/internal/metrics"
@@ -16,13 +16,15 @@ import (
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
 
-type getIntervalFunc func() time.Duration
-type getConcurrencyFunc func() int
+type (
+	getIntervalFunc    func() time.Duration
+	getConcurrencyFunc func() int
+)
 
 // PeriodicGoroutine represents a goroutine whose main behavior is reinvoked periodically.
 //
 // See
-// https://docs.sourcegraph.com/dev/background-information/backgroundroutine
+// https://docs-legacy.sourcegraph.com/dev/background-information/backgroundroutine
 // for more information and a step-by-step guide on how to implement a
 // PeriodicBackgroundRoutine.
 type PeriodicGoroutine struct {
@@ -129,7 +131,7 @@ func NewPeriodicGoroutine(ctx context.Context, handler Handler, options ...Optio
 	if r.operation == nil {
 		r.operation = observation.NewContext(
 			log.Scoped("periodic"),
-			observation.Tracer(oteltrace.NewNoopTracerProvider().Tracer("noop")),
+			observation.Tracer(noop.NewTracerProvider().Tracer("noop")),
 			observation.Metrics(metrics.NoOpRegisterer),
 		).Operation(observation.Op{
 			Name:        r.name,
@@ -179,12 +181,13 @@ func (r *PeriodicGoroutine) Start() {
 // Stop will cancel the context passed to the handler function to stop the current
 // iteration of work, then break the loop in the Start method so that no new work
 // is accepted. This method blocks until Start has returned.
-func (r *PeriodicGoroutine) Stop() {
+func (r *PeriodicGoroutine) Stop(context.Context) error {
 	if r.recorder != nil {
 		go r.recorder.LogStop(r)
 	}
 	r.cancel()
 	<-r.finished
+	return nil
 }
 
 func (r *PeriodicGoroutine) runHandlerPool() {
@@ -239,7 +242,7 @@ func (r *PeriodicGoroutine) startPool(concurrency int) func() {
 	g := conc.NewWaitGroup()
 	ctx, cancel := context.WithCancel(context.Background())
 
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		g.Go(func() { r.runHandlerPeriodically(ctx) })
 	}
 
@@ -257,10 +260,7 @@ func (r *PeriodicGoroutine) runHandlerPeriodically(monitorCtx context.Context) {
 	handlerCtx, cancel := context.WithCancel(r.ctx)
 	defer cancel()
 
-	go func() {
-		<-monitorCtx.Done()
-		cancel()
-	}()
+	context.AfterFunc(monitorCtx, cancel)
 
 	select {
 	// Initial delay sleep - might be a zero-duration value if it wasn't set,

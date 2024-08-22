@@ -1,7 +1,9 @@
 package graphqlbackend
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"testing"
 	"time"
 
@@ -19,6 +21,10 @@ import (
 )
 
 func TestPreviewRepositoryComparisonResolver(t *testing.T) {
+	if testing.Short() {
+		t.Skip()
+	}
+
 	logger := logtest.Scoped(t)
 	ctx := context.Background()
 	db := database.NewDB(logger, nil)
@@ -108,7 +114,7 @@ index 9bd8209..d2acfa9 100644
 		if err == nil {
 			t.Fatal("unexpected empty err")
 		}
-		if !errors.HasType(err, &gitdomain.RevisionNotFoundError{}) {
+		if !errors.HasType[*gitdomain.RevisionNotFoundError](err) {
 			t.Fatalf("incorrect err returned %T", err)
 		}
 	})
@@ -239,11 +245,11 @@ index 9bd8209..d2acfa9 100644
 		}
 		fileDiff := fileDiffs[0]
 
-		gitserverClient.ReadFileFunc.SetDefaultHook(func(_ context.Context, _ api.RepoName, _ api.CommitID, name string) ([]byte, error) {
+		gitserverClient.NewFileReaderFunc.SetDefaultHook(func(ctx context.Context, rn api.RepoName, ci api.CommitID, name string) (io.ReadCloser, error) {
 			if name != "INSTALL.md" {
 				t.Fatalf("ReadFile received call for wrong file: %s", name)
 			}
-			return []byte(testOldFile), nil
+			return io.NopCloser(bytes.NewReader([]byte(testOldFile))), nil
 		})
 
 		newFile := fileDiff.NewFile()

@@ -14,14 +14,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/sourcegraph/sourcegraph/internal/api"
-	"github.com/sourcegraph/sourcegraph/internal/uploadstore"
+	"github.com/sourcegraph/sourcegraph/internal/object"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 	"github.com/sourcegraph/sourcegraph/lib/iterator"
 )
 
 type noOpUploadStore struct{}
 
-func newNoOpUploadStore() uploadstore.Store {
+func newNoOpUploadStore() object.Storage {
 	return &noOpUploadStore{}
 }
 
@@ -70,7 +70,7 @@ type mockUploadStore struct {
 	files map[string][]byte
 }
 
-func newMockUploadStore() uploadstore.Store {
+func newMockUploadStore() object.Storage {
 	return &mockUploadStore{files: map[string][]byte{}}
 }
 
@@ -243,7 +243,7 @@ func BenchmarkRepoEmbeddingIndexUpload(b *testing.B) {
 
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		err := UploadIndex(ctx, uploadStore, "index", index)
 		if err != nil {
 			b.Fatal(err)
@@ -265,7 +265,7 @@ func BenchmarkCustomRepoEmbeddingIndexUpload(b *testing.B) {
 
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		err := UploadRepoEmbeddingIndex(ctx, uploadStore, "index", index)
 		if err != nil {
 			b.Fatal(err)
@@ -291,7 +291,7 @@ func BenchmarkCustomRepoEmbeddingIndexDownload(b *testing.B) {
 
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, err := downloadRepoEmbeddingIndex(ctx, uploadStore, "index")
 		if err != nil {
 			b.Fatal(err)

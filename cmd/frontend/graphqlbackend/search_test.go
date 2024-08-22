@@ -119,7 +119,7 @@ func TestSearch(t *testing.T) {
 			gsClient := gitserver.NewMockClient()
 			gsClient.ResolveRevisionFunc.SetDefaultHook(tc.repoRevsMock)
 
-			sr := newSchemaResolver(db, gsClient)
+			sr := newSchemaResolver(db, gsClient, nil)
 			gqlSchema, err := graphql.ParseSchema(mainSchema, sr,
 				graphql.Tracer(newRequestTracer(logtest.Scoped(t), db)),
 				graphql.MaxDepth(conf.RateLimits().GraphQLMaxDepth))
@@ -351,7 +351,7 @@ func BenchmarkSearchResults(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for n := 0; n < b.N; n++ {
+	for range b.N {
 		plan, err := query.Pipeline(query.InitLiteral(`print repo:foo index:only count:1000`))
 		if err != nil {
 			b.Fatal(err)

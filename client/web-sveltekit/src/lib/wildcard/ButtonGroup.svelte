@@ -1,13 +1,20 @@
 <script lang="ts">
     import classNames from 'classnames'
 
-    import type { BUTTON_GROUP_DIRECTION } from './Button'
+    import { getButtonDisplay, type BUTTON_DISPLAY } from './Button'
 
     import styles from './Button.module.scss'
 
-    export let direction: typeof BUTTON_GROUP_DIRECTION[number] = 'horizontal'
+    const BUTTON_GROUP_DIRECTION = ['vertical', 'horizontal'] as const
 
-    $: buttonClass = classNames(styles.btnGroup, direction === 'vertical' && styles.btnGroupVertical)
+    export let direction: typeof BUTTON_GROUP_DIRECTION[number] = 'horizontal'
+    export let display: typeof BUTTON_DISPLAY[number] | undefined = undefined
+
+    $: buttonClass = classNames(
+        styles.btnGroup,
+        direction === 'vertical' && styles.btnGroupVertical,
+        display && getButtonDisplay({ display })
+    )
 </script>
 
 <slot name="custom" role="group" {buttonClass}>

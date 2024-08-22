@@ -11,6 +11,7 @@ import {
     MetaSelectorKind,
     type MetaPredicate,
 } from './decoratedToken'
+import type { Pattern } from './token'
 
 const toRegexpHover = (token: MetaRegexp): string => {
     switch (token.kind) {
@@ -128,7 +129,7 @@ const toRegexpHover = (token: MetaRegexp): string => {
 const toStructuralHover = (token: MetaStructural): string => {
     switch (token.kind) {
         case MetaStructuralKind.Hole: {
-            return '**Structural hole**. Matches code structures contextually. See the [syntax reference](https://docs.sourcegraph.com/code_search/reference/structural#syntax-reference) for a complete description.'
+            return '**Structural hole**. Matches code structures contextually. See the [syntax reference](https://sourcegraph.com/docs/code-search/queries#structural-search) for a complete description.'
         }
         case MetaStructuralKind.RegexpHole: {
             return '**Regular expression hole**. Match the regular expression defined inside this hole.'
@@ -196,7 +197,7 @@ const toSelectorHover = (token: MetaSelector): string => {
 
 const toPredicateHover = (token: MetaPredicate): string => {
     const parameters = token.value.parameters.slice(1, -1)
-    switch (token.value.path.join('.')) {
+    switch (token.value.name) {
         case 'contains.file':
         case 'has.file': {
             return '**Built-in predicate**. Search only inside repositories that satisfy the specified `path:` and `content:` filters. `path:` and `content:` filters should be regular expressions.'
@@ -234,15 +235,27 @@ const toPredicateHover = (token: MetaPredicate): string => {
         case 'has.owner': {
             return '**Built-in predicate**. Search only inside files that are owned by the given person or team'
         }
+        case 'at.time': {
+            return '**Built-in predicate**. Search a repo at a specific time'
+        }
     }
     return ''
+}
+
+const toPatternHover = (token: Pattern): string => {
+    let value = token.value
+    if (token.delimited && token.delimiter) {
+        // Replace escaped delimiters with the delimiter itself.
+        value = value.replaceAll(new RegExp(`\\\\${token.delimiter}`, 'g'), token.delimiter)
+    }
+    const quantity = value.length > 1 ? 'string' : 'character'
+    return `Matches the ${quantity} \`${value}\`.`
 }
 
 export const toHover = (token: DecoratedToken): string => {
     switch (token.type) {
         case 'pattern': {
-            const quantity = token.value.length > 1 ? 'string' : 'character'
-            return `Matches the ${quantity} \`${token.value}\`.`
+            return toPatternHover(token)
         }
         case 'metaRegexp': {
             return toRegexpHover(token)

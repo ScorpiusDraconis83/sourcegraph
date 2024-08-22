@@ -9,6 +9,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/sourcegraph/log/logtest"
 
+	"github.com/sourcegraph/sourcegraph/internal/actor"
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/uploads/shared"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbtest"
@@ -18,7 +19,7 @@ import (
 func TestInsertUploadUploading(t *testing.T) {
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
-	store := New(&observation.TestContext, db)
+	store := New(observation.TestContextTB(t), db)
 
 	insertRepo(t, db, 50, "", false)
 
@@ -51,7 +52,7 @@ func TestInsertUploadUploading(t *testing.T) {
 		UploadedParts:  []int{},
 	}
 
-	if upload, exists, err := store.GetUploadByID(context.Background(), id); err != nil {
+	if upload, exists, err := store.GetUploadByID(actor.WithInternalActor(context.Background()), id); err != nil {
 		t.Fatalf("unexpected error getting upload: %s", err)
 	} else if !exists {
 		t.Fatal("expected record to exist")
@@ -68,7 +69,7 @@ func TestInsertUploadUploading(t *testing.T) {
 func TestInsertUploadQueued(t *testing.T) {
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
-	store := New(&observation.TestContext, db)
+	store := New(observation.TestContextTB(t), db)
 
 	insertRepo(t, db, 50, "", false)
 
@@ -104,7 +105,7 @@ func TestInsertUploadQueued(t *testing.T) {
 		Rank:           &rank,
 	}
 
-	if upload, exists, err := store.GetUploadByID(context.Background(), id); err != nil {
+	if upload, exists, err := store.GetUploadByID(actor.WithInternalActor(context.Background()), id); err != nil {
 		t.Fatalf("unexpected error getting upload: %s", err)
 	} else if !exists {
 		t.Fatal("expected record to exist")
@@ -121,7 +122,7 @@ func TestInsertUploadQueued(t *testing.T) {
 func TestInsertUploadWithAssociatedIndexID(t *testing.T) {
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
-	store := New(&observation.TestContext, db)
+	store := New(observation.TestContextTB(t), db)
 
 	insertRepo(t, db, 50, "", false)
 
@@ -161,7 +162,7 @@ func TestInsertUploadWithAssociatedIndexID(t *testing.T) {
 		AssociatedIndexID: &associatedIndexIDResult,
 	}
 
-	if upload, exists, err := store.GetUploadByID(context.Background(), id); err != nil {
+	if upload, exists, err := store.GetUploadByID(actor.WithInternalActor(context.Background()), id); err != nil {
 		t.Fatalf("unexpected error getting upload: %s", err)
 	} else if !exists {
 		t.Fatal("expected record to exist")
@@ -178,7 +179,7 @@ func TestInsertUploadWithAssociatedIndexID(t *testing.T) {
 func TestAddUploadPart(t *testing.T) {
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
-	store := New(&observation.TestContext, db)
+	store := New(observation.TestContextTB(t), db)
 
 	insertUploads(t, db, shared.Upload{ID: 1, State: "uploading"})
 
@@ -187,7 +188,7 @@ func TestAddUploadPart(t *testing.T) {
 			t.Fatalf("unexpected error adding upload part: %s", err)
 		}
 	}
-	if upload, exists, err := store.GetUploadByID(context.Background(), 1); err != nil {
+	if upload, exists, err := store.GetUploadByID(actor.WithInternalActor(context.Background()), 1); err != nil {
 		t.Fatalf("unexpected error getting upload: %s", err)
 	} else if !exists {
 		t.Fatal("expected record to exist")
@@ -202,16 +203,16 @@ func TestAddUploadPart(t *testing.T) {
 func TestMarkQueued(t *testing.T) {
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
-	store := New(&observation.TestContext, db)
+	store := New(observation.TestContextTB(t), db)
 
 	insertUploads(t, db, shared.Upload{ID: 1, State: "uploading"})
 
 	uploadSize := int64(300)
-	if err := store.MarkQueued(context.Background(), 1, &uploadSize); err != nil {
+	if err := store.MarkQueued(actor.WithInternalActor(context.Background()), 1, &uploadSize); err != nil {
 		t.Fatalf("unexpected error marking upload as queued: %s", err)
 	}
 
-	if upload, exists, err := store.GetUploadByID(context.Background(), 1); err != nil {
+	if upload, exists, err := store.GetUploadByID(actor.WithInternalActor(context.Background()), 1); err != nil {
 		t.Fatalf("unexpected error getting upload: %s", err)
 	} else if !exists {
 		t.Fatal("expected record to exist")
@@ -229,15 +230,15 @@ func TestMarkQueued(t *testing.T) {
 func TestMarkQueuedNoSize(t *testing.T) {
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
-	store := New(&observation.TestContext, db)
+	store := New(observation.TestContextTB(t), db)
 
 	insertUploads(t, db, shared.Upload{ID: 1, State: "uploading"})
 
-	if err := store.MarkQueued(context.Background(), 1, nil); err != nil {
+	if err := store.MarkQueued(actor.WithInternalActor(context.Background()), 1, nil); err != nil {
 		t.Fatalf("unexpected error marking upload as queued: %s", err)
 	}
 
-	if upload, exists, err := store.GetUploadByID(context.Background(), 1); err != nil {
+	if upload, exists, err := store.GetUploadByID(actor.WithInternalActor(context.Background()), 1); err != nil {
 		t.Fatalf("unexpected error getting upload: %s", err)
 	} else if !exists {
 		t.Fatal("expected record to exist")
@@ -251,7 +252,7 @@ func TestMarkQueuedNoSize(t *testing.T) {
 func TestMarkFailed(t *testing.T) {
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
-	store := New(&observation.TestContext, db)
+	store := New(observation.TestContextTB(t), db)
 
 	insertUploads(t, db, shared.Upload{ID: 1, State: "uploading"})
 
@@ -260,7 +261,7 @@ func TestMarkFailed(t *testing.T) {
 		t.Fatalf("unexpected error marking upload as failed: %s", err)
 	}
 
-	if upload, exists, err := store.GetUploadByID(context.Background(), 1); err != nil {
+	if upload, exists, err := store.GetUploadByID(actor.WithInternalActor(context.Background()), 1); err != nil {
 		t.Fatalf("unexpected error getting upload: %s", err)
 	} else if !exists {
 		t.Fatal("expected record to exist")
@@ -277,11 +278,11 @@ func TestMarkFailed(t *testing.T) {
 	}
 }
 
-func TestDeleteOverlappingDumps(t *testing.T) {
+func TestDeleteOverlappingCompletedUploads(t *testing.T) {
 	logger := logtest.Scoped(t)
 	sqlDB := dbtest.NewDB(t)
 	db := database.NewDB(logger, sqlDB)
-	store := New(&observation.TestContext, db)
+	store := New(observation.TestContextTB(t), db)
 
 	insertUploads(t, db, shared.Upload{
 		ID:      1,
@@ -290,7 +291,7 @@ func TestDeleteOverlappingDumps(t *testing.T) {
 		Indexer: "lsif-go",
 	})
 
-	err := store.DeleteOverlappingDumps(context.Background(), 50, makeCommit(1), "cmd/", "lsif-go")
+	err := store.DeleteOverlappingCompletedUploads(context.Background(), 50, makeCommit(1), "cmd/", "lsif-go")
 	if err != nil {
 		t.Fatalf("unexpected error deleting dump: %s", err)
 	}
@@ -303,11 +304,11 @@ func TestDeleteOverlappingDumps(t *testing.T) {
 	}
 }
 
-func TestDeleteOverlappingDumpsNoMatches(t *testing.T) {
+func TestDeleteOverlappingCompletedUploadsNoMatches(t *testing.T) {
 	logger := logtest.Scoped(t)
 	sqlDB := dbtest.NewDB(t)
 	db := database.NewDB(logger, sqlDB)
-	store := New(&observation.TestContext, db)
+	store := New(observation.TestContextTB(t), db)
 
 	insertUploads(t, db, shared.Upload{
 		ID:      1,
@@ -327,25 +328,25 @@ func TestDeleteOverlappingDumpsNoMatches(t *testing.T) {
 	}
 
 	for _, testCase := range testCases {
-		err := store.DeleteOverlappingDumps(context.Background(), 50, testCase.commit, testCase.root, testCase.indexer)
+		err := store.DeleteOverlappingCompletedUploads(context.Background(), 50, testCase.commit, testCase.root, testCase.indexer)
 		if err != nil {
 			t.Fatalf("unexpected error deleting dump: %s", err)
 		}
 	}
 
 	// Original dump still exists
-	if dumps, err := store.GetDumpsByIDs(context.Background(), []int{1}); err != nil {
+	if uploads, err := store.GetCompletedUploadsByIDs(context.Background(), []int{1}); err != nil {
 		t.Fatalf("unexpected error getting dump: %s", err)
-	} else if len(dumps) != 1 {
+	} else if len(uploads) != 1 {
 		t.Fatal("expected dump record to still exist")
 	}
 }
 
-func TestDeleteOverlappingDumpsIgnoresIncompleteUploads(t *testing.T) {
+func TestDeleteOverlappingCompletedUploadsIgnoresIncompleteUploads(t *testing.T) {
 	logger := logtest.Scoped(t)
 	sqlDB := dbtest.NewDB(t)
 	db := database.NewDB(logger, sqlDB)
-	store := New(&observation.TestContext, db)
+	store := New(observation.TestContextTB(t), db)
 
 	insertUploads(t, db, shared.Upload{
 		ID:      1,
@@ -355,13 +356,13 @@ func TestDeleteOverlappingDumpsIgnoresIncompleteUploads(t *testing.T) {
 		State:   "queued",
 	})
 
-	err := store.DeleteOverlappingDumps(context.Background(), 50, makeCommit(1), "cmd/", "lsif-go")
+	err := store.DeleteOverlappingCompletedUploads(context.Background(), 50, makeCommit(1), "cmd/", "lsif-go")
 	if err != nil {
 		t.Fatalf("unexpected error deleting dump: %s", err)
 	}
 
 	// Original upload still exists
-	if _, exists, err := store.GetUploadByID(context.Background(), 1); err != nil {
+	if _, exists, err := store.GetUploadByID(actor.WithInternalActor(context.Background()), 1); err != nil {
 		t.Fatalf("unexpected error getting dump: %s", err)
 	} else if !exists {
 		t.Fatal("expected dump record to still exist")

@@ -20,6 +20,7 @@ func newObservedClient(logger log.Logger, events *telemetry.EventRecorder, inner
 		inner:  inner,
 		ops:    ops,
 		events: telemetry.NewBestEffortEventRecorder(logger.Scoped("events"), events),
+		logger: logger,
 	}
 }
 
@@ -27,29 +28,29 @@ type observedClient struct {
 	inner  types.CompletionsClient
 	ops    *operations
 	events *telemetry.BestEffortEventRecorder
+	logger log.Logger
 }
 
 var _ types.CompletionsClient = (*observedClient)(nil)
 
-func (o *observedClient) Stream(ctx context.Context, feature types.CompletionsFeature, params types.CompletionRequestParameters, send types.SendCompletionEvent) (err error) {
+func (o *observedClient) Stream(ctx context.Context, logger log.Logger, request types.CompletionRequest, send types.SendCompletionEvent) (err error) {
+	feature := request.Feature
+	modelName := request.ModelConfigInfo.Model.ModelName
+	params := request.Parameters
+	version := request.Version
+
 	ctx, tr, endObservation := o.ops.stream.With(ctx, &err, observation.Args{
-		Attrs:             append(params.Attrs(feature), attribute.String("feature", string(feature))),
-		MetricLabelValues: []string{params.Model},
+		Attrs: append(
+			params.Attrs(modelName, feature),
+			attribute.String("feature", string(feature)),
+			attribute.Int("version", int(version))),
+		MetricLabelValues: []string{modelName},
 	})
 	defer endObservation(1, observation.Args{})
 
 	tracedSend := func(event types.CompletionResponse) error {
 		if event.StopReason != "" {
 			tr.AddEvent("stopped", attribute.String("reason", event.StopReason))
-
-			o.events.Record(ctx, "cody.completions", "stream", &telemetry.EventParameters{
-				Metadata: telemetry.EventMetadata{
-					"feature": float64(feature.ID()),
-				},
-				PrivateMetadata: map[string]any{
-					"stop_reason": event.StopReason,
-				},
-			})
 		} else {
 			tr.AddEvent("completion", attribute.Int("len", len(event.Completion)))
 		}
@@ -57,13 +58,21 @@ func (o *observedClient) Stream(ctx context.Context, feature types.CompletionsFe
 		return send(event)
 	}
 
-	return o.inner.Stream(ctx, feature, params, tracedSend)
+	return o.inner.Stream(ctx, logger, request, tracedSend)
 }
 
-func (o *observedClient) Complete(ctx context.Context, feature types.CompletionsFeature, params types.CompletionRequestParameters) (resp *types.CompletionResponse, err error) {
+func (o *observedClient) Complete(ctx context.Context, logger log.Logger, request types.CompletionRequest) (resp *types.CompletionResponse, err error) {
+	feature := request.Feature
+	modelName := request.ModelConfigInfo.Model.ModelName
+	params := request.Parameters
+	version := request.Version
+
 	ctx, _, endObservation := o.ops.complete.With(ctx, &err, observation.Args{
-		Attrs:             append(params.Attrs(feature), attribute.String("feature", string(feature))),
-		MetricLabelValues: []string{params.Model},
+		Attrs: append(
+			params.Attrs(modelName, feature),
+			attribute.String("feature", string(feature)),
+			attribute.Int("version", int(version))),
+		MetricLabelValues: []string{modelName},
 	})
 	defer endObservation(1, observation.Args{})
 
@@ -73,7 +82,7 @@ func (o *observedClient) Complete(ctx context.Context, feature types.Completions
 		},
 	})
 
-	return o.inner.Complete(ctx, feature, params)
+	return o.inner.Complete(ctx, logger, request)
 }
 
 type operations struct {

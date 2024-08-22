@@ -12,8 +12,9 @@ import { HighlightResponseFormat } from '@sourcegraph/shared/src/graphql-operati
 import { getFileMatchUrl, getRepositoryUrl, getRevision, type SymbolMatch } from '@sourcegraph/shared/src/search/stream'
 import { isSettingsValid, type SettingsCascadeProps } from '@sourcegraph/shared/src/settings/settings'
 import { SymbolKind } from '@sourcegraph/shared/src/symbols/SymbolKind'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
-import { codeCopiedEvent } from '@sourcegraph/shared/src/tracking/event-log-creators'
+import { codeCopiedEvent, V2CodyCopyPageTypes } from '@sourcegraph/shared/src/tracking/event-log-creators'
 
 import { CodeExcerpt } from './CodeExcerpt'
 import { navigateToCodeExcerpt, navigateToFileOnMiddleMouseButtonClick } from './codeLinkNavigation'
@@ -21,12 +22,12 @@ import { CopyPathAction } from './CopyPathAction'
 import { RepoFileLink } from './RepoFileLink'
 import { ResultContainer } from './ResultContainer'
 
-import searchResultStyles from './SearchResult.module.scss'
+import resultStyles from './ResultContainer.module.scss'
 import styles from './SymbolSearchResult.module.scss'
 
 const DEFAULT_VISIBILITY_OFFSET = { bottom: -500 }
 
-export interface SymbolSearchResultProps extends TelemetryProps, SettingsCascadeProps {
+export interface SymbolSearchResultProps extends TelemetryProps, TelemetryV2Props, SettingsCascadeProps {
     result: SymbolMatch
     openInNewTab?: boolean
     repoDisplayName: string
@@ -44,6 +45,7 @@ export const SymbolSearchResult: React.FunctionComponent<SymbolSearchResultProps
     containerClassName,
     index,
     telemetryService,
+    telemetryRecorder,
     settingsCascade,
     fetchHighlightedFileLineRanges,
 }) => {
@@ -62,12 +64,13 @@ export const SymbolSearchResult: React.FunctionComponent<SymbolSearchResultProps
                         ? `${repoDisplayName}${revisionDisplayName ? `@${revisionDisplayName}` : ''}`
                         : undefined
                 }
-                className={searchResultStyles.titleInner}
+                className={resultStyles.titleInner}
             />
             <CopyPathAction
                 filePath={result.path}
-                className={searchResultStyles.copyButton}
+                className={resultStyles.copyButton}
                 telemetryService={telemetryService}
+                telemetryRecorder={telemetryRecorder}
             />
         </span>
     )
@@ -80,8 +83,11 @@ export const SymbolSearchResult: React.FunctionComponent<SymbolSearchResultProps
     )
 
     const logEventOnCopy = useCallback(() => {
-        telemetryService.log(...codeCopiedEvent('file-match'))
-    }, [telemetryService])
+        telemetryService.log(...codeCopiedEvent('search-result'))
+        telemetryRecorder.recordEvent('search.result.code', 'copy', {
+            metadata: { page: V2CodyCopyPageTypes['search-result'] },
+        })
+    }, [telemetryService, telemetryRecorder])
 
     const [hasBeenVisible, setHasBeenVisible] = useState(false)
     const [highlightedLines, setHighlightedLines] = useState<string[] | undefined>(undefined)
@@ -111,13 +117,16 @@ export const SymbolSearchResult: React.FunctionComponent<SymbolSearchResultProps
                         { durationMs: endTime - startTime },
                         { durationMs: endTime - startTime }
                     )
+                    telemetryRecorder.recordEvent('search.frontendLatency', 'codeLoad', {
+                        metadata: { durationMs: endTime - startTime },
+                    })
                     if (!isErrorLike(res)) {
                         setHighlightedLines(res.map(arr => arr[0]))
                     }
                 })
         }
         return () => subscription?.unsubscribe()
-    }, [result, hasBeenVisible, fetchHighlightedFileLineRanges, telemetryService])
+    }, [result, hasBeenVisible, fetchHighlightedFileLineRanges, telemetryService, telemetryRecorder])
 
     return (
         <ResultContainer
@@ -127,8 +136,7 @@ export const SymbolSearchResult: React.FunctionComponent<SymbolSearchResultProps
             onResultClicked={onSelect}
             repoName={result.repository}
             repoStars={result.repoStars}
-            className={classNames(searchResultStyles.copyButtonContainer, containerClassName)}
-            resultClassName={styles.symbolsOverride}
+            className={classNames(resultStyles.copyButtonContainer, containerClassName)}
             repoLastFetched={result.repoLastFetched}
         >
             <VisibilitySensor
@@ -140,7 +148,12 @@ export const SymbolSearchResult: React.FunctionComponent<SymbolSearchResultProps
                     {result.symbols.map((symbol, i) => (
                         <div
                             key={`symbol:${symbol.name}${String(symbol.containerName)}${symbol.url}`}
-                            className={styles.symbol}
+                            className={classNames(
+                                styles.symbol,
+                                resultStyles.clickable,
+                                resultStyles.focusableBlock,
+                                resultStyles.horizontalDividerBetween
+                            )}
                             data-href={symbol.url}
                             role="link"
                             data-testid="symbol-search-result"

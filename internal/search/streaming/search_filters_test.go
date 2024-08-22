@@ -5,10 +5,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/sourcegraph/sourcegraph/internal/gitserver/gitdomain"
 	"github.com/sourcegraph/sourcegraph/internal/search/result"
 	"github.com/sourcegraph/sourcegraph/internal/types"
-	"github.com/stretchr/testify/require"
 )
 
 func TestSearchFiltersUpdate(t *testing.T) {
@@ -21,7 +22,7 @@ func TestSearchFiltersUpdate(t *testing.T) {
 		events          []SearchEvent
 		wantFilterValue string
 		wantFilterCount int
-		wantFilterKind  string
+		wantFilterKind  FilterKind
 	}{
 		{
 			name: "CommitMatch",
@@ -63,17 +64,15 @@ func TestSearchFiltersUpdate(t *testing.T) {
 		},
 		{
 			name: "RepoMatch",
-			events: []SearchEvent{
-				{
-					Results: []result.Match{
-						&result.RepoMatch{
-							Name: "foo",
-						},
+			events: []SearchEvent{{
+				Results: []result.Match{
+					&result.RepoMatch{
+						Name: "foo",
 					},
 				},
-			},
-			wantFilterValue: "repo:^foo$",
-			wantFilterKind:  "repo",
+			}},
+			wantFilterValue: "type:repo",
+			wantFilterKind:  "type",
 			wantFilterCount: 1,
 		},
 		{
@@ -93,6 +92,50 @@ func TestSearchFiltersUpdate(t *testing.T) {
 			wantFilterValue: "repo:^foo$",
 			wantFilterKind:  "repo",
 			wantFilterCount: 2,
+		},
+		{
+			name: "FileMatch, lang: filter",
+			events: []SearchEvent{
+				{
+					Results: []result.Match{
+						&result.FileMatch{
+							File: result.File{
+								Path: "testing.yaml",
+							},
+							ChunkMatches: result.ChunkMatches{{Ranges: make(result.Ranges, 2)}},
+						},
+					},
+				},
+			},
+			wantFilterValue: "lang:yaml",
+			wantFilterKind:  "lang",
+			wantFilterCount: 2,
+		},
+		{
+			name: "FileMatch, test files",
+			events: []SearchEvent{
+				{
+					Results: []result.Match{
+						&result.FileMatch{
+							File: result.File{
+								Repo: repo,
+								Path: "agent_test.py",
+							},
+							PathMatches: make(result.Ranges, 1),
+						},
+						&result.FileMatch{
+							File: result.File{
+								Repo: repo,
+								Path: "agent.py",
+							},
+							PathMatches: make(result.Ranges, 1),
+						},
+					},
+				},
+			},
+			wantFilterValue: "-file:_test\\.\\w+$",
+			wantFilterKind:  "file",
+			wantFilterCount: 1,
 		},
 		{
 			name: "SymbolMatch",
@@ -204,26 +247,23 @@ func TestSymbolCounts(t *testing.T) {
 				},
 			},
 			wantFilters: map[string]*Filter{
-				"select:symbol.class": &Filter{
-					Value:      "select:symbol.class",
-					Label:      "class",
-					Count:      1,
-					IsLimitHit: false,
-					Kind:       "symbol type",
+				"select:symbol.class": {
+					Value: "select:symbol.class",
+					Label: "Class",
+					Count: 1,
+					Kind:  "symbol type",
 				},
-				"select:symbol.variable": &Filter{
-					Value:      "select:symbol.variable",
-					Label:      "variable",
-					Count:      2,
-					IsLimitHit: false,
-					Kind:       "symbol type",
+				"select:symbol.variable": {
+					Value: "select:symbol.variable",
+					Label: "Variable",
+					Count: 2,
+					Kind:  "symbol type",
 				},
-				"select:symbol.constant": &Filter{
-					Value:      "select:symbol.constant",
-					Label:      "constant",
-					Count:      4,
-					IsLimitHit: false,
-					Kind:       "symbol type",
+				"select:symbol.constant": {
+					Value: "select:symbol.constant",
+					Label: "Constant",
+					Count: 4,
+					Kind:  "symbol type",
 				},
 			},
 		},
@@ -240,30 +280,6 @@ func TestSymbolCounts(t *testing.T) {
 				require.Equal(t, filter, s.filters[key])
 			}
 		})
-	}
-}
-
-// This should be used to generate a large enough set to test IsLimitHit property.
-func generateLargeResultSet(symbolKind string) []SearchEvent {
-	symbolMatches := []*result.SymbolMatch{}
-	for i := 0; i <= 500; i++ {
-		symbolMatches = append(symbolMatches,
-			&result.SymbolMatch{
-				Symbol: result.Symbol{
-					Kind: symbolKind,
-				},
-			},
-		)
-	}
-
-	return []SearchEvent{
-		{
-			Results: result.Matches{
-				&result.FileMatch{
-					Symbols: symbolMatches,
-				},
-			},
-		},
 	}
 }
 

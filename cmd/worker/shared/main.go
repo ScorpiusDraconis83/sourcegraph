@@ -11,14 +11,17 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/globals"
+	"github.com/sourcegraph/sourcegraph/cmd/worker/internal/adminanalytics"
 	"github.com/sourcegraph/sourcegraph/cmd/worker/internal/auth"
+	workerauthz "github.com/sourcegraph/sourcegraph/cmd/worker/internal/authz"
 	"github.com/sourcegraph/sourcegraph/cmd/worker/internal/batches"
 	"github.com/sourcegraph/sourcegraph/cmd/worker/internal/codeintel"
 	"github.com/sourcegraph/sourcegraph/cmd/worker/internal/codemonitors"
 	"github.com/sourcegraph/sourcegraph/cmd/worker/internal/codygateway"
+	"github.com/sourcegraph/sourcegraph/cmd/worker/internal/completions"
 	repoembeddings "github.com/sourcegraph/sourcegraph/cmd/worker/internal/embeddings/repo"
 	"github.com/sourcegraph/sourcegraph/cmd/worker/internal/encryption"
+	"github.com/sourcegraph/sourcegraph/cmd/worker/internal/eventlogs"
 	"github.com/sourcegraph/sourcegraph/cmd/worker/internal/executormultiqueue"
 	"github.com/sourcegraph/sourcegraph/cmd/worker/internal/executors"
 	"github.com/sourcegraph/sourcegraph/cmd/worker/internal/githubapps"
@@ -28,20 +31,22 @@ import (
 	workermigrations "github.com/sourcegraph/sourcegraph/cmd/worker/internal/migrations"
 	"github.com/sourcegraph/sourcegraph/cmd/worker/internal/outboundwebhooks"
 	"github.com/sourcegraph/sourcegraph/cmd/worker/internal/own"
+	"github.com/sourcegraph/sourcegraph/cmd/worker/internal/perforce"
 	"github.com/sourcegraph/sourcegraph/cmd/worker/internal/permissions"
 	"github.com/sourcegraph/sourcegraph/cmd/worker/internal/ratelimit"
 	"github.com/sourcegraph/sourcegraph/cmd/worker/internal/repostatistics"
 	"github.com/sourcegraph/sourcegraph/cmd/worker/internal/search"
+	"github.com/sourcegraph/sourcegraph/cmd/worker/internal/sourcegraphaccounts"
 	"github.com/sourcegraph/sourcegraph/cmd/worker/internal/telemetry"
 	"github.com/sourcegraph/sourcegraph/cmd/worker/internal/telemetrygatewayexporter"
+	"github.com/sourcegraph/sourcegraph/cmd/worker/internal/users"
 	"github.com/sourcegraph/sourcegraph/cmd/worker/internal/webhooks"
 	"github.com/sourcegraph/sourcegraph/cmd/worker/internal/zoektrepos"
 	workerjob "github.com/sourcegraph/sourcegraph/cmd/worker/job"
 	workerdb "github.com/sourcegraph/sourcegraph/cmd/worker/shared/init/db"
 	"github.com/sourcegraph/sourcegraph/internal/authz"
-	"github.com/sourcegraph/sourcegraph/internal/authz/providers"
 	srp "github.com/sourcegraph/sourcegraph/internal/authz/subrepoperms"
-	"github.com/sourcegraph/sourcegraph/internal/conf"
+	"github.com/sourcegraph/sourcegraph/internal/codeintel/syntactic_indexing"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/encryption/keyring"
 	"github.com/sourcegraph/sourcegraph/internal/env"
@@ -101,6 +106,10 @@ func LoadConfig(registerEnterpriseMigrators oobmigration.RegisterMigratorsFunc) 
 		"permission-sync-job-scheduler":         permissions.NewPermissionSyncJobScheduler(),
 		"export-usage-telemetry":                telemetry.NewTelemetryJob(),
 		"telemetrygateway-exporter":             telemetrygatewayexporter.NewJob(),
+		"event-logs-janitor":                    eventlogs.NewEventLogsJanitorJob(),
+		"cody-llm-token-counter":                completions.NewTokenUsageJob(),
+		"aggregated-users-statistics":           users.NewAggregatedUsersStatisticsJob(),
+		"refresh-analytics-cache":               adminanalytics.NewRefreshAnalyticsCacheJob(),
 
 		"codeintel-policies-repository-matcher":       codeintel.NewPoliciesRepositoryMatcherJob(),
 		"codeintel-autoindexing-summary-builder":      codeintel.NewAutoindexingSummaryBuilder(),
@@ -113,9 +122,9 @@ func LoadConfig(registerEnterpriseMigrators oobmigration.RegisterMigratorsFunc) 
 		"codeintel-upload-janitor":                    codeintel.NewUploadJanitorJob(),
 		"codeintel-ranking-file-reference-counter":    codeintel.NewRankingFileReferenceCounter(),
 		"codeintel-uploadstore-expirer":               codeintel.NewPreciseCodeIntelUploadExpirer(),
-		"codeintel-crates-syncer":                     codeintel.NewCratesSyncerJob(),
-		"codeintel-sentinel-cve-scanner":              codeintel.NewSentinelCVEScannerJob(),
 		"codeintel-package-filter-applicator":         codeintel.NewPackagesFilterApplicatorJob(),
+
+		"codeintel-syntactic-indexing-scheduler": syntactic_indexing.NewSyntacticindexingSchedulerJob(),
 
 		"auth-sourcegraph-operator-cleaner": auth.NewSourcegraphOperatorCleaner(),
 
@@ -128,6 +137,11 @@ func LoadConfig(registerEnterpriseMigrators oobmigration.RegisterMigratorsFunc) 
 		"github-apps-installation-validation-job": githubapps.NewGitHubApsInstallationJob(),
 
 		"exhaustive-search-job": search.NewSearchJob(),
+
+		"repo-perms-syncer":          workerauthz.NewPermsSyncerJob(),
+		"perforce-changelist-mapper": perforce.NewPerforceChangelistMappingJob(),
+
+		"sourcegraph-accounts-notifications-subscriber": sourcegraphaccounts.NewNotificationsSubscriber(),
 	}
 
 	var config Config
@@ -205,8 +219,7 @@ func Start(ctx context.Context, observationCtx *observation.Context, ready servi
 		allRoutines = append(allRoutines, r.Routine)
 	}
 
-	goroutine.MonitorBackgroundRoutines(ctx, allRoutines...)
-	return nil
+	return goroutine.MonitorBackgroundRoutines(ctx, allRoutines...)
 }
 
 // loadConfigs calls Load on the configs of each of the jobs registered in this binary.
@@ -341,7 +354,7 @@ func runRoutinesConcurrently(observationCtx *observation.Context, jobs map[strin
 		wg.Add(1)
 		jobLogger.Debug("Running job")
 
-		go func(name string) {
+		go func() {
 			defer wg.Done()
 
 			routines, err := jobs[name].Routines(ctx, observationCtx)
@@ -359,7 +372,7 @@ func runRoutinesConcurrently(observationCtx *observation.Context, jobs map[strin
 			} else {
 				cancel()
 			}
-		}(name)
+		}()
 	}
 
 	wg.Wait()
@@ -375,25 +388,4 @@ func jobNames(jobs map[string]workerjob.Job) []string {
 	sort.Strings(names)
 
 	return names
-}
-
-// SetAuthzProviders waits for the database to be initialized, then periodically refreshes the
-// global authz providers. This changes the repositories that are visible for reads based on the
-// current actor stored in an operation's context, which is likely an internal actor for many of
-// the jobs configured in this service. This also enables repository update operations to fetch
-// permissions from code hosts.
-func setAuthzProviders(ctx context.Context, observationCtx *observation.Context) {
-	observationCtx = observation.ContextWithLogger(observationCtx.Logger.Scoped("authz-provider"), observationCtx)
-	db, err := workerdb.InitDB(observationCtx)
-	if err != nil {
-		return
-	}
-
-	// authz also relies on UserMappings being setup.
-	globals.WatchPermissionsUserMapping()
-
-	for range time.NewTicker(providers.RefreshInterval()).C {
-		allowAccessByDefault, authzProviders, _, _, _ := providers.ProvidersFromConfig(ctx, conf.Get(), db)
-		authz.SetProviders(allowAccessByDefault, authzProviders)
-	}
 }

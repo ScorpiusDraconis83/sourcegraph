@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useMemo } from 'react'
 
 import { mdiPlus } from '@mdi/js'
-import { type Observable, Subject } from 'rxjs'
+import { Subject, type Observable } from 'rxjs'
 import { map } from 'rxjs/operators'
 
 import { dataOrThrowErrors, gql } from '@sourcegraph/http-client'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
-import { Container, PageHeader, Button, Link, Icon, Text } from '@sourcegraph/wildcard'
+import { Button, ButtonLink, Container, Icon, PageHeader, Text, Tooltip } from '@sourcegraph/wildcard'
 
 import { requestGraphQL } from '../../../backend/graphql'
 import { FilteredConnection } from '../../../components/FilteredConnection'
@@ -19,13 +20,16 @@ import type {
     CreateAccessTokenResult,
 } from '../../../graphql-operations'
 import {
-    accessTokenFragment,
     AccessTokenNode,
+    accessTokenFragment,
     type AccessTokenNodeProps,
 } from '../../../settings/tokens/AccessTokenNode'
 import type { UserSettingsAreaRouteContext } from '../UserSettingsArea'
 
-interface Props extends Pick<UserSettingsAreaRouteContext, 'authenticatedUser' | 'user'>, TelemetryProps {
+interface Props
+    extends Pick<UserSettingsAreaRouteContext, 'authenticatedUser' | 'user'>,
+        TelemetryProps,
+        TelemetryV2Props {
     /**
      * The newly created token, if any. This component must call onDidPresentNewToken
      * when it is finished presenting the token secret to the user.
@@ -48,10 +52,12 @@ export const UserSettingsTokensPage: React.FunctionComponent<React.PropsWithChil
     user,
     newToken,
     onDidPresentNewToken,
+    telemetryRecorder,
 }) => {
     useEffect(() => {
         telemetryService.logViewEvent('UserSettingsTokens')
-    }, [telemetryService])
+        telemetryRecorder.recordEvent('settings.tokens', 'view')
+    }, [telemetryService, telemetryRecorder])
 
     useEffect(
         () => () => {
@@ -68,11 +74,14 @@ export const UserSettingsTokensPage: React.FunctionComponent<React.PropsWithChil
     }, [accessTokenUpdates])
 
     const queryUserAccessTokens = useCallback(
-        (args: { first?: number }) => queryAccessTokens({ first: args.first ?? null, user: user.id }),
+        (args: { first?: number | null }) => queryAccessTokens({ first: args.first ?? null, user: user.id }),
         [user.id]
     )
 
     const siteAdminViewingOtherUser = authenticatedUser && authenticatedUser.id !== user.id
+    const accessTokensEnabled =
+        (authenticatedUser.siteAdmin && window.context.accessTokensAllow === 'site-admin-create') ||
+        (!siteAdminViewingOtherUser && window.context.accessTokensAllow === 'all-users-create')
 
     return (
         <div className="user-settings-tokens-page">
@@ -82,11 +91,26 @@ export const UserSettingsTokensPage: React.FunctionComponent<React.PropsWithChil
                 path={[{ text: 'Access tokens' }]}
                 description="Access tokens may be used to access the Sourcegraph API."
                 actions={
-                    !siteAdminViewingOtherUser && (
-                        <Button to="new" variant="primary" as={Link}>
-                            <Icon role="img" aria-hidden={true} svgPath={mdiPlus} /> Generate new token
-                        </Button>
-                    )
+                    <>
+                        {accessTokensEnabled && (
+                            <ButtonLink variant="primary" className="ml-2" to="new">
+                                <Icon aria-hidden={true} svgPath={mdiPlus} /> Generate new token
+                            </ButtonLink>
+                        )}
+                        {!accessTokensEnabled && (
+                            <Tooltip
+                                content={
+                                    siteAdminViewingOtherUser
+                                        ? 'Access token creation for other users is disabled in site configuration'
+                                        : 'Access token creation is disabled in site configuration'
+                                }
+                            >
+                                <Button variant="primary" className="ml-2" disabled={true}>
+                                    <Icon aria-hidden={true} svgPath={mdiPlus} /> Generate new token
+                                </Button>
+                            </Tooltip>
+                        )}
+                    </>
                 }
                 className="mb-3"
             />

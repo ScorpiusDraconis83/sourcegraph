@@ -1,15 +1,21 @@
 package codenav
 
 import (
+	"bytes"
 	"context"
+	"io"
+	"strings"
 	"testing"
 
+	"github.com/sourcegraph/log"
 	"github.com/sourcegraph/scip/bindings/go/scip"
 
+	lsifstoremocks "github.com/sourcegraph/sourcegraph/internal/codeintel/codenav/internal/lsifstore/mocks"
+	"github.com/sourcegraph/sourcegraph/internal/codeintel/core"
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/uploads/shared"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
 	"github.com/sourcegraph/sourcegraph/internal/observation"
-	"github.com/sourcegraph/sourcegraph/internal/types"
+	"github.com/sourcegraph/sourcegraph/internal/search/client"
 )
 
 const sampleFile1 = `package food
@@ -18,18 +24,19 @@ type banana struct{}`
 
 func TestSnapshotForDocument(t *testing.T) {
 	// Set up mocks
-	mockRepoStore := defaultMockRepoStore()
-	mockLsifStore := NewMockLsifStore()
+	fakeRepoStore := AllPresentFakeRepoStore{}
+	mockLsifStore := lsifstoremocks.NewMockLsifStore()
 	mockUploadSvc := NewMockUploadService()
 	mockGitserverClient := gitserver.NewMockClient()
+	mockGitserverClient.DiffFunc.SetDefaultReturn(gitserver.NewDiffFileIterator(io.NopCloser(strings.NewReader(""))), nil)
+	mockSearchClient := client.NewMockSearchClient()
 
 	// Init service
-	svc := newService(&observation.TestContext, mockRepoStore, mockLsifStore, mockUploadSvc, mockGitserverClient)
+	svc := newService(observation.TestContextTB(t), fakeRepoStore, mockLsifStore, mockUploadSvc, mockGitserverClient, mockSearchClient, log.NoOp())
 
-	mockUploadSvc.GetDumpsByIDsFunc.SetDefaultReturn([]shared.Dump{{}}, nil)
-	mockRepoStore.GetFunc.SetDefaultReturn(&types.Repo{}, nil)
-	mockGitserverClient.ReadFileFunc.SetDefaultReturn([]byte(sampleFile1), nil)
-	mockLsifStore.SCIPDocumentFunc.SetDefaultReturn(&scip.Document{
+	mockUploadSvc.GetCompletedUploadsByIDsFunc.SetDefaultReturn([]shared.CompletedUpload{{}}, nil)
+	mockGitserverClient.NewFileReaderFunc.SetDefaultReturn(io.NopCloser(bytes.NewReader([]byte(sampleFile1))), nil)
+	mockLsifStore.SCIPDocumentFunc.SetDefaultReturn(core.Some(&scip.Document{
 		RelativePath: "burger.go",
 		Occurrences: []*scip.Occurrence{{
 			Range:       []int32{2, 4, 9},
@@ -43,9 +50,9 @@ func TestSnapshotForDocument(t *testing.T) {
 				IsImplementation: true,
 			}},
 		}},
-	}, nil)
+	}), nil)
 
-	data, err := svc.SnapshotForDocument(context.Background(), 0, "deadbeef", "burger.go", 0)
+	data, err := svc.SnapshotForDocument(context.Background(), 0, "deadbeef", repoRelPath("burger.go"), 0)
 	if err != nil {
 		t.Fatal(err)
 	}

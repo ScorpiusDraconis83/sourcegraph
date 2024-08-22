@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"io/fs"
 	"net/url"
 	"os"
@@ -15,19 +16,18 @@ import (
 	"github.com/inconshreveable/log15" //nolint:logging // TODO move all logging to sourcegraph/log
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/envvar"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/globals"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/externallink"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/cloneurls"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/highlight"
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/binary"
-	"github.com/sourcegraph/sourcegraph/internal/cloneurls"
+	"github.com/sourcegraph/sourcegraph/internal/codeintel/core"
 	resolverstubs "github.com/sourcegraph/sourcegraph/internal/codeintel/resolvers"
 	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver/gitdomain"
 	"github.com/sourcegraph/sourcegraph/internal/gosyntect"
-	"github.com/sourcegraph/sourcegraph/internal/highlight"
 	"github.com/sourcegraph/sourcegraph/internal/symbols"
 	"github.com/sourcegraph/sourcegraph/internal/trace"
 	"github.com/sourcegraph/sourcegraph/internal/types"
@@ -52,6 +52,26 @@ type GitTreeEntryResolver struct {
 	stat fs.FileInfo
 }
 
+// GitBlobResolver is a thin wrapper around GitTreeEntryResolver for readability.
+//
+// We embed GitTreeEntryResolver to avoid needing to forward method implementations.
+//
+// Since most of the logic is shared between GitBlobResolver and GitTreeResolver,
+// prefer adding new functionality on GitTreeEntryResolver directly.
+type GitBlobResolver struct {
+	*GitTreeEntryResolver
+}
+
+// GitTreeResolver is a thin wrapper around GitTreeEntryResolver for readability.
+//
+// We embed GitTreeEntryResolver to avoid needing to forward method implementations.
+//
+// Since most of the logic is shared between GitBlobResolver and GitTreeResolver,
+// prefer adding new functionality on GitTreeEntryResolver directly.
+type GitTreeResolver struct {
+	*GitTreeEntryResolver
+}
+
 type GitTreeEntryResolverOpts struct {
 	Commit *GitCommitResolver
 	Stat   fs.FileInfo
@@ -74,8 +94,13 @@ func NewGitTreeEntryResolver(db database.DB, gitserverClient gitserver.Client, o
 func (r *GitTreeEntryResolver) Path() string { return r.stat.Name() }
 func (r *GitTreeEntryResolver) Name() string { return path.Base(r.stat.Name()) }
 
-func (r *GitTreeEntryResolver) ToGitTree() (*GitTreeEntryResolver, bool) { return r, r.IsDirectory() }
-func (r *GitTreeEntryResolver) ToGitBlob() (*GitTreeEntryResolver, bool) { return r, !r.IsDirectory() }
+func (r *GitTreeEntryResolver) ToGitTree() (*GitTreeResolver, bool) {
+	return &GitTreeResolver{r}, r.IsDirectory()
+}
+
+func (r *GitTreeEntryResolver) ToGitBlob() (*GitBlobResolver, bool) {
+	return &GitBlobResolver{r}, !r.IsDirectory()
+}
 
 func (r *GitTreeEntryResolver) ToVirtualFile() (*VirtualFileResolver, bool) { return nil, false }
 func (r *GitTreeEntryResolver) ToBatchSpecWorkspaceFile() (BatchWorkspaceFileResolver, bool) {
@@ -110,12 +135,19 @@ func (r *GitTreeEntryResolver) ByteSize(ctx context.Context) (int32, error) {
 
 func (r *GitTreeEntryResolver) Content(ctx context.Context, args *GitTreeContentPageArgs) (string, error) {
 	r.contentOnce.Do(func() {
-		r.fullContentBytes, r.contentErr = r.gitserverClient.ReadFile(
+		fr, err := r.gitserverClient.NewFileReader(
 			ctx,
 			r.commit.repoResolver.RepoName(),
 			api.CommitID(r.commit.OID()),
 			r.Path(),
 		)
+		if err != nil {
+			r.contentErr = err
+			return
+		}
+		defer fr.Close()
+
+		r.fullContentBytes, r.contentErr = io.ReadAll(fr)
 	})
 
 	return string(pageContent(r.fullContentBytes, int32ToIntPtr(args.StartLine), int32ToIntPtr(args.EndLine))), r.contentErr
@@ -200,7 +232,7 @@ func nthIndex(in []byte, sep byte, n int) (idx int) {
 	}
 
 	start := 0
-	for i := 0; i < n; i++ {
+	for range n {
 		idx := bytes.IndexByte(in[start:], sep)
 		if idx == -1 {
 			return idx
@@ -229,13 +261,11 @@ func (r *GitTreeEntryResolver) Binary(ctx context.Context) (bool, error) {
 	return binary.IsBinary(r.fullContentBytes), nil
 }
 
-var (
-	syntaxHighlightFileBlocklist = []string{
-		"yarn.lock",
-		"pnpm-lock.yaml",
-		"package-lock.json",
-	}
-)
+var syntaxHighlightFileBlocklist = []string{
+	"yarn.lock",
+	"pnpm-lock.yaml",
+	"package-lock.json",
+}
 
 func (r *GitTreeEntryResolver) Highlight(ctx context.Context, args *HighlightArgs) (*HighlightedFileResolver, error) {
 	// Currently, pagination + highlighting is not supported, throw out an error if it is attempted.
@@ -250,13 +280,11 @@ func (r *GitTreeEntryResolver) Highlight(ctx context.Context, args *HighlightArg
 	}
 
 	// special handling in dotcom to prevent syntax highlighting large lock files
-	if envvar.SourcegraphDotComMode() {
-		for _, f := range syntaxHighlightFileBlocklist {
-			if strings.HasSuffix(r.Path(), f) {
-				// this will force the content to be returned as plaintext
-				// without hitting the syntax highlighter
-				args.Format = string(gosyntect.FormatHTMLPlaintext)
-			}
+	for _, f := range syntaxHighlightFileBlocklist {
+		if strings.HasSuffix(r.Path(), f) {
+			// this will force the content to be returned as plaintext
+			// without hitting the syntax highlighter
+			args.Format = string(gosyntect.FormatHTMLPlaintext)
 		}
 	}
 
@@ -381,15 +409,15 @@ func (r *GitTreeEntryResolver) urlPath(prefix *url.URL) *url.URL {
 func (r *GitTreeEntryResolver) IsDirectory() bool { return r.stat.Mode().IsDir() }
 
 func (r *GitTreeEntryResolver) ExternalURLs(ctx context.Context) ([]*externallink.Resolver, error) {
-	repo, err := r.commit.repoResolver.repo(ctx)
+	linker, err := r.commit.repoResolver.getLinker(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return externallink.FileOrDir(ctx, r.db, r.gitserverClient, repo, r.commit.inputRevOrImmutableRev(), r.Path(), r.stat.Mode().IsDir())
+	return linker.FileOrDir(r.commit.inputRevOrImmutableRev(), r.Path(), r.stat.Mode().IsDir()), nil
 }
 
 func (r *GitTreeEntryResolver) RawZipArchiveURL() string {
-	return globals.ExternalURL().ResolveReference(&url.URL{
+	return conf.ExternalURLParsed().ResolveReference(&url.URL{
 		Path:     path.Join(r.Repository().URL(), "-/raw/", r.Path()),
 		RawQuery: "format=zip",
 	}).String()
@@ -425,12 +453,25 @@ func (r *GitTreeEntryResolver) IsSingleChild(ctx context.Context) (bool, error) 
 		return false, nil
 	}
 
-	entries, err := r.gitserverClient.ReadDir(ctx, r.commit.repoResolver.RepoName(), api.CommitID(r.commit.OID()), path.Dir(r.Path()), false)
+	it, err := r.gitserverClient.ReadDir(ctx, r.commit.repoResolver.RepoName(), api.CommitID(r.commit.OID()), path.Dir(r.Path()), false)
 	if err != nil {
 		return false, err
 	}
+	defer it.Close()
 
-	return len(entries) == 1, nil
+	// Read the entry for the file we are interested in.
+	_, err = it.Next()
+	if err == nil {
+		return false, err
+	}
+
+	// Read one more entry. If that fails with io.EOF then we know we have a single child.
+	_, err = it.Next()
+	if err != io.EOF {
+		return false, err
+	}
+
+	return err == io.EOF, nil
 }
 
 func (r *GitTreeEntryResolver) LSIF(ctx context.Context, args *struct{ ToolName *string }) (resolverstubs.GitBlobLSIFDataResolver, error) {
@@ -439,7 +480,7 @@ func (r *GitTreeEntryResolver) LSIF(ctx context.Context, args *struct{ ToolName 
 		toolName = *args.ToolName
 	}
 
-	repo, err := r.commit.repoResolver.repo(ctx)
+	repo, err := r.commit.repoResolver.getRepo(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -453,8 +494,21 @@ func (r *GitTreeEntryResolver) LSIF(ctx context.Context, args *struct{ ToolName 
 	})
 }
 
+func (r *GitTreeEntryResolver) CodeGraphData(ctx context.Context, args *resolverstubs.CodeGraphDataArgs) (*[]resolverstubs.CodeGraphDataResolver, error) {
+	repo, err := r.commit.repoResolver.getRepo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return EnterpriseResolvers.codeIntelResolver.CodeGraphData(ctx, &resolverstubs.CodeGraphDataOpts{
+		Args:   args,
+		Repo:   repo,
+		Commit: api.CommitID(r.Commit().OID()),
+		Path:   core.NewRepoRelPathUnchecked(r.Path()),
+	})
+}
+
 func (r *GitTreeEntryResolver) LocalCodeIntel(ctx context.Context) (*JSONValue, error) {
-	repo, err := r.commit.repoResolver.repo(ctx)
+	repo, err := r.commit.repoResolver.getRepo(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -481,7 +535,7 @@ func (r *GitTreeEntryResolver) SymbolInfo(ctx context.Context, args *symbolInfoA
 		return nil, errors.New("expected arguments to symbolInfo")
 	}
 
-	repo, err := r.commit.repoResolver.repo(ctx)
+	repo, err := r.commit.repoResolver.getRepo(ctx)
 	if err != nil {
 		return nil, err
 	}

@@ -302,10 +302,6 @@ export const useSettings = (): Settings | null => {
 
 const defaultFeatures: SettingsExperimentalFeatures = {
     codeMonitoring: true,
-    /**
-     * Whether we show the multiline editor at /search/console
-     */
-    showMultilineSearchConsole: false,
     codeMonitoringWebHooks: true,
     showCodeMonitoringLogs: true,
     showFullTreeContext: false,
@@ -314,6 +310,7 @@ const defaultFeatures: SettingsExperimentalFeatures = {
     codeInsightsRepoUI: 'search-query-or-strict-list',
     isInitialized: true,
     searchQueryInput: 'v2',
+    newSearchResultFiltersPanel: true,
 }
 
 /**

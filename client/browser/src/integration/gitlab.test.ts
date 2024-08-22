@@ -47,8 +47,8 @@ describe('GitLab', () => {
         })
 
         testContext.overrideGraphQL({
-            ViewerConfiguration: () => ({
-                viewerConfiguration: {
+            ViewerSettings: () => ({
+                viewerSettings: {
                     subjects: [],
                     merged: { contents: '', messages: [] },
                 },
@@ -152,8 +152,8 @@ describe('GitLab', () => {
             extensions: extensionSettings,
         }
         testContext.overrideGraphQL({
-            ViewerConfiguration: () => ({
-                viewerConfiguration: {
+            ViewerSettings: () => ({
+                viewerSettings: {
                     subjects: [
                         {
                             __typename: 'User',
@@ -207,8 +207,5 @@ describe('GitLab', () => {
                 timeout: 6000,
             },
         })
-
-        // disable flaky snapshot
-        // await percySnapshot(driver.page, 'Browser extension: GitLab - blob view with code intel popup')
     })
 })

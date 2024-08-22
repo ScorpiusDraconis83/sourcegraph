@@ -1,22 +1,17 @@
 import type { EditorView } from '@codemirror/view'
-import { from, type Subscription } from 'rxjs'
-import { switchMap, map, startWith } from 'rxjs/operators'
-import { get, writable, type Readable, readonly } from 'svelte/store'
+import { get } from 'svelte/store'
 
 import { goto as svelteGoto } from '$app/navigation'
 import { page } from '$app/stores'
-import { addLineRangeQueryParameter, formatSearchParameters, toPositionOrRangeQueryParameter } from '$lib/common'
+import { Occurrence, toPrettyBlobURL } from '$lib/shared'
 import {
     positionToOffset,
     type Definition,
     type GoToDefinitionOptions,
-    type SelectedLineRange,
     showTemporaryTooltip,
     locationToURL,
     type DocumentInfo,
 } from '$lib/web'
-
-import type { BlobFileFields } from './api/blob'
 
 /**
  * The minimum number of milliseconds that must elapse before we handle a "Go to
@@ -31,29 +26,12 @@ import type { BlobFileFields } from './api/blob'
  */
 const MINIMUM_GO_TO_DEF_LATENCY_MILLIS = 20
 
-export function updateSearchParamsWithLineInformation(
-    currentSearchParams: URLSearchParams,
-    range: SelectedLineRange
-): string {
-    const parameters = new URLSearchParams(currentSearchParams)
-    parameters.delete('popover')
-
-    let query: string | undefined
-
-    if (range?.line !== range?.endLine && range?.endLine) {
-        query = toPositionOrRangeQueryParameter({
-            range: {
-                start: { line: range.line },
-                end: { line: range.endLine },
-            },
-        })
-    } else if (range?.line) {
-        query = toPositionOrRangeQueryParameter({ position: { line: range.line } })
-    }
-
-    return formatSearchParameters(addLineRangeQueryParameter(parameters, query))
-}
-
+/**
+ * This will either:
+ * - Show a tooltip indicating that no definition was found or that the user is already at the definition.
+ * - Go to the definition if it is a single definition.
+ * - Show a tooltip indicating that multiple definitions were found (but do nothing else).
+ */
 export async function goToDefinition(
     documentInfo: DocumentInfo,
     view: EditorView,
@@ -110,74 +88,21 @@ export async function goToDefinition(
         case 'multiple': {
             void goto(locationToURL(documentInfo, definition.destination, 'def'))
             if (offset) {
-                showTemporaryTooltip(view, 'Not supported yet: Multiple definitions', offset, 2000)
+                showTemporaryTooltip(view, 'Multiple definitions found', offset, 2000)
             }
             break
         }
     }
 }
 
-export function openReferences(
-    view: EditorView,
-    _documentInfo: DocumentInfo,
-    occurrence: Definition['occurrence']
-): void {
-    const offset = positionToOffset(view.state.doc, occurrence.range.start)
-    if (offset) {
-        showTemporaryTooltip(view, 'Not supported yet: Find references', offset, 2000)
-    }
-}
-
-export function openImplementations(
-    view: EditorView,
-    _documentInfo: DocumentInfo,
-    occurrence: Definition['occurrence']
-): void {
-    const offset = positionToOffset(view.state.doc, occurrence.range.start)
-    if (offset) {
-        showTemporaryTooltip(view, 'Not supported yet: Find implementations', offset, 2000)
-    }
-}
-
-interface CombinedBlobData {
-    blob: BlobFileFields | null
-    highlights: string | undefined
-}
-
-interface BlobDataHandler {
-    set(blob: Promise<BlobFileFields | null>, highlight: Promise<string | undefined>): void
-    combinedBlobData: Readable<CombinedBlobData>
-    loading: Readable<boolean>
-}
-
-/**
- * Helper store to synchronize blob data and highlighting data handling.
- */
-export function createBlobDataHandler(): BlobDataHandler {
-    const combinedBlobData = writable<CombinedBlobData>({ blob: null, highlights: undefined })
-    const loading = writable<boolean>(false)
-
-    let subscription: Subscription | undefined
-
-    return {
-        set(blob: Promise<BlobFileFields | null>, highlight: Promise<string | undefined>): void {
-            subscription?.unsubscribe()
-            loading.set(true)
-            subscription = from(blob)
-                .pipe(
-                    switchMap(blob =>
-                        from(highlight).pipe(
-                            startWith(undefined),
-                            map(highlights => ({ blob, highlights }))
-                        )
-                    )
-                )
-                .subscribe(result => {
-                    combinedBlobData.set(result)
-                    loading.set(false)
-                })
-        },
-        combinedBlobData: readonly(combinedBlobData),
-        loading: readonly(loading),
-    }
+export function openReferences(view: EditorView, documentInfo: DocumentInfo, occurrence: Occurrence): void {
+    const url = toPrettyBlobURL({
+        repoName: documentInfo.repoName,
+        revision: documentInfo.revision,
+        commitID: documentInfo.commitID,
+        filePath: documentInfo.filePath,
+        range: occurrence.range.withIncrementedValues(),
+        viewState: 'references',
+    })
+    svelteGoto(url)
 }

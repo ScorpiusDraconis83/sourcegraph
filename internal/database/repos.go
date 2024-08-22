@@ -72,24 +72,42 @@ type RepoStore interface {
 	Count(context.Context, ReposListOptions) (int, error)
 	Create(context.Context, ...*types.Repo) error
 	Delete(context.Context, ...api.RepoID) error
+	// Get gets information about a single repo.
+	//
+	// Prefer using GetByIDs or GetReposSetByIDs for bulk retrieval.
+	//
+	// Returns database.RepoNotFoundErr if the repo was not found.
+	// Returns types.BlockedRepoError if the repo was blocked.
 	Get(context.Context, api.RepoID) (*types.Repo, error)
+	// GetByIDs returns a slice containing information about repos present on the instance.
+	//
+	// The slice may have fewer entries than the number of input RepoIDs,
+	// due to repos not being found or having been deleted/blocked etc.
+	//
+	// Even if the number of elements matches, the caller may not assume anything
+	// about ordering. Use the ID field on each types.Repo value instead.
 	GetByIDs(context.Context, ...api.RepoID) ([]*types.Repo, error)
+	// GetByName is analogous to Get but using an api.RepoName.
+	//
+	// Prefer using Get over GetByName for trusted input.
+	//
+	// Returns database.RepoNotFoundErr if the repo was not found.
+	// Returns types.BlockedRepoError if the repo was blocked.
 	GetByName(context.Context, api.RepoName) (*types.Repo, error)
 	GetByHashedName(context.Context, api.RepoHashedName) (*types.Repo, error)
 	GetFirstRepoNameByCloneURL(context.Context, string) (api.RepoName, error)
 	GetFirstRepoByCloneURL(context.Context, string) (*types.Repo, error)
+	// GetReposSetByIDs returns a map containing information about repos present on the instance.
+	//
+	// The map may have fewer key-value pairs than the number of input RepoIDs,
+	// due to repos not being found or having been deleted/blocked etc.
 	GetReposSetByIDs(context.Context, ...api.RepoID) (map[api.RepoID]*types.Repo, error)
+	// GetRepoDescriptionsByIDs returns descriptions about repos present on the instance.
+	//
+	// The map may have fewer key-value pairs than the number of input RepoIDs,
+	// due to repos not being found or having been deleted/blocked etc.
 	GetRepoDescriptionsByIDs(context.Context, ...api.RepoID) (map[api.RepoID]string, error)
 	List(context.Context, ReposListOptions) ([]*types.Repo, error)
-	// ListSourcegraphDotComIndexableRepos returns a list of repos to be indexed for search on sourcegraph.com.
-	// This includes all non-forked, non-archived repos with >= listSourcegraphDotComIndexableReposMinStars stars,
-	// plus all repos from the following data sources:
-	// - src.fedoraproject.org
-	// - maven
-	// - NPM
-	// - JDK
-	// THIS QUERY SHOULD NEVER BE USED OUTSIDE OF SOURCEGRAPH.COM.
-	ListSourcegraphDotComIndexableRepos(context.Context, ListSourcegraphDotComIndexableReposOptions) ([]types.MinimalRepo, error)
 	ListMinimalRepos(context.Context, ReposListOptions) ([]types.MinimalRepo, error)
 	Metadata(context.Context, ...api.RepoID) ([]*types.SearchedRepo, error)
 	StreamMinimalRepos(context.Context, ReposListOptions, func(*types.MinimalRepo)) error
@@ -440,6 +458,9 @@ var minimalRepoColumns = []string{
 	"repo.name",
 	"repo.private",
 	"repo.stars",
+	"repo.external_id",
+	"repo.external_service_type",
+	"repo.external_service_id",
 }
 
 var repoColumns = []string{
@@ -648,6 +669,9 @@ type ReposListOptions struct {
 	// SIMILAR TO matching. When zero-valued, this is omitted from the predicate set.
 	ExternalRepoIncludeContains []api.ExternalRepoSpec
 
+	// ExternalServiceType matches on the external_service_type column, if non-empty.
+	ExternalServiceType string
+
 	// ExternalRepoExcludeContains is the list of specs to exclude repos using
 	// SIMILAR TO matching. When zero-valued, this is omitted from the predicate set.
 	ExternalRepoExcludeContains []api.ExternalRepoSpec
@@ -745,8 +769,10 @@ type ReposListOptions struct {
 }
 
 type RepoKVPFilter struct {
-	Key   string
-	Value *string
+	// A regex pattern that matches the key
+	Key types.RegexpPattern
+	// A regex pattern that matches the value
+	Value *types.RegexpPattern
 	// If negated is true, this filter will select only repos
 	// that do _not_ have the associated key and value
 	Negated bool
@@ -840,7 +866,14 @@ func (s *repoStore) StreamMinimalRepos(ctx context.Context, opt ReposListOptions
 	err = s.list(ctx, tr, opt, func(rows *sql.Rows) error {
 		var r types.MinimalRepo
 		var private bool
-		err := rows.Scan(&r.ID, &r.Name, &private, &dbutil.NullInt{N: &r.Stars})
+		err := rows.Scan(
+			&r.ID,
+			&r.Name,
+			&private,
+			&dbutil.NullInt{N: &r.Stars},
+			&dbutil.NullString{S: &r.ExternalRepo.ID},
+			&dbutil.NullString{S: &r.ExternalRepo.ServiceType},
+			&dbutil.NullString{S: &r.ExternalRepo.ServiceID})
 		if err != nil {
 			return err
 		}
@@ -970,7 +1003,7 @@ func (s *repoStore) listSQL(ctx context.Context, tr trace.Trace, opt ReposListOp
 	}
 
 	if opt.Query != "" && (len(opt.IncludePatterns) > 0 || opt.ExcludePattern != "") {
-		return nil, errors.New("Repos.List: Query and IncludePatterns/ExcludePattern options are mutually exclusive")
+		return nil, errors.New("Repos.List: Query and IncludePaths/ExcludePaths options are mutually exclusive")
 	}
 
 	if opt.Query != "" {
@@ -1035,6 +1068,10 @@ func (s *repoStore) listSQL(ctx context.Context, tr trace.Trace, opt ReposListOp
 			er = append(er, sqlf.Sprintf("(external_id NOT SIMILAR TO %s AND external_service_type = %s AND external_service_id = %s)", spec.ID, spec.ServiceType, spec.ServiceID))
 		}
 		where = append(where, sqlf.Sprintf("(%s)", sqlf.Join(er, "\n AND ")))
+	}
+
+	if opt.ExternalServiceType != "" {
+		where = append(where, sqlf.Sprintf("external_service_type = %s", opt.ExternalServiceType))
 	}
 
 	if opt.NoForks {
@@ -1178,27 +1215,13 @@ func (s *repoStore) listSQL(ctx context.Context, tr trace.Trace, opt ReposListOp
 	}
 
 	if len(opt.KVPFilters) > 0 {
-		var ands []*sqlf.Query
+		ands := make([]*sqlf.Query, 0, len(opt.KVPFilters))
 		for _, filter := range opt.KVPFilters {
-			if filter.KeyOnly {
-				q := "EXISTS (SELECT 1 FROM repo_kvps WHERE repo_id = repo.id AND key = %s)"
-				if filter.Negated {
-					q = "NOT " + q
-				}
-				ands = append(ands, sqlf.Sprintf(q, filter.Key))
-			} else if filter.Value != nil {
-				q := "EXISTS (SELECT 1 FROM repo_kvps WHERE repo_id = repo.id AND key = %s AND value = %s)"
-				if filter.Negated {
-					q = "NOT " + q
-				}
-				ands = append(ands, sqlf.Sprintf(q, filter.Key, *filter.Value))
-			} else {
-				q := "EXISTS (SELECT 1 FROM repo_kvps WHERE repo_id = repo.id AND key = %s AND value IS NULL)"
-				if filter.Negated {
-					q = "NOT " + q
-				}
-				ands = append(ands, sqlf.Sprintf(q, filter.Key))
+			cond, err := kvpCondition(filter)
+			if err != nil {
+				return nil, errors.Wrap(err, "creating KVPFilter condition")
 			}
+			ands = append(ands, cond)
 		}
 		where = append(where, sqlf.Join(ands, "AND"))
 	}
@@ -1289,92 +1312,6 @@ func containsOrderBySizeField(orderBy OrderBy) bool {
 
 const embeddedReposQueryFmtstr = `
 	SELECT DISTINCT ON (repo_id) repo_id, true embedded FROM repo_embedding_jobs WHERE state = 'completed'
-`
-
-type ListSourcegraphDotComIndexableReposOptions struct {
-	// CloneStatus if set will only return indexable repos of that clone
-	// status.
-	CloneStatus types.CloneStatus
-}
-
-// listSourcegraphDotComIndexableReposMinStars is the minimum number of stars needed for a public
-// repo to be indexed on sourcegraph.com.
-const listSourcegraphDotComIndexableReposMinStars = 5
-
-func (s *repoStore) ListSourcegraphDotComIndexableRepos(ctx context.Context, opts ListSourcegraphDotComIndexableReposOptions) (results []types.MinimalRepo, err error) {
-	tr, ctx := trace.New(ctx, "repos.ListIndexable")
-	defer tr.EndWithErr(&err)
-
-	var joins, where []*sqlf.Query
-	if opts.CloneStatus != types.CloneStatusUnknown {
-		if opts.CloneStatus == types.CloneStatusCloned {
-			// **Performance optimization case**:
-			//
-			// sourcegraph.com (at the time of this comment) has 2.8M cloned and 10k uncloned _indexable_ repos.
-			// At this scale, it is much faster (and logically equivalent) to perform an anti-join on the inverse
-			// set (i.e., filter out non-cloned repos) than a join on the target set (i.e., retaining cloned repos).
-			//
-			// If these scales change significantly this optimization should be reconsidered. The original query
-			// plans informing this change are available at https://github.com/sourcegraph/sourcegraph/pull/44129.
-			joins = append(joins, sqlf.Sprintf("LEFT JOIN gitserver_repos gr ON gr.repo_id = repo.id AND gr.clone_status <> %s", types.CloneStatusCloned))
-			where = append(where, sqlf.Sprintf("gr.repo_id IS NULL"))
-		} else {
-			// Normal case: Filter out rows that do not have a gitserver repo with the target status
-			joins = append(joins, sqlf.Sprintf("JOIN gitserver_repos gr ON gr.repo_id = repo.id AND gr.clone_status = %s", opts.CloneStatus))
-		}
-	}
-
-	if len(where) == 0 {
-		where = append(where, sqlf.Sprintf("TRUE"))
-	}
-
-	q := sqlf.Sprintf(
-		listSourcegraphDotComIndexableReposQuery,
-		sqlf.Join(joins, "\n"),
-		listSourcegraphDotComIndexableReposMinStars,
-		sqlf.Join(where, "\nAND"),
-	)
-
-	rows, err := s.Query(ctx, q)
-	if err != nil {
-		return nil, errors.Wrap(err, "querying indexable repos")
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var r types.MinimalRepo
-		if err := rows.Scan(&r.ID, &r.Name, &dbutil.NullInt{N: &r.Stars}); err != nil {
-			return nil, errors.Wrap(err, "scanning indexable repos")
-		}
-		results = append(results, r)
-	}
-	if err = rows.Err(); err != nil {
-		return nil, errors.Wrap(err, "scanning indexable repos")
-	}
-
-	return results, nil
-}
-
-// N.B. This query's exact conditions are mirrored in the Postgres index
-// repo_dotcom_indexable_repos_idx. Any substantial changes to this query
-// may require an associated index redefinition.
-const listSourcegraphDotComIndexableReposQuery = `
-SELECT
-	repo.id,
-	repo.name,
-	repo.stars
-FROM repo
-%s
-WHERE
-	deleted_at IS NULL AND
-	blocked IS NULL AND
-	(
-		(repo.stars >= %s AND NOT COALESCE(fork, false) AND NOT archived)
-		OR
-		lower(repo.name) ~ '^(src\.fedoraproject\.org|maven|npm|jdk)'
-	) AND
-	%s
-ORDER BY stars DESC NULLS LAST
 `
 
 // Create inserts repos and their sources, respectively in the repo and external_service_repos table.
@@ -1753,6 +1690,71 @@ func parseDescriptionPattern(tr trace.Trace, p string) ([]*sqlf.Query, error) {
 		conds = append(conds, sqlf.Sprintf("lower(description) ~* %s", strings.ToLower(pattern)))
 	}
 	return []*sqlf.Query{sqlf.Sprintf("(%s)", sqlf.Join(conds, "OR"))}, nil
+}
+
+func kvpCondition(filter RepoKVPFilter) (res *sqlf.Query, _ error) {
+	if filter.KeyOnly {
+		cond, err := keyOrValueCondition("key", filter.Key)
+		if err != nil {
+			return nil, err
+		}
+		q := "EXISTS (SELECT 1 FROM repo_kvps WHERE repo_id = repo.id AND %s)"
+		if filter.Negated {
+			q = "NOT " + q
+		}
+		return sqlf.Sprintf(q, cond), nil
+	} else if filter.Value != nil {
+		keyCond, err := keyOrValueCondition("key", filter.Key)
+		if err != nil {
+			return nil, err
+		}
+		valueCond, err := keyOrValueCondition("value", *filter.Value)
+		if err != nil {
+			return nil, err
+		}
+		q := "EXISTS (SELECT 1 FROM repo_kvps WHERE repo_id = repo.id AND %s AND %s)"
+		if filter.Negated {
+			q = "NOT " + q
+		}
+		return sqlf.Sprintf(q, keyCond, valueCond), nil
+	} else {
+		keyCond, err := keyOrValueCondition("key", filter.Key)
+		if err != nil {
+			return nil, err
+		}
+		q := "EXISTS (SELECT 1 FROM repo_kvps WHERE repo_id = repo.id AND %s AND value IS NULL)"
+		if filter.Negated {
+			q = "NOT " + q
+		}
+		return sqlf.Sprintf(q, keyCond), nil
+	}
+}
+
+func keyOrValueCondition(target string, p types.RegexpPattern) (*sqlf.Query, error) {
+	if target != "key" && target != "value" {
+		panic("safety: only allow static targets")
+	}
+
+	exact, like, pattern, err := parseIncludePattern(string(p))
+	if err != nil {
+		return nil, err
+	}
+
+	var conds []*sqlf.Query
+	if exact != nil {
+		if len(exact) == 0 || (len(exact) == 1 && exact[0] == "") {
+			conds = append(conds, sqlf.Sprintf("TRUE"))
+		} else {
+			conds = append(conds, sqlf.Sprintf(target+" = ANY (%s)", pq.Array(exact)))
+		}
+	}
+	for _, v := range like {
+		conds = append(conds, sqlf.Sprintf(target+` LIKE %s`, v))
+	}
+	if pattern != "" {
+		conds = append(conds, sqlf.Sprintf(target+" ~* %s", pattern))
+	}
+	return sqlf.Sprintf("(%s)", sqlf.Join(conds, "OR")), nil
 }
 
 // parseCursorConds returns the WHERE conditions for the given cursor

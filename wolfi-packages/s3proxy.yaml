@@ -1,18 +1,18 @@
 package:
   name: s3proxy
   version: 2.0.0
-  epoch: 2
-  description: "Access other storage backends via the S3 API"
+  epoch: 6 # Independent from repo epoch
+  description: 'Access other storage backends via the S3 API'
   target-architecture:
     - x86_64
   copyright:
     - paths:
-      - "*"
+        - '*'
       attestation: ''
       license: 'Apache License 2.0'
   dependencies:
     runtime:
-      - openjdk-11=11.0.20.4-r0 # TODO(will): Temporarily pinned to avoid bad signature
+      - openjdk-11
       - openjdk-11-default-jvm # Set Java 11 as default JVM
 
 environment:
@@ -26,18 +26,20 @@ environment:
       - busybox
       - ca-certificates-bundle
       - maven
-      - openjdk-11=11.0.20.4-r0 # TODO(will): Temporarily pinned to avoid bad signature
+      - openjdk-11
       - openjdk-11-default-jvm
 
 pipeline:
   - uses: fetch
     with:
-      uri: https://github.com/sourcegraph/s3proxy/archive/refs/tags/s3proxy-${{package.version}}-${{package.epoch}}.tar.gz
-      expected-sha256: efeda0b7e2d87dbfb053510d706b109f8dcbf83fb7833e9d43b2231a2beaf247
+      # Package epoch is independent from repo epoch
+      uri: https://github.com/sourcegraph/s3proxy/archive/refs/tags/s3proxy-${{package.version}}-3.tar.gz
+      expected-sha256: 21583a5db1483ec89e1da0a2de3b1f9caaa79ce291dd0f7af5b9b1366567c515
       extract: true
   - runs: |
       JAVA_HOME=/usr/lib/jvm/java-11-openjdk/ mvn package -DskipTests
   - runs: |
       mkdir -p ${{targets.destdir}}/opt/
+      chmod 755 target/s3proxy
       cp -r target/ ${{targets.destdir}}/opt/s3proxy
       cp src/main/resources/run-docker-container.sh ${{targets.destdir}}/opt/s3proxy

@@ -1,9 +1,9 @@
 import type { Decorator, Meta, StoryFn } from '@storybook/react'
-import { addMinutes } from 'date-fns'
 import { of } from 'rxjs'
 import { MATCH_ANY_PARAMETERS, type MockedResponses, WildcardMockLink } from 'wildcard-mock-link'
 
 import { getDocumentNode } from '@sourcegraph/http-client'
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { MockedTestProvider } from '@sourcegraph/shared/src/testing/apollo'
 
 import type { AuthenticatedUser } from '../../../../auth'
@@ -28,9 +28,9 @@ import {
 } from '../batch-spec.mock'
 
 import {
+    type queryWorkspacesList as _queryWorkspacesList,
     BATCH_SPEC_WORKSPACE_BY_ID,
     FETCH_BATCH_SPEC_EXECUTION,
-    type queryWorkspacesList as _queryWorkspacesList,
 } from './backend'
 import { ExecuteBatchSpecPage } from './ExecuteBatchSpecPage'
 
@@ -44,12 +44,6 @@ const config: Meta = {
     title: 'web/batches/batch-spec/execute/ExecuteBatchSpecPage',
 
     decorators: [decorator],
-
-    parameters: {
-        chromatic: {
-            disableSnapshot: false,
-        },
-    },
 }
 
 export default config
@@ -57,7 +51,6 @@ export default config
 const MOCK_ORGANIZATION = {
     __typename: 'Org',
     name: 'acme-corp',
-    displayName: 'ACME Corporation',
     id: 'acme-corp-id',
 }
 
@@ -107,50 +100,24 @@ const buildWorkspacesQuery =
     () =>
         of(mockWorkspaces(50, workspaceFields).node.workspaceResolution!.workspaces)
 
-// A true executing batch spec wouldn't have a finishedAt set, but we need to have one so
-// that Chromatic doesn't exhibit flakiness based on how long it takes to actually take
-// the snapshot, since the timer in ExecuteBatchSpecPage is live in that case.
-const EXECUTING_BATCH_SPEC_WITH_END_TIME = {
-    ...EXECUTING_BATCH_SPEC,
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    finishedAt: addMinutes(Date.parse(EXECUTING_BATCH_SPEC.startedAt!), 15).toISOString(),
-}
-
 export const Executing: StoryFn = () => (
     <WebStory
         path="/users/:username/batch-changes/:batchChangeName/executions/:batchSpecID/*"
         initialEntries={['/users/my-username/batch-changes/my-batch-change/executions/spec1234']}
     >
         {props => (
-            <MockedTestProvider link={new WildcardMockLink(buildMocks({ ...EXECUTING_BATCH_SPEC_WITH_END_TIME }))}>
+            <MockedTestProvider link={new WildcardMockLink(buildMocks({ ...EXECUTING_BATCH_SPEC }))}>
                 <ExecuteBatchSpecPage
                     {...props}
                     namespace={{ __typename: 'User', url: '', id: 'user1234' }}
                     authenticatedUser={mockAuthenticatedUser}
                     queryWorkspacesList={buildWorkspacesQuery()}
+                    telemetryRecorder={noOpTelemetryRecorder}
                 />
             </MockedTestProvider>
         )}
     </WebStory>
 )
-
-// A true processing workspace wouldn't have a finishedAt set, but we need to have one so
-// that Chromatic doesn't exhibit flakiness based on how long it takes to actually take
-// the snapshot, since the timer in the workspace details section is live in that case.
-const PROCESSING_WORKSPACE_WITH_END_TIMES = {
-    ...PROCESSING_WORKSPACE,
-    /* eslint-disable @typescript-eslint/no-non-null-assertion */
-    finishedAt: addMinutes(Date.parse(PROCESSING_WORKSPACE.startedAt!), 15).toISOString(),
-    steps: [
-        PROCESSING_WORKSPACE.steps[0]!,
-        {
-            ...PROCESSING_WORKSPACE.steps[1],
-            startedAt: null,
-        },
-        PROCESSING_WORKSPACE.steps[2]!,
-    ],
-    /* eslint-enable @typescript-eslint/no-non-null-assertion */
-}
 
 export const ExecuteWithAWorkspaceSelected: StoryFn = () => (
     <WebStory
@@ -163,13 +130,13 @@ export const ExecuteWithAWorkspaceSelected: StoryFn = () => (
             <MockedTestProvider
                 link={
                     new WildcardMockLink([
-                        ...buildMocks({ ...EXECUTING_BATCH_SPEC_WITH_END_TIME }),
+                        ...buildMocks({ ...EXECUTING_BATCH_SPEC }),
                         {
                             request: {
                                 query: getDocumentNode(BATCH_SPEC_WORKSPACE_BY_ID),
                                 variables: MATCH_ANY_PARAMETERS,
                             },
-                            result: { data: { node: PROCESSING_WORKSPACE_WITH_END_TIMES } },
+                            result: { data: { node: PROCESSING_WORKSPACE } },
                             nMatches: Number.POSITIVE_INFINITY,
                         },
                     ])
@@ -180,6 +147,7 @@ export const ExecuteWithAWorkspaceSelected: StoryFn = () => (
                     namespace={{ __typename: 'User', url: '', id: 'user1234' }}
                     authenticatedUser={mockAuthenticatedUser}
                     queryWorkspacesList={buildWorkspacesQuery()}
+                    telemetryRecorder={noOpTelemetryRecorder}
                 />
             </MockedTestProvider>
         )}
@@ -199,6 +167,7 @@ export const Completed: StoryFn = () => (
                     namespace={{ __typename: 'User', url: '', id: 'user1234' }}
                     authenticatedUser={mockAuthenticatedUser}
                     queryWorkspacesList={buildWorkspacesQuery({ state: BatchSpecWorkspaceState.COMPLETED })}
+                    telemetryRecorder={noOpTelemetryRecorder}
                 />
             </MockedTestProvider>
         )}
@@ -216,6 +185,7 @@ export const CompletedWithErrors: StoryFn = () => (
                     namespace={{ __typename: 'User', url: '', id: 'user1234' }}
                     authenticatedUser={mockAuthenticatedUser}
                     queryWorkspacesList={buildWorkspacesQuery({ state: BatchSpecWorkspaceState.FAILED })}
+                    telemetryRecorder={noOpTelemetryRecorder}
                 />
             </MockedTestProvider>
         )}
@@ -234,6 +204,7 @@ export const LocallyExecutedSpec: StoryFn = () => (
                     {...props}
                     namespace={{ __typename: 'User', url: '', id: 'user1234' }}
                     authenticatedUser={mockAuthenticatedUser}
+                    telemetryRecorder={noOpTelemetryRecorder}
                 />
             </MockedTestProvider>
         )}

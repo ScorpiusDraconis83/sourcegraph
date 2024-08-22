@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/require"
 
 	"github.com/sourcegraph/sourcegraph/internal/gqltestutil"
 	"github.com/sourcegraph/sourcegraph/schema"
@@ -23,7 +24,7 @@ const (
 func TestSubRepoPermissionsPerforce(t *testing.T) {
 	checkPerforceEnvironment(t)
 	enableSubRepoPermissions(t)
-	cleanup := createPerforceExternalService(t, testPermsDepot, true)
+	cleanup := createPerforceExternalService(t, testPermsDepot)
 	t.Cleanup(cleanup)
 	userClient, repoName, err := createTestUserAndWaitForRepo(t)
 	if err != nil {
@@ -32,7 +33,6 @@ func TestSubRepoPermissionsPerforce(t *testing.T) {
 
 	// Test cases
 
-	// flaky test
 	t.Run("can read README.md", func(t *testing.T) {
 		blob, err := userClient.GitBlob(repoName, "main", "README.md")
 		if err != nil {
@@ -84,7 +84,7 @@ func TestSubRepoPermissionsPerforce(t *testing.T) {
 func TestSubRepoPermissionsSymbols(t *testing.T) {
 	checkPerforceEnvironment(t)
 	enableSubRepoPermissions(t)
-	cleanup := createPerforceExternalService(t, testPermsDepot, true)
+	cleanup := createPerforceExternalService(t, testPermsDepot)
 	t.Cleanup(cleanup)
 	userClient, repoName, err := createTestUserAndWaitForRepo(t)
 	if err != nil {
@@ -101,7 +101,7 @@ func TestSubRepoPermissionsSymbols(t *testing.T) {
 		// for the revision, after which symbols of this revision are indexed. The search
 		// is repeated 10 times and the test runs for ~50 seconds in total to increase
 		// the probability of symbols being indexed.
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			symbols, err := userClient.GitGetCommitSymbols(repoName, "main")
 			if err != nil {
 				t.Fatal(err)
@@ -121,7 +121,8 @@ func TestSubRepoPermissionsSymbols(t *testing.T) {
 func TestSubRepoPermissionsSearch(t *testing.T) {
 	checkPerforceEnvironment(t)
 	enableSubRepoPermissions(t)
-	cleanup := createPerforceExternalService(t, testPermsDepot, true)
+	enableStructuralSearch(t)
+	cleanup := createPerforceExternalService(t, testPermsDepot)
 	t.Cleanup(cleanup)
 	userClient, _, err := createTestUserAndWaitForRepo(t)
 	if err != nil {
@@ -337,10 +338,9 @@ func createTestUserAndWaitForRepo(t *testing.T) (*gqltestutil.Client, string, er
 	// Alice doesn't have access to Security directory. (there is a .sh file)
 	alicePassword := "alicessupersecurepassword"
 	t.Log("Creating Alice")
-	userClient, err := gqltestutil.SignUpOrSignIn(*baseURL, aliceEmail, aliceUsername, alicePassword)
-	if err != nil {
-		t.Fatal(err)
-	}
+	userClient, err := gqltestutil.NewClient(*baseURL)
+	require.NoError(t, err)
+	require.NoError(t, userClient.SignUp(aliceEmail, aliceUsername, alicePassword))
 
 	aliceID := userClient.AuthenticatedUserID()
 	removeTestUserAfterTest(t, aliceID)
@@ -362,28 +362,8 @@ func createTestUserAndWaitForRepo(t *testing.T) (*gqltestutil.Client, string, er
 func syncUserPerms(t *testing.T, userID, userName string) {
 	t.Helper()
 
-	t.Log("Wait for Perforce to be added as an authz provider")
-	// Wait up to 30 seconds for Perforce to be added as an authz provider
-	err := gqltestutil.Retry(30*time.Second, func() error {
-		authzProviders, err := client.AuthzProviderTypes()
-		if err != nil {
-			t.Fatal("failed to fetch list of authz providers", err)
-		}
-		if len(authzProviders) != 0 {
-			for _, p := range authzProviders {
-				if p == "perforce" {
-					return nil
-				}
-			}
-		}
-		return gqltestutil.ErrContinueRetry
-	})
-	if err != nil {
-		t.Fatal("Waiting for authz providers to be added:", err)
-	}
-
 	t.Log("Schedule permissions sync")
-	err = client.ScheduleUserPermissionsSync(userID)
+	err := client.ScheduleUserPermissionsSync(userID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -431,31 +411,35 @@ func enableSubRepoPermissions(t *testing.T) {
 	t.Helper()
 	t.Log("Enabling sub-repo permissions")
 
-	siteConfig, lastID, err := client.SiteConfiguration()
-	if err != nil {
-		t.Fatal(err)
-	}
-	oldSiteConfig := new(schema.SiteConfiguration)
-	*oldSiteConfig = *siteConfig
-	t.Cleanup(func() {
-		_, lastID, err := client.SiteConfiguration()
-		if err != nil {
-			t.Fatal(err)
+	reset, err := client.ModifySiteConfiguration(func(siteConfig *schema.SiteConfiguration) {
+		if siteConfig.ExperimentalFeatures == nil {
+			siteConfig.ExperimentalFeatures = &schema.ExperimentalFeatures{}
 		}
-		err = client.UpdateSiteConfiguration(oldSiteConfig, lastID)
-		if err != nil {
-			t.Fatal(err)
-		}
+		siteConfig.ExperimentalFeatures.Perforce = "enabled"
+		siteConfig.ExperimentalFeatures.SubRepoPermissions = &schema.SubRepoPermissions{Enabled: true}
 	})
-
-	siteConfig.ExperimentalFeatures = &schema.ExperimentalFeatures{
-		Perforce: "enabled",
-		SubRepoPermissions: &schema.SubRepoPermissions{
-			Enabled: true,
-		},
+	require.NoError(t, err)
+	if reset != nil {
+		t.Cleanup(func() {
+			require.NoError(t, reset())
+		})
 	}
-	err = client.UpdateSiteConfiguration(siteConfig, lastID)
-	if err != nil {
-		t.Fatal(err)
+}
+
+func enableStructuralSearch(t *testing.T) {
+	t.Helper()
+	t.Log("Enabling structural search")
+
+	reset, err := client.ModifySiteConfiguration(func(siteConfig *schema.SiteConfiguration) {
+		if siteConfig.ExperimentalFeatures == nil {
+			siteConfig.ExperimentalFeatures = &schema.ExperimentalFeatures{}
+		}
+		siteConfig.ExperimentalFeatures.StructuralSearch = "enabled"
+	})
+	require.NoError(t, err)
+	if reset != nil {
+		t.Cleanup(func() {
+			require.NoError(t, reset())
+		})
 	}
 }

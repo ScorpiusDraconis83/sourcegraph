@@ -1,18 +1,16 @@
 import { useEffect } from 'react'
 
-import { Navigate, useNavigate, type RouteObject } from 'react-router-dom'
+import { Navigate, type RouteObject } from 'react-router-dom'
 
-import { useExperimentalFeatures } from '@sourcegraph/shared/src/settings/settings'
 import { lazyComponent } from '@sourcegraph/shared/src/util/lazyComponent'
 
+import { codyProRoutes } from './cody/codyProRoutes'
+import { codyRoutes } from './cody/codyRoutes'
 import { communitySearchContextsRoutes } from './communitySearchContexts/routes'
-import { type LegacyLayoutRouteContext, LegacyRoute } from './LegacyRouteContext'
+import { LegacyRoute, type LegacyLayoutRouteContext } from './LegacyRouteContext'
 import { PageRoutes } from './routes.constants'
-import { isSearchJobsEnabled } from './search-jobs/utility'
-import { SearchPageWrapper } from './search/SearchPageWrapper'
 
 const SiteAdminArea = lazyComponent(() => import('./site-admin/SiteAdminArea'), 'SiteAdminArea')
-const SearchConsolePage = lazyComponent(() => import('./search/SearchConsolePage'), 'SearchConsolePage')
 const SignInPage = lazyComponent(() => import('./auth/SignInPage'), 'SignInPage')
 const RequestAccessPage = lazyComponent(() => import('./auth/RequestAccessPage'), 'RequestAccessPage')
 const SignUpPage = lazyComponent(() => import('./auth/SignUpPage'), 'SignUpPage')
@@ -31,7 +29,7 @@ const SurveyPage = lazyComponent(() => import('./marketing/page/SurveyPage'), 'S
 const RepoContainer = lazyComponent(() => import('./repo/RepoContainer'), 'RepoContainer')
 const TeamsArea = lazyComponent(() => import('./team/TeamsArea'), 'TeamsArea')
 const CodySidebarStoreProvider = lazyComponent(() => import('./cody/sidebar/Provider'), 'CodySidebarStoreProvider')
-const GetCodyPage = lazyComponent(() => import('./get-cody/GetCodyPage'), 'GetCodyPage')
+const CodyIgnoreProvider = lazyComponent(() => import('./cody/useCodyIgnore'), 'CodyIgnoreProvider')
 const PostSignUpPage = lazyComponent(() => import('./auth/PostSignUpPage'), 'PostSignUpPage')
 
 const GlobalNotebooksArea = lazyComponent(() => import('./notebooks/GlobalNotebooksArea'), 'GlobalNotebooksArea')
@@ -43,7 +41,10 @@ const GlobalCodeMonitoringArea = lazyComponent(
     () => import('./enterprise/code-monitoring/global/GlobalCodeMonitoringArea'),
     'GlobalCodeMonitoringArea'
 )
-const CodeInsightsRouter = lazyComponent(() => import('./enterprise/insights/CodeInsightsRouter'), 'CodeInsightsRouter')
+const CodeInsightsAppRouter = lazyComponent(
+    () => import('./enterprise/insights/CodeInsightsAppRouter'),
+    'CodeInsightsAppRouter'
+)
 const SearchContextsListPage = lazyComponent(
     () => import('./enterprise/searchContexts/SearchContextsListPage'),
     'SearchContextsListPage'
@@ -60,15 +61,13 @@ const SearchContextPage = lazyComponent(
     () => import('./enterprise/searchContexts/SearchContextPage'),
     'SearchContextPage'
 )
-const CodySearchPage = lazyComponent(() => import('./cody/search/CodySearchPage'), 'CodySearchPage')
-const CodyChatPage = lazyComponent(() => import('./cody/chat/CodyChatPage'), 'CodyChatPage')
-const CodyManagementPage = lazyComponent(() => import('./cody/management/CodyManagementPage'), 'CodyManagementPage')
-const CodySubscriptionPage = lazyComponent(
-    () => import('./cody/subscription/CodySubscriptionPage'),
-    'CodySubscriptionPage'
-)
-const OwnPage = lazyComponent(() => import('./enterprise/own/OwnPage'), 'OwnPage')
+const SearchUpsellPage = lazyComponent(() => import('./search/upsell/SearchUpsellPage'), 'SearchUpsellPage')
+const SearchPageWrapper = lazyComponent(() => import('./search/SearchPageWrapper'), 'SearchPageWrapper')
 const SearchJob = lazyComponent(() => import('./enterprise/search-jobs/SearchJobsPage'), 'SearchJobsPage')
+const SavedSearchArea = lazyComponent(() => import('./savedSearches/Area'), 'Area')
+const PromptsArea = lazyComponent(() => import('./prompts/Area'), 'Area')
+
+const Index = lazyComponent(() => import('./Index'), 'IndexPage')
 
 // Force a hard reload so that we delegate to the serverside HTTP handler for a route.
 const PassThroughToServer: React.FC = () => {
@@ -86,18 +85,60 @@ const PassThroughToServer: React.FC = () => {
  */
 export const routes: RouteObject[] = [
     {
-        path: PageRoutes.GetCody,
-        element: <LegacyRoute render={props => <GetCodyPage {...props} context={window.context} />} />,
+        path: PageRoutes.PostSignUp,
+        element: <LegacyRoute render={() => <PostSignUpPage />} />,
     },
     {
-        path: PageRoutes.PostSignUp,
-        element: <LegacyRoute render={props => <PostSignUpPage {...props} />} />,
+        path: PageRoutes.Index,
+        element: <Index />,
+    },
+    {
+        path: PageRoutes.SignIn,
+        element: (
+            <LegacyRoute
+                render={props => (
+                    <SignInPage
+                        {...props}
+                        context={window.context}
+                        telemetryRecorder={props.platformContext.telemetryRecorder}
+                    />
+                )}
+            />
+        ),
+    },
+    {
+        path: PageRoutes.RequestAccess,
+        element: (
+            <LegacyRoute
+                render={props => <RequestAccessPage telemetryRecorder={props.platformContext.telemetryRecorder} />}
+            />
+        ),
+    },
+    {
+        path: PageRoutes.SignUp,
+        element: (
+            <LegacyRoute
+                render={props => (
+                    <SignUpPage
+                        {...props}
+                        context={window.context}
+                        telemetryRecorder={props.platformContext.telemetryRecorder}
+                    />
+                )}
+            />
+        ),
+    },
+    {
+        path: PageRoutes.UnlockAccount,
+        element: <LegacyRoute render={props => <UnlockAccountPage {...props} context={window.context} />} />,
     },
     {
         path: PageRoutes.BatchChanges,
         element: (
             <LegacyRoute
-                render={props => <GlobalBatchChangesArea {...props} />}
+                render={props => (
+                    <GlobalBatchChangesArea {...props} telemetryRecorder={props.platformContext.telemetryRecorder} />
+                )}
                 // We also render this route on sourcegraph.com as a precaution in case anyone
                 // follows an in-app link to /batch-changes from sourcegraph.com; the component
                 // will just redirect the visitor to the marketing page
@@ -110,7 +151,9 @@ export const routes: RouteObject[] = [
         element: (
             <LegacyRoute
                 render={props => <GlobalCodeMonitoringArea {...props} />}
-                condition={({ isSourcegraphDotCom }) => !isSourcegraphDotCom}
+                condition={({ isSourcegraphDotCom, codeMonitoringEnabled }) =>
+                    !isSourcegraphDotCom && codeMonitoringEnabled
+                }
             />
         ),
     },
@@ -118,7 +161,9 @@ export const routes: RouteObject[] = [
         path: PageRoutes.Insights,
         element: (
             <LegacyRoute
-                render={props => <CodeInsightsRouter {...props} />}
+                render={props => (
+                    <CodeInsightsAppRouter {...props} telemetryRecorder={props.platformContext.telemetryRecorder} />
+                )}
                 condition={({ codeInsightsEnabled }) => !!codeInsightsEnabled}
             />
         ),
@@ -131,27 +176,77 @@ export const routes: RouteObject[] = [
                     <SearchJob
                         isAdmin={props.authenticatedUser?.siteAdmin ?? false}
                         telemetryService={props.telemetryService}
+                        telemetryRecorder={props.platformContext.telemetryRecorder}
                     />
                 )}
-                condition={isSearchJobsEnabled}
+                condition={({ searchJobsEnabled }) => searchJobsEnabled}
+            />
+        ),
+    },
+    {
+        path: `${PageRoutes.SavedSearches}/*`,
+        element: (
+            <LegacyRoute
+                render={props => (
+                    <SavedSearchArea
+                        authenticatedUser={props.authenticatedUser}
+                        isSourcegraphDotCom={props.isSourcegraphDotCom}
+                        telemetryRecorder={props.telemetryRecorder}
+                    />
+                )}
+                condition={() => window.context?.codeSearchEnabledOnInstance}
+            />
+        ),
+    },
+    {
+        path: `${PageRoutes.Prompts}/*`,
+        element: (
+            <LegacyRoute
+                render={props => (
+                    <PromptsArea
+                        authenticatedUser={props.authenticatedUser}
+                        telemetryRecorder={props.telemetryRecorder}
+                    />
+                )}
+                condition={() => window.context?.codyEnabledOnInstance}
             />
         ),
     },
     {
         path: PageRoutes.Contexts,
-        element: <LegacyRoute render={props => <SearchContextsListPage {...props} />} />,
+        element: (
+            <LegacyRoute
+                render={props => <SearchContextsListPage {...props} />}
+                condition={() => window.context?.codeSearchEnabledOnInstance}
+            />
+        ),
     },
     {
         path: PageRoutes.CreateContext,
-        element: <LegacyRoute render={props => <CreateSearchContextPage {...props} />} />,
+        element: (
+            <LegacyRoute
+                render={props => <CreateSearchContextPage {...props} />}
+                condition={() => window.context?.codeSearchEnabledOnInstance}
+            />
+        ),
     },
     {
         path: PageRoutes.EditContext,
-        element: <LegacyRoute render={props => <EditSearchContextPage {...props} />} />,
+        element: (
+            <LegacyRoute
+                render={props => <EditSearchContextPage {...props} />}
+                condition={() => window.context?.codeSearchEnabledOnInstance}
+            />
+        ),
     },
     {
         path: PageRoutes.Context,
-        element: <LegacyRoute render={props => <SearchContextPage {...props} />} />,
+        element: (
+            <LegacyRoute
+                render={props => <SearchContextPage {...props} />}
+                condition={() => window.context?.codeSearchEnabledOnInstance}
+            />
+        ),
     },
     {
         path: PageRoutes.SearchNotebook,
@@ -159,79 +254,14 @@ export const routes: RouteObject[] = [
     },
     {
         path: PageRoutes.Notebooks + '/*',
-        element: <LegacyRoute render={props => <GlobalNotebooksArea {...props} />} />,
-    },
-    {
-        path: PageRoutes.CodySearch,
-        element: <LegacyRoute render={props => <CodySearchPage {...props} />} />,
-    },
-    // TODO: [TEMPORARY] remove this redirect route when the marketing page is added.
-    {
-        path: '/cody/*',
         element: (
             <LegacyRoute
-                render={() => {
-                    const chatID = window.location.pathname.split('/').pop()
-                    const navigate = useNavigate()
-
-                    useEffect(() => {
-                        navigate(`/cody/chat/${chatID}`)
-                    }, [navigate, chatID])
-
-                    return <div />
-                }}
-                condition={() => !window.location.pathname.startsWith('/cody/chat')}
+                render={props => (
+                    <GlobalNotebooksArea {...props} telemetryRecorder={props.platformContext.telemetryRecorder} />
+                )}
+                condition={({ notebooksEnabled }) => notebooksEnabled}
             />
         ),
-    },
-    {
-        path: PageRoutes.Cody + '/*',
-        element: <LegacyRoute render={props => <CodyChatPage {...props} context={window.context} />} />,
-    },
-    {
-        path: PageRoutes.CodyManagement,
-        element: <LegacyRoute render={props => <CodyManagementPage {...props} />} />,
-    },
-    {
-        path: PageRoutes.CodySubscription,
-        element: <LegacyRoute render={props => <CodySubscriptionPage {...props} />} />,
-    },
-    {
-        path: PageRoutes.Own,
-        element: <OwnPage />,
-    },
-    {
-        path: PageRoutes.Index,
-        element: <Navigate replace={true} to={PageRoutes.Search} />,
-    },
-    {
-        path: PageRoutes.Search,
-        element: <LegacyRoute render={props => <SearchPageWrapper {...props} />} />,
-    },
-    {
-        path: PageRoutes.SearchConsole,
-        element: <LegacyRoute render={props => <SearchConsolePageOrRedirect {...props} />} />,
-    },
-    {
-        path: PageRoutes.SignIn,
-        element: <LegacyRoute render={props => <SignInPage {...props} context={window.context} />} />,
-    },
-    {
-        path: PageRoutes.RequestAccess,
-        element: <RequestAccessPage />,
-    },
-    {
-        path: PageRoutes.SignUp,
-        element: <LegacyRoute render={props => <SignUpPage {...props} context={window.context} />} />,
-    },
-    {
-        path: PageRoutes.UnlockAccount,
-        element: <LegacyRoute render={props => <UnlockAccountPage {...props} context={window.context} />} />,
-    },
-    {
-        path: PageRoutes.Welcome,
-        // This route is deprecated after we removed the post-sign-up page experimental feature, but we keep it for now to not break links.
-        element: <Navigate replace={true} to={PageRoutes.Search} />,
     },
     {
         path: PageRoutes.Settings,
@@ -243,7 +273,12 @@ export const routes: RouteObject[] = [
     },
     {
         path: PageRoutes.Teams,
-        element: <LegacyRoute render={props => <TeamsArea {...props} />} />,
+        element: (
+            <LegacyRoute
+                render={props => <TeamsArea {...props} telemetryRecorder={props.platformContext.telemetryRecorder} />}
+                condition={({ isSourcegraphDotCom, ownEnabled }) => !isSourcegraphDotCom && ownEnabled}
+            />
+        ),
     },
     {
         path: PageRoutes.Organizations,
@@ -264,6 +299,8 @@ export const routes: RouteObject[] = [
                         sideBarGroups={props.siteAdminSideBarGroups}
                         overviewComponents={props.siteAdminOverviewComponents}
                         codeInsightsEnabled={window.context.codeInsightsEnabled}
+                        applianceUpdateTarget={window.context.applianceUpdateTarget}
+                        telemetryRecorder={props.platformContext.telemetryRecorder}
                     />
                 )}
             />
@@ -271,11 +308,27 @@ export const routes: RouteObject[] = [
     },
     {
         path: PageRoutes.PasswordReset,
-        element: <LegacyRoute render={props => <ResetPasswordPage {...props} context={window.context} />} />,
+        element: (
+            <LegacyRoute
+                render={props => (
+                    <ResetPasswordPage
+                        {...props}
+                        context={window.context}
+                        telemetryRecorder={props.platformContext.telemetryRecorder}
+                    />
+                )}
+            />
+        ),
     },
     {
         path: PageRoutes.ApiConsole,
-        element: <ApiConsole />,
+        element: (
+            <LegacyRoute render={props => <ApiConsole telemetryRecorder={props.platformContext.telemetryRecorder} />} />
+        ),
+    },
+    {
+        path: PageRoutes.Search,
+        element: <LegacyRoute render={props => <SearchPageOrUpsellPage {...props} />} />,
     },
     {
         path: PageRoutes.UserArea,
@@ -283,7 +336,11 @@ export const routes: RouteObject[] = [
     },
     {
         path: PageRoutes.Survey,
-        element: <LegacyRoute render={props => <SurveyPage {...props} />} />,
+        element: (
+            <LegacyRoute
+                render={props => <SurveyPage {...props} telemetryRecorder={props.platformContext.telemetryRecorder} />}
+            />
+        ),
     },
     {
         path: PageRoutes.Help,
@@ -293,16 +350,26 @@ export const routes: RouteObject[] = [
         path: PageRoutes.Debug,
         element: <PassThroughToServer />,
     },
+    ...codyProRoutes,
+    ...codyRoutes,
     ...communitySearchContextsRoutes,
+    // this should be the last route to be regustered because it's a catch all route
+    // when the instance has the code search feature.
     {
         path: PageRoutes.RepoContainer,
         element: (
             <LegacyRoute
                 render={props => (
-                    <CodySidebarStoreProvider authenticatedUser={props.authenticatedUser}>
-                        <RepoContainer {...props} />
-                    </CodySidebarStoreProvider>
+                    <CodyIgnoreProvider isSourcegraphDotCom={props.isSourcegraphDotCom}>
+                        <CodySidebarStoreProvider
+                            authenticatedUser={props.authenticatedUser}
+                            telemetryRecorder={props.platformContext.telemetryRecorder}
+                        >
+                            <RepoContainer {...props} />
+                        </CodySidebarStoreProvider>
+                    </CodyIgnoreProvider>
                 )}
+                condition={() => window.context?.codeSearchEnabledOnInstance}
             />
         ),
         // In RR6, the useMatches hook will only give you the location that is matched
@@ -313,12 +380,10 @@ export const routes: RouteObject[] = [
     },
 ]
 
-function SearchConsolePageOrRedirect(props: LegacyLayoutRouteContext): JSX.Element {
-    const showMultilineSearchConsole = useExperimentalFeatures(features => features.showMultilineSearchConsole)
-
-    return showMultilineSearchConsole ? (
-        <SearchConsolePage {...props} />
+function SearchPageOrUpsellPage(props: LegacyLayoutRouteContext): JSX.Element {
+    return window.context?.codeSearchEnabledOnInstance ? (
+        <SearchPageWrapper {...props} />
     ) : (
-        <Navigate replace={true} to={PageRoutes.Search} />
+        <SearchUpsellPage telemetryRecorder={props.platformContext.telemetryRecorder} />
     )
 }

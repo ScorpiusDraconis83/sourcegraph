@@ -1,12 +1,12 @@
 import { fetchEventSource } from '@microsoft/fetch-event-source'
 import {
-    Observable,
     fromEvent,
-    Subscription,
+    type Notification,
+    Observable,
     type OperatorFunction,
     pipe,
     type Subscriber,
-    type Notification,
+    Subscription,
 } from 'rxjs'
 import { defaultIfEmpty, map, materialize, scan, switchMap } from 'rxjs/operators'
 
@@ -14,8 +14,7 @@ import { asError, type ErrorLike, isErrorLike } from '@sourcegraph/common'
 
 import type { SearchPatternType, SymbolKind } from '../graphql-operations'
 
-import { SearchMode } from './searchQueryState'
-import { hacksGobQueriesToRegex } from './searchSimple'
+import { SearchMode } from './types'
 
 // The latest supported version of our search syntax. Users should never be able to determine the search version.
 // The version is set based on the release tag of the instance.
@@ -48,6 +47,7 @@ export interface PathMatch {
     repoLastFetched?: string
     branches?: string[]
     commit?: string
+    language?: string
     debug?: string
 }
 
@@ -63,6 +63,7 @@ export interface ContentMatch {
     lineMatches?: LineMatch[]
     chunkMatches?: ChunkMatch[]
     hunks?: DecoratedHunk[]
+    language?: string
     debug?: string
 }
 
@@ -99,6 +100,13 @@ export interface ChunkMatch {
     content: string
     contentStart: Location
     ranges: Range[]
+
+    /**
+     * Indicates that content has been truncated.
+     *
+     * This can only be true when maxLineLength search option is non-zero.
+     */
+    contentTruncated?: boolean
 }
 
 export interface SymbolMatch {
@@ -110,6 +118,7 @@ export interface SymbolMatch {
     branches?: string[]
     commit?: string
     symbols: MatchedSymbol[]
+    language?: string
     debug?: string
 }
 
@@ -193,6 +202,8 @@ export interface TeamMatch extends BaseOwnerMatch {
  * Should be replaced when a new ones come in.
  */
 export interface Progress {
+    // No more progress to be tracked
+    done?: boolean
     /**
      * The number of repositories matching the repo: filter. Is set once they
      * are resolved.
@@ -230,7 +241,7 @@ export interface Skipped {
      * - repository-cloning :: we could not search a repository because it is not cloned.
      * - repository-missing :: we could not search a repository because it is not cloned and we failed to find it on the remote code host.
      * - backend-missing :: we may be missing results due to a backend being transiently down.
-     * - excluded-fork :: we did not search a repository because it is a fork.
+     * - repository-fork :: we did not search a repository because it is a fork.
      * - excluded-archive :: we did not search a repository because it is archived.
      * - display :: we hit the display limit, so we stopped sending results from the backend.
      */
@@ -241,8 +252,8 @@ export interface Skipped {
         | 'shard-timedout'
         | 'repository-cloning'
         | 'repository-missing'
+        | 'repository-fork'
         | 'backend-missing'
-        | 'excluded-fork'
         | 'excluded-archive'
         | 'display'
         | 'error'
@@ -269,14 +280,27 @@ export interface Filter {
     value: string
     label: string
     count: number
-    limitHit: boolean
-    kind: 'file' | 'repo' | 'lang' | 'utility' | 'select' | 'after' | 'before' | 'author'
+    exhaustive: boolean
+    kind: 'file' | 'repo' | 'lang' | 'utility' | 'author' | 'commit date' | 'symbol type' | 'type'
+}
+
+export const TELEMETRY_FILTER_TYPES = {
+    file: 1,
+    repo: 2,
+    lang: 3,
+    utility: 4,
+    author: 5,
+    'commit date': 6,
+    'symbol type': 7,
+    type: 8,
+    snippet: 9,
+    count: 10,
 }
 
 export type SmartSearchAlertKind = 'smart-search-additional-results' | 'smart-search-pure-results'
 export type AlertKind = SmartSearchAlertKind | 'unowned-results'
 
-interface Alert {
+export interface Alert {
     title: string
     description?: string | null
     kind?: AlertKind | null
@@ -479,16 +503,39 @@ export const messageHandlers: MessageHandlers = {
 
 export interface StreamSearchOptions {
     version: string
+    /**
+     * TODO(stefan): "patternType" should be an optional parameter. Both Stream API and the GQL API don't require it.
+     * In the UI, we sometimes prefer to remove the "patternType:" filter from the query for better readability.
+     * "patternType" should be used to set the patternType of a query for those cases. Use "version" to
+     * define the default patternType instead.
+     */
     patternType: SearchPatternType
     caseSensitive: boolean
     trace: string | undefined
     featureOverrides?: string[]
     searchMode?: SearchMode
     sourcegraphURL?: string
-    displayLimit?: number
     chunkMatches?: boolean
     enableRepositoryMetadata?: boolean
     zoektSearchOptions?: string
+
+    /**
+     * Limits the number of matches sent down. Note: this is different to the
+     * count: in the query. The search will continue once we hit displayLimit
+     * and updated filters and statistics will continue to stream down.
+     *
+     * If unset all results are streamed down.
+     */
+    displayLimit?: number
+
+    /**
+     * Truncates content strings such that no line is longer than
+     * maxLineLength. This is used to prevent sending large previews down to
+     * the browser which can cause high CPU and network usage.
+     *
+     * If unset full Content strings are sent.
+     */
+    maxLineLen?: number
 }
 
 function initiateSearchStream(
@@ -502,6 +549,7 @@ function initiateSearchStream(
         featureOverrides,
         searchMode = SearchMode.Precise,
         displayLimit = 1500,
+        maxLineLen,
         sourcegraphURL = '',
         chunkMatches = false,
     }: StreamSearchOptions,
@@ -509,24 +557,7 @@ function initiateSearchStream(
 ): Observable<SearchEvent> {
     return new Observable<SearchEvent>(observer => {
         const subscriptions = new Subscription()
-
-        // HACK(keegan) forgive me for this hack, but this is for rapid
-        // prototyping of a new query language. We should fast follow on
-        // something more robust once we get some internal validation. This
-        // feature flag is purely so we can demonstrate it more easily.
-        //
-        // If you still see this code after February 2024 delete it (or me).
-        let queryParam = `${query} ${caseSensitive ? 'case:yes' : ''}`
-        if (featureOverrides?.includes('search-simple')) {
-            const queryRegex = hacksGobQueriesToRegex(queryParam)
-            // eslint-disable-next-line no-console
-            console.log('query rewritten due to search-simple feature flag being set', {
-                old: queryParam,
-                new: queryRegex,
-            })
-            queryParam = queryRegex
-        }
-
+        const queryParam = `${query} ${caseSensitive ? 'case:yes' : ''}`
         const parameters = [
             ['q', queryParam],
             ['v', version],
@@ -537,6 +568,9 @@ function initiateSearchStream(
         ]
         if (trace) {
             parameters.push(['trace', trace])
+        }
+        if (maxLineLen) {
+            parameters.push(['max-line-len', maxLineLen.toString()])
         }
         for (const value of featureOverrides || []) {
             parameters.push(['feat', value])
@@ -593,19 +627,21 @@ export function getRepositoryUrl(repository: string, branches?: string[]): strin
 }
 
 export function getRevision(branches?: string[], version?: string): string {
-    if (branches && branches.length > 0) {
-        return branches[0]
+    let revision = ''
+    if (branches) {
+        const branch = branches[0]
+        if (branch !== '') {
+            revision = branch
+        }
+    } else if (version) {
+        revision = version
     }
-    if (version) {
-        return version
-    }
-    return ''
+
+    return revision
 }
 
 export function getFileMatchUrl(fileMatch: ContentMatch | SymbolMatch | PathMatch): string {
-    // We are not using getRevision here, because we want to flip the logic from
-    // "branches first" to "revsion first"
-    const revision = fileMatch.commit ?? fileMatch.branches?.[0]
+    const revision = getRevision(fileMatch.branches, fileMatch.commit)
     const encodedFilePath = fileMatch.path.split('/').map(encodeURIComponent).join('/')
     return `/${fileMatch.repository}${revision ? '@' + revision : ''}/-/blob/${encodedFilePath}`
 }

@@ -16,14 +16,17 @@ import (
 	"github.com/coreos/go-oidc"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/sourcegraph/log/logtest"
+
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/auth"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/external/session"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/auth/providers"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/auth/session"
 	"github.com/sourcegraph/sourcegraph/internal/actor"
-	"github.com/sourcegraph/sourcegraph/internal/auth/providers"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbmocks"
 	"github.com/sourcegraph/sourcegraph/internal/httpcli"
 	"github.com/sourcegraph/sourcegraph/internal/licensing"
+	"github.com/sourcegraph/sourcegraph/internal/telemetry/telemetrytest"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 	"github.com/sourcegraph/sourcegraph/schema"
@@ -118,8 +121,8 @@ func newOIDCIDServer(t *testing.T, code string, oidcProvider *schema.OpenIDConne
 }
 
 func TestMiddleware(t *testing.T) {
-	cleanup := session.ResetMockSessionStore(t)
-	defer cleanup()
+	logger := logtest.Scoped(t)
+	session.ResetMockSessionStore(t)
 	defer licensing.TestingSkipFeatureChecks()()
 
 	mockGetProviderValue = &Provider{
@@ -148,6 +151,7 @@ func TestMiddleware(t *testing.T) {
 
 	db := dbmocks.NewStrictMockDB()
 	db.UsersFunc.SetDefaultReturn(users)
+	_ = telemetrytest.AddDBMocks(db)
 
 	securityLogs := dbmocks.NewStrictMockSecurityEventLogsStore()
 	db.SecurityEventLogsFunc.SetDefaultReturn(securityLogs)
@@ -161,10 +165,6 @@ func TestMiddleware(t *testing.T) {
 		}
 		return nil
 	})
-
-	if err := mockGetProviderValue.Refresh(context.Background()); err != nil {
-		t.Fatal(err)
-	}
 
 	validState := (&AuthnState{CSRFToken: "THE_CSRF_TOKEN", Redirect: "/redirect", ProviderID: mockGetProviderValue.ConfigID().ID}).Encode()
 	MockVerifyIDToken = func(rawIDToken string) *oidc.IDToken {
@@ -183,8 +183,8 @@ func TestMiddleware(t *testing.T) {
 
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
 	authedHandler := http.NewServeMux()
-	authedHandler.Handle("/.api/", Middleware(db).API(h))
-	authedHandler.Handle("/", Middleware(db).App(h))
+	authedHandler.Handle("/.api/", Middleware(logger, db).API(h))
+	authedHandler.Handle("/", Middleware(logger, db).App(h))
 
 	doRequest := func(method, urlStr, body string, state string, cookies []*http.Cookie, authed bool) *http.Response {
 		req := httptest.NewRequest(method, urlStr, bytes.NewBufferString(body))
@@ -208,7 +208,7 @@ func TestMiddleware(t *testing.T) {
 	}
 
 	t.Run("unauthenticated homepage visit, sign-out cookie present -> sg sign-in", func(t *testing.T) {
-		cookie := &http.Cookie{Name: auth.SignOutCookie, Value: "true"}
+		cookie := &http.Cookie{Name: session.SignOutCookie, Value: "true"}
 
 		resp := doRequest("GET", "http://example.com/", "", "", []*http.Cookie{cookie}, false)
 		if want := http.StatusOK; resp.StatusCode != want {
@@ -321,8 +321,8 @@ func TestMiddleware(t *testing.T) {
 }
 
 func TestMiddleware_NoOpenRedirect(t *testing.T) {
-	cleanup := session.ResetMockSessionStore(t)
-	defer cleanup()
+	logger := logtest.Scoped(t)
+	session.ResetMockSessionStore(t)
 
 	defer licensing.TestingSkipFeatureChecks()()
 
@@ -344,10 +344,6 @@ func TestMiddleware_NoOpenRedirect(t *testing.T) {
 	defer func() { auth.MockGetAndSaveUser = nil }()
 	mockGetProviderValue.config.Issuer = oidcIDServer.URL
 
-	if err := mockGetProviderValue.Refresh(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
 	state := (&AuthnState{CSRFToken: "THE_CSRF_TOKEN", Redirect: "http://evil.com", ProviderID: mockGetProviderValue.ConfigID().ID}).Encode()
 	MockVerifyIDToken = func(rawIDToken string) *oidc.IDToken {
 		if rawIDToken != "test_id_token_f4bdefbd77f" {
@@ -368,6 +364,7 @@ func TestMiddleware_NoOpenRedirect(t *testing.T) {
 
 	db := dbmocks.NewStrictMockDB()
 	db.UsersFunc.SetDefaultReturn(users)
+	_ = telemetrytest.AddDBMocks(db)
 
 	securityLogs := dbmocks.NewStrictMockSecurityEventLogsStore()
 	db.SecurityEventLogsFunc.SetDefaultReturn(securityLogs)
@@ -380,7 +377,7 @@ func TestMiddleware_NoOpenRedirect(t *testing.T) {
 	})
 
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
-	authedHandler := Middleware(db).App(h)
+	authedHandler := Middleware(logger, db).App(h)
 
 	doRequest := func(method, urlStr, body string, state string, cookies []*http.Cookie) *http.Response {
 		req := httptest.NewRequest(method, urlStr, bytes.NewBufferString(body))

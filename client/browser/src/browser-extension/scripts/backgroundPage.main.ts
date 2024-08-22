@@ -5,7 +5,7 @@ import '../../config/background.entry'
 import '../../shared/polyfills'
 
 import type { Endpoint } from 'comlink'
-import { combineLatest, merge, type Observable, of, Subject, Subscription, timer } from 'rxjs'
+import { combineLatest, merge, type Observable, of, Subject, Subscription, timer, lastValueFrom } from 'rxjs'
 import {
     bufferCount,
     filter,
@@ -15,7 +15,6 @@ import {
     switchMap,
     take,
     concatMap,
-    mapTo,
     catchError,
     distinctUntilChanged,
 } from 'rxjs/operators'
@@ -33,6 +32,7 @@ import { initializeOmniboxInterface } from '../../shared/cli'
 import { browserPortToMessagePort, findMessagePorts } from '../../shared/platform/ports'
 import { createBlobURLForBundle } from '../../shared/platform/worker'
 import { initSentry } from '../../shared/sentry'
+import { ConditionalTelemetryRecorderProvider } from '../../shared/telemetry'
 import { EventLogger } from '../../shared/tracking/eventLogger'
 import { getExtensionVersion, getPlatformName, observeSourcegraphURL } from '../../shared/util/context'
 import { type BrowserActionIconState, setBrowserActionIconState } from '../browser-action-icon'
@@ -149,6 +149,9 @@ async function main(): Promise<void> {
                             .log('BrowserExtensionInstalled')
                             .then(() => console.log(`Triggered "BrowserExtensionInstalled" using ${sourcegraphURL}`))
                             .catch(error => console.error('Error triggering "BrowserExtensionInstalled" event:', error))
+                        new ConditionalTelemetryRecorderProvider(of(true), requestGraphQL)
+                            .getRecorder()
+                            .recordEvent('browserExtension', 'install')
                     })
             )
         }
@@ -238,7 +241,7 @@ async function main(): Promise<void> {
             variables: V
             sourcegraphURL?: string
         }): Promise<GraphQLResult<T>> {
-            return requestGraphQL<T, V>({ request, variables, sourcegraphURL }).toPromise()
+            return lastValueFrom(requestGraphQL<T, V>({ request, variables, sourcegraphURL }))
         },
 
         async notifyRepoSyncError({ sourcegraphURL, hasRepoSyncError }, sender: browser.runtime.MessageSender) {
@@ -424,7 +427,7 @@ main()
 
 function validateSite(): Observable<boolean> {
     return fetchSite(requestGraphQL).pipe(
-        mapTo(true),
+        map(() => true),
         catchError(() => [false])
     )
 }
@@ -458,7 +461,7 @@ function observeCurrentTabRepoSyncError(): Observable<boolean> {
 function observeSourcegraphUrlValidation(): Observable<boolean> {
     return merge(
         // Whenever the URL was persisted to storage, we can assume it was validated before-hand
-        observeStorageKey('sync', 'sourcegraphURL').pipe(mapTo(true)),
+        observeStorageKey('sync', 'sourcegraphURL').pipe(map(() => true)),
         timer(0, INTERVAL_FOR_SOURCEGRPAH_URL_CHECK).pipe(mergeMap(() => validateSite()))
     )
 }

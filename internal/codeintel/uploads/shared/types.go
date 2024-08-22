@@ -6,16 +6,42 @@ import (
 	"strconv"
 	"time"
 
+	genslices "github.com/life4/genesis/slices"
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/sourcegraph/sourcegraph/internal/api"
+	"github.com/sourcegraph/sourcegraph/internal/codeintel/core"
 	"github.com/sourcegraph/sourcegraph/internal/executor"
+	"github.com/sourcegraph/sourcegraph/lib/codeintel/autoindex/config"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
 
+// UploadState is the database equivalent of 'PreciseIndexState'
+// in the GraphQL API. The lifecycle of an upload is described
+// in https://docs.sourcegraph.com/code_navigation/explanations/uploads
+// using 'PreciseIndexState'.
+//
+// The State values in the database don't map 1:1 with the GraphQL API.
+type UploadState string
+
+const (
+	StateQueued     UploadState = "queued"
+	StateUploading  UploadState = "uploading"
+	StateProcessing UploadState = "processing"
+	StateErrored    UploadState = "errored"
+	StateFailed     UploadState = "failed"
+	StateCompleted  UploadState = "completed"
+	StateDeleted    UploadState = "deleted"
+	StateDeleting   UploadState = "deleting"
+)
+
 type Upload struct {
-	ID                int
-	Commit            string
-	Root              string
-	VisibleAtTip      bool
-	UploadedAt        time.Time
+	ID           int
+	Commit       string
+	Root         string
+	VisibleAtTip bool
+	UploadedAt   time.Time
+	// TODO(id: state-refactoring) Use UploadState type here.
 	State             string
 	FailureMessage    *string
 	StartedAt         *time.Time
@@ -55,12 +81,14 @@ func (u Upload) SizeStats() UploadSizeStats {
 	return UploadSizeStats{u.ID, u.UploadSize, u.UncompressedSize}
 }
 
-// TODO - unify with Upload
-// Dump is a subset of the lsif_uploads table (queried via the lsif_dumps_with_repository_name view)
+// CompletedUpload is a subset of the lsif_uploads table
+// (queried via the lsif_dumps_with_repository_name view)
 // and stores only processed records.
-type Dump struct {
+//
+// The State must be 'completed', see TODO(id: completed-state-check).
+type CompletedUpload struct {
 	ID                int        `json:"id"`
-	Commit            string     `json:"commit"`
+	Commit            string     `json:"commit"` // TODO: This type ought to be api.CommitID
 	Root              string     `json:"root"`
 	VisibleAtTip      bool       `json:"visibleAtTip"`
 	UploadedAt        time.Time  `json:"uploadedAt"`
@@ -71,11 +99,44 @@ type Dump struct {
 	ProcessAfter      *time.Time `json:"processAfter"`
 	NumResets         int        `json:"numResets"`
 	NumFailures       int        `json:"numFailures"`
-	RepositoryID      int        `json:"repositoryId"`
+	RepositoryID      int        `json:"repositoryId"` // TODO: This type ought to be api.RepoID, but that is 32-bit
 	RepositoryName    string     `json:"repositoryName"`
 	Indexer           string     `json:"indexer"`
 	IndexerVersion    string     `json:"indexerVersion"`
 	AssociatedIndexID *int       `json:"associatedIndex"`
+}
+
+var _ core.UploadLike = CompletedUpload{}
+
+func (u CompletedUpload) GetID() int {
+	return u.ID
+}
+
+func (u CompletedUpload) GetRoot() string {
+	return u.Root
+}
+
+func (u CompletedUpload) GetCommit() api.CommitID { return api.CommitID(u.Commit) }
+
+func (u *CompletedUpload) ConvertToUpload() Upload {
+	return Upload{
+		ID:                u.ID,
+		Commit:            u.Commit,
+		Root:              u.Root,
+		UploadedAt:        u.UploadedAt,
+		State:             u.State,
+		FailureMessage:    u.FailureMessage,
+		StartedAt:         u.StartedAt,
+		FinishedAt:        u.FinishedAt,
+		ProcessAfter:      u.ProcessAfter,
+		NumResets:         u.NumResets,
+		NumFailures:       u.NumFailures,
+		RepositoryID:      u.RepositoryID,
+		RepositoryName:    u.RepositoryName,
+		Indexer:           u.Indexer,
+		IndexerVersion:    u.IndexerVersion,
+		AssociatedIndexID: u.AssociatedIndexID,
+	}
 }
 
 type UploadLog struct {
@@ -95,10 +156,23 @@ type UploadLog struct {
 	Operation         string
 }
 
-type Index struct {
-	ID                 int                          `json:"id"`
-	Commit             string                       `json:"commit"`
-	QueuedAt           time.Time                    `json:"queuedAt"`
+type AutoIndexJobState UploadState
+
+const (
+	JobStateQueued     = AutoIndexJobState(StateQueued)
+	JobStateProcessing = AutoIndexJobState(StateProcessing)
+	JobStateFailed     = AutoIndexJobState(StateFailed)
+	JobStateErrored    = AutoIndexJobState(StateErrored)
+	JobStateCompleted  = AutoIndexJobState(StateCompleted)
+)
+
+// AutoIndexJob represents an auto-indexing job as represented in lsif_indexes.
+type AutoIndexJob struct {
+	ID       int       `json:"id"`
+	Commit   string    `json:"commit"`
+	QueuedAt time.Time `json:"queuedAt"`
+	// TODO(id: state-refactoring) Use AutoIndexJobState type here.
+	// IMPORTANT: AutoIndexJobState must transitively wrap 'string' for back-compat
 	State              string                       `json:"state"`
 	FailureMessage     *string                      `json:"failureMessage"`
 	StartedAt          *time.Time                   `json:"startedAt"`
@@ -122,11 +196,34 @@ type Index struct {
 	EnqueuerUserID     int32                        `json:"enqueuerUserID"`
 }
 
-func (i Index) RecordID() int {
+func NewAutoIndexJob(job config.AutoIndexJobSpec, repositoryID api.RepoID, commit api.CommitID, state AutoIndexJobState) AutoIndexJob {
+	dockerSteps := genslices.Map(job.Steps, func(step config.DockerStep) DockerStep {
+		return DockerStep{
+			Root:     step.Root,
+			Image:    step.Image,
+			Commands: step.Commands,
+		}
+	})
+
+	return AutoIndexJob{
+		Commit:           string(commit),
+		RepositoryID:     int(repositoryID),
+		State:            string(state),
+		DockerSteps:      dockerSteps,
+		LocalSteps:       job.LocalSteps,
+		Root:             job.Root,
+		Indexer:          job.Indexer,
+		IndexerArgs:      job.IndexerArgs,
+		Outfile:          job.Outfile,
+		RequestedEnvVars: job.RequestedEnvVars,
+	}
+}
+
+func (i AutoIndexJob) RecordID() int {
 	return i.ID
 }
 
-func (i Index) RecordUID() string {
+func (i AutoIndexJob) RecordUID() string {
 	return strconv.Itoa(i.ID)
 }
 
@@ -202,11 +299,11 @@ type DeleteUploadsOptions struct {
 
 // Package pairs a package scheme+manager+name+version with the dump that provides it.
 type Package struct {
-	DumpID  int
-	Scheme  string
-	Manager string
-	Name    string
-	Version string
+	UploadID int
+	Scheme   string
+	Manager  string
+	Name     string
+	Version  string
 }
 
 // PackageReference is a package scheme+name+version
@@ -228,7 +325,7 @@ type PackageReferenceScanner interface {
 	Close() error
 }
 
-type GetIndexesOptions struct {
+type GetAutoIndexJobsOptions struct {
 	RepositoryID  int
 	State         string
 	States        []string
@@ -239,7 +336,7 @@ type GetIndexesOptions struct {
 	Offset        int
 }
 
-type DeleteIndexesOptions struct {
+type DeleteAutoIndexJobsOptions struct {
 	States        []string
 	IndexerNames  []string
 	Term          string
@@ -247,7 +344,7 @@ type DeleteIndexesOptions struct {
 	WithoutUpload bool
 }
 
-type ReindexIndexesOptions struct {
+type SetRerunAutoIndexJobsOptions struct {
 	States        []string
 	IndexerNames  []string
 	Term          string
@@ -263,10 +360,10 @@ type ExportedUpload struct {
 	Root             string
 }
 
-type IndexesWithRepositoryNamespace struct {
+type GroupedAutoIndexJobs struct {
 	Root    string
 	Indexer string
-	Indexes []Index
+	Indexes []AutoIndexJob
 }
 
 type RepositoryWithCount struct {
@@ -284,3 +381,50 @@ type UploadsWithRepositoryNamespace struct {
 	Indexer string
 	Uploads []Upload
 }
+
+type UploadMatchingOptions struct {
+	RepositoryID api.RepoID
+	Commit       api.CommitID
+	Path         core.RepoRelPath
+	// RootToPathMatching describes how the root for which a SCIP index was uploaded
+	// should be matched to the provided Path for a file or directory
+	//
+	// Generally, this value should be RootMustEnclosePath for finding information
+	// for a specific file, and it should be RootEnclosesPathOrPathEnclosesRoot
+	// if recursively aggregating data across indexes for a given directory.
+	RootToPathMatching
+	// Indexer matches the ToolInfo.name field in a SCIP index.
+	// https://github.com/sourcegraph/scip/blob/798e55b1746f054cdd295b3de8f78d073612690f/scip.proto#L63-L65
+	//
+	// Indexer must be shared.SyntacticIndexer for syntactic indexes to be considered.
+	//
+	// If Indexer is empty, then all precise indexes will be considered.
+	Indexer string
+}
+
+func (u *UploadMatchingOptions) Attrs() []attribute.KeyValue {
+	return []attribute.KeyValue{
+		attribute.Int("repositoryID", int(u.RepositoryID)),
+		attribute.String("commit", string(u.Commit)),
+		attribute.String("path", u.Path.RawValue()),
+		attribute.String("rootToPathMatching", string(u.RootToPathMatching)),
+		attribute.String("indexer", u.Indexer),
+	}
+}
+
+type RootToPathMatching string
+
+const (
+	// RootMustEnclosePath has the following behavior:
+	// root = a/b, path = a/b -> Match
+	// root = a/b, path = a/b/c -> Match
+	// root = a/b, path = a -> No match
+	// root = a/b, path = a/d -> No match
+	RootMustEnclosePath RootToPathMatching = "RootMustEnclosePath"
+	// RootEnclosesPathOrPathEnclosesRoot has the following behavior:
+	// root = a/b, path = a/b -> Match
+	// root = a/b, path = a/b/c -> Match
+	// root = a/b, path = a -> Match
+	// root = a/b, path = a/d -> No match
+	RootEnclosesPathOrPathEnclosesRoot RootToPathMatching = "RootEnclosesPathOrPathEnclosesRoot"
+)

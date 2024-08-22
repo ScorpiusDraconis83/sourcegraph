@@ -7,11 +7,11 @@ import (
 	"github.com/sourcegraph/log"
 
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend"
-	"github.com/sourcegraph/sourcegraph/internal/cody"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/cody"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/httpapi/completions"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/modelconfig"
 	"github.com/sourcegraph/sourcegraph/internal/completions/client"
-	"github.com/sourcegraph/sourcegraph/internal/completions/httpapi"
 	"github.com/sourcegraph/sourcegraph/internal/completions/types"
-	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/redispool"
 	"github.com/sourcegraph/sourcegraph/internal/telemetry/telemetryrecorder"
@@ -22,49 +22,49 @@ var _ graphqlbackend.CompletionsResolver = &completionsResolver{}
 
 // completionsResolver provides chat completions
 type completionsResolver struct {
-	rl     httpapi.RateLimiter
+	rl     completions.RateLimiter
 	db     database.DB
 	logger log.Logger
 }
 
 func NewCompletionsResolver(db database.DB, logger log.Logger) graphqlbackend.CompletionsResolver {
-	rl := httpapi.NewRateLimiter(db, redispool.Store, types.CompletionsFeatureChat)
+	rl := completions.NewRateLimiter(db, redispool.Store, types.CompletionsFeatureChat)
 	return &completionsResolver{rl: rl, db: db, logger: logger}
 }
 
 func (c *completionsResolver) Completions(ctx context.Context, args graphqlbackend.CompletionsArgs) (_ string, err error) {
-	if isEnabled := cody.IsCodyEnabled(ctx); !isEnabled {
-		return "", errors.New("cody experimental feature flag is not enabled for current user")
+	if isEnabled, reason := cody.IsCodyEnabled(ctx, c.db); !isEnabled {
+		return "", errors.Newf("cody is not enabled: %s", reason)
 	}
 
 	if err := cody.CheckVerifiedEmailRequirement(ctx, c.db, c.logger); err != nil {
 		return "", err
 	}
 
-	completionsConfig := conf.GetCompletionsConfig(conf.Get().SiteConfig())
-	if completionsConfig == nil {
-		return "", errors.New("completions are not configured")
+	// This GraphQL endpoint doesn't support picking the specific model, and just relies on the default
+	// Chat/FastChat model instead.
+	modelconfigSvc := modelconfig.Get()
+	modelConfig, err := modelconfigSvc.Get()
+	if err != nil {
+		return "", errors.Wrap(err, "getting current LLM configuration")
 	}
 
-	var chatModel string
+	mref := modelConfig.DefaultModels.Chat
 	if args.Fast {
-		chatModel = completionsConfig.FastChatModel
-	} else {
-		chatModel = completionsConfig.ChatModel
+		mref = modelConfig.DefaultModels.FastChat
+	}
+	modelConfigInfo, err := types.LookupModelConfigInfo(modelConfig, mref)
+	if err != nil {
+		return "", errors.Wrapf(err, "resolving mref %q", mref)
 	}
 
-	ctx, done := httpapi.Trace(ctx, "resolver", chatModel, int(args.Input.MaxTokensToSample)).
+	modelName := modelConfigInfo.Model.ModelName
+	ctx, done := completions.Trace(ctx, "resolver", modelName, int(args.Input.MaxTokensToSample)).
 		WithErrorP(&err).
 		Build()
 	defer done()
 
-	client, err := client.Get(
-		c.logger,
-		telemetryrecorder.New(c.db),
-		completionsConfig.Endpoint,
-		completionsConfig.Provider,
-		completionsConfig.AccessToken,
-	)
+	client, err := client.Get(c.logger, telemetryrecorder.New(c.db), modelConfigInfo)
 	if err != nil {
 		return "", errors.Wrap(err, "GetCompletionStreamClient")
 	}
@@ -75,9 +75,14 @@ func (c *completionsResolver) Completions(ctx context.Context, args graphqlbacke
 	}
 
 	params := convertParams(args)
-	// No way to configure the model through the request, we hard code to chat.
-	params.Model = chatModel
-	resp, err := client.Complete(ctx, types.CompletionsFeatureChat, params)
+	request := types.CompletionRequest{
+		Feature:         types.CompletionsFeatureChat,
+		ModelConfigInfo: modelConfigInfo,
+		Parameters:      params,
+		// GraphQL API is considered a legacy API.
+		Version: types.CompletionsVersionLegacy,
+	}
+	resp, err := client.Complete(ctx, c.logger, request)
 	if err != nil {
 		return "", errors.Wrap(err, "client.Complete")
 	}

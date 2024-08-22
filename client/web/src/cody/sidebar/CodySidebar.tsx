@@ -1,154 +1,66 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { Suspense, type FC } from 'react'
 
-import { mdiClose, mdiHistory, mdiPlus, mdiDelete } from '@mdi/js'
-import classNames from 'classnames'
+import { mdiClose } from '@mdi/js'
 
-import { CodyLogo } from '@sourcegraph/cody-ui/dist/icons/CodyLogo'
+import { CodyLogo } from '@sourcegraph/cody-ui'
 import type { AuthenticatedUser } from '@sourcegraph/shared/src/auth'
-import { Button, Icon, Tooltip, Badge } from '@sourcegraph/wildcard'
-
-import { ChatUI, ScrollDownButton } from '../components/ChatUI'
-import { HistoryList } from '../components/HistoryList'
-
-import { useCodySidebar } from './Provider'
+import { lazyComponent } from '@sourcegraph/shared/src/util/lazyComponent'
+import { Alert, Button, H4, Icon, LoadingSpinner, ProductStatusBadge } from '@sourcegraph/wildcard'
 
 import styles from './CodySidebar.module.scss'
 
-export const SCROLL_THRESHOLD = 100
+const LazyCodySidebarWebChat = lazyComponent(() => import('./CodySidebarWebChat'), 'CodySidebarWebChat')
 
-interface CodySidebarProps {
-    onClose?: () => void
-    authenticatedUser: AuthenticatedUser | null
+export interface Repository {
+    id: string
+    name: string
 }
 
-export const CodySidebar: React.FC<CodySidebarProps> = ({ onClose, authenticatedUser }) => {
-    const codySidebarStore = useCodySidebar()
-    const {
-        initializeNewChat,
-        transcript,
-        messageInProgress,
-        clearHistory,
-        loaded,
-        transcriptHistory,
-        deleteHistoryItem,
-        loadTranscriptFromHistory,
-    } = codySidebarStore
+interface CodySidebarProps {
+    filePath: string | undefined
+    repository: Repository
+    authenticatedUser: AuthenticatedUser | null
+    onClose: () => void
+}
 
-    const codySidebarRef = useRef<HTMLDivElement>(null)
-    const [showHistory, setShowHistory] = useState(false)
-    const [shouldScrollToBottom, setShouldScrollToBottom] = useState(true)
-    const [showScrollDownButton, setShowScrollDownButton] = useState(false)
-
-    const handleScroll = useCallback(() => {
-        if (codySidebarRef.current) {
-            const { scrollHeight, scrollTop, clientHeight } = codySidebarRef.current
-            const scrollOffset = scrollHeight - scrollTop - clientHeight
-            setShouldScrollToBottom(scrollOffset <= SCROLL_THRESHOLD)
-            setShowScrollDownButton(scrollOffset > SCROLL_THRESHOLD)
-        }
-    }, [codySidebarRef])
-
-    const scrollToBottom = (behavior: ScrollBehavior = 'smooth'): void => {
-        const sidebar = codySidebarRef.current
-        if (sidebar) {
-            sidebar.scrollTo({
-                behavior,
-                top: sidebar.scrollHeight,
-            })
-        }
-    }
-
-    const onReset = useCallback(() => {
-        initializeNewChat()
-        setShowHistory(false)
-    }, [initializeNewChat, setShowHistory])
-
-    useEffect(() => {
-        const sidebar = codySidebarRef.current
-        if (sidebar && shouldScrollToBottom) {
-            scrollToBottom('auto')
-        }
-    }, [transcript, shouldScrollToBottom, messageInProgress])
-
-    const onHistoryItemSelect = useCallback(
-        async (id: string) => {
-            await loadTranscriptFromHistory(id)
-            setShowHistory(false)
-        },
-        [loadTranscriptFromHistory, setShowHistory]
-    )
-
-    if (!loaded) {
-        return null
-    }
+export const CodySidebar: FC<CodySidebarProps> = props => {
+    const { repository, filePath, authenticatedUser, onClose } = props
 
     return (
-        <div className={styles.mainWrapper}>
-            <div className={styles.codySidebar} ref={codySidebarRef} onScroll={handleScroll}>
-                <div className={styles.codySidebarHeader}>
-                    <div className={classNames(styles.actionButtons, 'd-flex col-2 p-0')}>
-                        <Tooltip content="Chat history">
-                            <Button
-                                variant="icon"
-                                className="mr-2"
-                                aria-label="Active chats"
-                                onClick={() => setShowHistory(showing => !showing)}
-                                aria-pressed={showHistory}
-                            >
-                                <Icon aria-hidden={true} svgPath={mdiHistory} />
-                            </Button>
-                        </Tooltip>
-                        <Tooltip content="Start a new chat">
-                            <Button variant="icon" aria-label="Start a new chat" onClick={onReset}>
-                                <Icon aria-hidden={true} svgPath={mdiPlus} />
-                            </Button>
-                        </Tooltip>
-                        {showHistory &&
-                            (transcriptHistory.length > 1 || !!transcriptHistory[0]?.interactions?.length) && (
-                                <Tooltip content="Clear all chats">
-                                    <Button
-                                        variant="icon"
-                                        className="ml-2"
-                                        aria-label="Clear all chats"
-                                        onClick={clearHistory}
-                                    >
-                                        <Icon aria-hidden={true} svgPath={mdiDelete} />
-                                    </Button>
-                                </Tooltip>
-                            )}
+        <div className={styles.root}>
+            <div className={styles.header}>
+                <div />
+                <span className={styles.headerLogo}>
+                    <CodyLogo />
+                    Cody
+                    <div className="ml-2">
+                        <ProductStatusBadge status="beta" />
                     </div>
-                    <div className="col-8 d-flex justify-content-center">
-                        <div className="d-flex flex-shrink-0 align-items-center">
-                            <CodyLogo />
-                            {showHistory ? 'Chats' : 'Ask Cody'}
-                            <div className="ml-2">
-                                <Badge variant="info">Experimental</Badge>
-                            </div>
-                        </div>
-                    </div>
-                    <div className="col-2 d-flex justify-content-end p-0">
-                        {onClose && (
-                            <Button variant="icon" aria-label="Close" onClick={onClose}>
-                                <Icon aria-hidden={true} svgPath={mdiClose} />
-                            </Button>
-                        )}
-                    </div>
-                </div>
+                </span>
 
-                {showHistory ? (
-                    <HistoryList
-                        itemClassName="rounded-0"
-                        currentTranscript={transcript}
-                        transcriptHistory={transcriptHistory}
-                        truncateMessageLength={60}
-                        loadTranscriptFromHistory={onHistoryItemSelect}
-                        deleteHistoryItem={deleteHistoryItem}
-                    />
-                ) : (
-                    <ChatUI codyChatStore={codySidebarStore} authenticatedUser={authenticatedUser} />
-                )}
+                <Button variant="icon" aria-label="Close" onClick={onClose}>
+                    <Icon aria-hidden={true} svgPath={mdiClose} />
+                </Button>
             </div>
-            {showScrollDownButton && <ScrollDownButton onClick={() => scrollToBottom('smooth')} />}
+
+            {authenticatedUser && (
+                <Suspense
+                    fallback={
+                        <div className="flex flex-1 align-items-center m-2">
+                            <LoadingSpinner className="mr-2" /> Loading Cody client
+                        </div>
+                    }
+                >
+                    <LazyCodySidebarWebChat filePath={filePath} repository={repository} />
+                </Suspense>
+            )}
+
+            {!authenticatedUser && (
+                <Alert variant="info" className="m-3">
+                    <H4>Cody is only available to signed-in users</H4>
+                    Sign in to get access to use Cody
+                </Alert>
+            )}
         </div>
     )
 }

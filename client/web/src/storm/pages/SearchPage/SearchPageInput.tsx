@@ -4,8 +4,10 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import type { NavbarQueryState } from 'src/stores/navbarSearchQueryState'
 import shallow from 'zustand/shallow'
 
-import { SearchBox, Toggles } from '@sourcegraph/branded'
+import { SearchBox } from '@sourcegraph/branded'
+import { Toggles } from '@sourcegraph/branded/src/search-ui/input/toggles/Toggles'
 import { TraceSpanProvider } from '@sourcegraph/observability-client'
+import type { SearchPatternType } from '@sourcegraph/shared/src/graphql-operations'
 import {
     type CaseSensitivityProps,
     type SearchPatternTypeProps,
@@ -38,9 +40,12 @@ const isTouchOnlyDevice =
 
 const queryStateSelector = (
     state: NavbarQueryState
-): Pick<CaseSensitivityProps, 'caseSensitive'> & SearchPatternTypeProps & Pick<SearchModeProps, 'searchMode'> => ({
+): Pick<CaseSensitivityProps, 'caseSensitive'> &
+    SearchPatternTypeProps &
+    Pick<SearchModeProps, 'searchMode'> & { defaultPatternType: SearchPatternType } => ({
     caseSensitive: state.searchCaseSensitivity,
     patternType: state.searchPatternType,
+    defaultPatternType: state.defaultPatternType,
     searchMode: state.searchMode,
 })
 
@@ -64,13 +69,17 @@ export const SearchPageInput: FC<SearchPageInputProps> = props => {
         fetchSearchContexts,
         setSelectedSearchContextSpec,
     } = useLegacyContext_onlyInStormRoutes()
+    const { telemetryRecorder } = platformContext
 
     const selectedSearchContextSpec = hardCodedSearchContextSpec || dynamicSearchContextSpec
 
     const location = useLocation()
     const navigate = useNavigate()
 
-    const { caseSensitive, patternType, searchMode } = useNavbarQueryState(queryStateSelector, shallow)
+    const { caseSensitive, patternType, defaultPatternType, searchMode } = useNavbarQueryState(
+        queryStateSelector,
+        shallow
+    )
     const [v2QueryInput] = useV2QueryInput()
 
     const { recentSearches } = useRecentSearches()
@@ -91,6 +100,7 @@ export const SearchPageInput: FC<SearchPageInputProps> = props => {
                     // In the new query input, context is either omitted (-> global)
                     // or explicitly specified.
                     selectedSearchContextSpec: v2QueryInput ? undefined : selectedSearchContextSpec,
+                    telemetryRecorder,
                     ...parameters,
                 })
             }
@@ -104,6 +114,7 @@ export const SearchPageInput: FC<SearchPageInputProps> = props => {
             caseSensitive,
             searchMode,
             v2QueryInput,
+            telemetryRecorder,
         ]
     )
     const submitSearchOnChangeRef = useRef(submitSearchOnChange)
@@ -129,7 +140,9 @@ export const SearchPageInput: FC<SearchPageInputProps> = props => {
     // TODO (#48103): Remove/simplify when new search input is released
     const input = v2QueryInput ? (
         <LazyV2SearchInput
+            autoFocus={!isTouchOnlyDevice}
             telemetryService={telemetryService}
+            telemetryRecorder={telemetryRecorder}
             patternType={patternType}
             interpretComments={false}
             queryState={queryState}
@@ -143,15 +156,17 @@ export const SearchPageInput: FC<SearchPageInputProps> = props => {
         >
             <Toggles
                 patternType={patternType}
+                defaultPatternType={defaultPatternType}
                 caseSensitive={caseSensitive}
                 setPatternType={setSearchPatternType}
                 setCaseSensitivity={setSearchCaseSensitivity}
                 searchMode={searchMode}
                 setSearchMode={setSearchMode}
                 navbarSearchQuery={queryState.query}
-                showSmartSearchButton={false}
-                showExtendedPicker={false}
-                structuralSearchDisabled={window.context?.experimentalFeatures?.structuralSearch === 'disabled'}
+                submitSearch={submitSearchOnChange}
+                structuralSearchDisabled={window.context?.experimentalFeatures?.structuralSearch !== 'enabled'}
+                telemetryService={telemetryService}
+                telemetryRecorder={telemetryRecorder}
             />
         </LazyV2SearchInput>
     ) : (
@@ -162,6 +177,7 @@ export const SearchPageInput: FC<SearchPageInputProps> = props => {
             selectedSearchContextSpec={selectedSearchContextSpec}
             setSelectedSearchContextSpec={setSelectedSearchContextSpec}
             telemetryService={telemetryService}
+            telemetryRecorder={telemetryRecorder}
             authenticatedUser={authenticatedUser}
             isSourcegraphDotCom={isSourcegraphDotCom}
             searchContextsEnabled={searchContextsEnabled}
@@ -169,6 +185,7 @@ export const SearchPageInput: FC<SearchPageInputProps> = props => {
             showSearchContextManagement={true}
             caseSensitive={caseSensitive}
             patternType={patternType}
+            defaultPatternType={defaultPatternType}
             setPatternType={setSearchPatternType}
             setCaseSensitivity={setSearchCaseSensitivity}
             searchMode={searchMode}
@@ -177,7 +194,7 @@ export const SearchPageInput: FC<SearchPageInputProps> = props => {
             onChange={setQueryState}
             onSubmit={onSubmit}
             autoFocus={!isTouchOnlyDevice}
-            structuralSearchDisabled={window.context?.experimentalFeatures?.structuralSearch === 'disabled'}
+            structuralSearchDisabled={window.context?.experimentalFeatures?.structuralSearch !== 'enabled'}
             showSearchHistory={true}
             recentSearches={recentSearches}
         />
@@ -191,7 +208,7 @@ export const SearchPageInput: FC<SearchPageInputProps> = props => {
                             <div className="d-flex flex-grow-1 w-100">{input}</div>
                         </TraceSpanProvider>
                     </div>
-                    <Notices className="my-3 text-center" location="home" />
+                    <Notices className="my-3 text-center" location="home" telemetryRecorder={telemetryRecorder} />
                 </Form>
             </div>
             {simpleSearch && (
@@ -199,6 +216,7 @@ export const SearchPageInput: FC<SearchPageInputProps> = props => {
                     <hr className="mt-4 mb-4" />
                     <SimpleSearch
                         telemetryService={telemetryService}
+                        telemetryRecorder={telemetryRecorder}
                         onSubmit={onSubmit}
                         onSimpleSearchUpdate={onSimpleSearchUpdate}
                     />

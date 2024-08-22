@@ -27,13 +27,11 @@ func (r *gitBlobLSIFDataResolver) Ranges(ctx context.Context, args *resolverstub
 		},
 		Path: r.requestState.Path,
 	}
-	ctx, _, endObservation := observeResolver(ctx, &err, r.operations.ranges, time.Second, observation.Args{Attrs: []attribute.KeyValue{
-		attribute.Int("repositoryID", requestArgs.RepositoryID),
-		attribute.String("commit", requestArgs.Commit),
-		attribute.String("path", requestArgs.Path),
-		attribute.Int("startLine", int(args.StartLine)),
-		attribute.Int("endLine", int(args.EndLine)),
-	}})
+	ctx, _, endObservation := observeResolver(ctx, &err, r.operations.ranges, time.Second,
+		observation.Args{Attrs: append(requestArgs.Attrs(),
+			attribute.Int("startLine", int(args.StartLine)),
+			attribute.Int("endLine", int(args.EndLine)))},
+	)
 	defer endObservation()
 
 	if args.StartLine < 0 || args.EndLine < args.StartLine {
@@ -65,7 +63,7 @@ type codeIntelligenceRangeResolver struct {
 }
 
 func (r *codeIntelligenceRangeResolver) Range(ctx context.Context) (resolverstubs.RangeResolver, error) {
-	return newRangeResolver(convertRange(r.r.Range)), nil
+	return newRangeResolver(r.r.Range.ToSCIPRange()), nil
 }
 
 func (r *codeIntelligenceRangeResolver) Definitions(ctx context.Context) (resolverstubs.LocationConnectionResolver, error) {
@@ -81,5 +79,5 @@ func (r *codeIntelligenceRangeResolver) Implementations(ctx context.Context) (re
 }
 
 func (r *codeIntelligenceRangeResolver) Hover(ctx context.Context) (resolverstubs.HoverResolver, error) {
-	return newHoverResolver(r.r.HoverText, convertRange(r.r.Range)), nil
+	return newHoverResolver(r.r.HoverText, r.r.Range.ToSCIPRange()), nil
 }

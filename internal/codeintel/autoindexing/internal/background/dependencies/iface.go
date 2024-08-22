@@ -8,7 +8,6 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/uploads/shared"
 	uploadsshared "github.com/sourcegraph/sourcegraph/internal/codeintel/uploads/shared"
 	"github.com/sourcegraph/sourcegraph/internal/database"
-	"github.com/sourcegraph/sourcegraph/internal/repoupdater/protocol"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 )
 
@@ -31,12 +30,8 @@ type ReposStore interface {
 }
 
 type IndexEnqueuer interface {
-	QueueIndexes(ctx context.Context, repositoryID int, rev, configuration string, force, bypassLimit bool) (_ []uploadsshared.Index, err error)
-	QueueIndexesForPackage(ctx context.Context, pkg dependencies.MinimialVersionedPackageRepo) (err error)
-}
-
-type RepoUpdaterClient interface {
-	RepoLookup(ctx context.Context, args protocol.RepoLookupArgs) (*protocol.RepoLookupResult, error)
+	QueueAutoIndexJobs(ctx context.Context, repositoryID int, rev, configuration string, force, bypassLimit bool) (_ []uploadsshared.AutoIndexJob, err error)
+	QueueAutoIndexJobsForPackage(ctx context.Context, pkg dependencies.MinimialVersionedPackageRepo) (err error)
 }
 
 type UploadService interface {

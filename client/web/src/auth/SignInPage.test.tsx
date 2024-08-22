@@ -2,6 +2,7 @@ import { within } from '@testing-library/dom'
 import { Route, Routes } from 'react-router-dom'
 import { describe, expect, it } from 'vitest'
 
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { renderWithBrandedContext } from '@sourcegraph/wildcard/src/testing'
 
 import type { AuthenticatedUser } from '../auth'
@@ -18,6 +19,8 @@ describe('SignInPage', () => {
             authenticationURL: '',
             serviceID: '',
             clientID: '1234',
+            noSignIn: false,
+            requiredForAuthz: false,
         },
         {
             serviceType: 'github',
@@ -26,6 +29,8 @@ describe('SignInPage', () => {
             authenticationURL: 'http://localhost/.auth/gitlab/login?pc=f00bar&returnTo=%2Fsearch',
             serviceID: 'https://github.com',
             clientID: '1234',
+            noSignIn: false,
+            requiredForAuthz: false,
         },
         {
             serviceType: 'gitlab',
@@ -34,6 +39,18 @@ describe('SignInPage', () => {
             authenticationURL: 'http://localhost/.auth/gitlab/login?pc=f00bar&returnTo=%2Fsearch',
             serviceID: 'https://gitlab.com',
             clientID: '1234',
+            noSignIn: false,
+            requiredForAuthz: false,
+        },
+        {
+            serviceType: 'gitlab',
+            displayName: 'GitLab 2',
+            isBuiltin: false,
+            authenticationURL: 'http://localhost/.auth/gitlab/login?pc=f00bar&returnTo=%2Fsearch',
+            serviceID: 'https://gitlab.com',
+            clientID: '1234',
+            noSignIn: true,
+            requiredForAuthz: false,
         },
     ]
 
@@ -45,6 +62,7 @@ describe('SignInPage', () => {
             sourcegraphDotComMode?: SourcegraphContext['sourcegraphDotComMode']
             allowSignup?: SourcegraphContext['allowSignup']
             primaryLoginProvidersCount?: SourcegraphContext['primaryLoginProvidersCount']
+            authAccessRequest?: SourcegraphContext['authAccessRequest']
         }
     ) =>
         renderWithBrandedContext(
@@ -61,7 +79,9 @@ describe('SignInPage', () => {
                                 resetPasswordEnabled: true,
                                 xhrHeaders: {},
                                 primaryLoginProvidersCount: props.primaryLoginProvidersCount ?? 5,
+                                authAccessRequest: props.authAccessRequest,
                             }}
+                            telemetryRecorder={noOpTelemetryRecorder}
                         />
                     }
                 />
@@ -151,6 +171,8 @@ describe('SignInPage', () => {
                 authenticationURL: '',
                 serviceID: '',
                 clientID: '',
+                noSignIn: false,
+                requiredForAuthz: false,
             },
         ]
 
@@ -181,6 +203,8 @@ describe('SignInPage', () => {
                 authenticationURL: '',
                 serviceID: '',
                 clientID: '',
+                noSignIn: false,
+                requiredForAuthz: false,
             },
         ]
         it('does not render the Gerrit provider', () => {
@@ -204,6 +228,30 @@ describe('SignInPage', () => {
         } as AuthenticatedUser
 
         expect(render('/sign-in', { authenticatedUser: mockUser }).asFragment()).toMatchSnapshot()
+    })
+
+    it('does not render redirect when there is only 1 auth provider with request access enabled', () => {
+        const withGitHubProvider: SourcegraphContext['authProviders'] = [
+            {
+                serviceType: 'github',
+                displayName: 'GitHub',
+                isBuiltin: false,
+                authenticationURL: 'http://localhost/.auth/gitlab/login?pc=f00bar&returnTo=%2Fsearch',
+                serviceID: 'https://github.com',
+                clientID: '1234',
+                noSignIn: false,
+                requiredForAuthz: false,
+            },
+        ]
+
+        expect(
+            render('/sign-in', {
+                authProviders: withGitHubProvider,
+                authAccessRequest: { enabled: true },
+                allowSignup: false,
+                sourcegraphDotComMode: false,
+            }).asFragment()
+        ).toMatchSnapshot()
     })
 
     it('renders different prefix on provider buttons', () => {

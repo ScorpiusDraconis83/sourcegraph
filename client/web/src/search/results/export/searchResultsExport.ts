@@ -1,4 +1,4 @@
-import { of } from 'rxjs'
+import { of, lastValueFrom } from 'rxjs'
 
 import {
     type ContentMatch,
@@ -17,8 +17,8 @@ import {
     aggregateStreamingSearch,
     type AggregateStreamingSearchResults,
 } from '@sourcegraph/shared/src/search/stream'
-
-import { eventLogger } from '../../../tracking/eventLogger'
+import { TelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
+import { EVENT_LOGGER } from '@sourcegraph/shared/src/telemetry/web/eventLogger'
 
 export const searchResultsToFileContent = (
     searchResults: SearchMatch[],
@@ -117,7 +117,7 @@ export const searchResultsToFileContent = (
 
         case 'repo': {
             content = [
-                enableRepositoryMetadata ? [...headers, 'Repository metadata'] : headers,
+                enableRepositoryMetadata ? [...headers, 'Repository metadata', 'Repository metadata JSON'] : headers,
                 ...searchResults
                     .filter((result: SearchMatch): result is RepositoryMatch => result.type === 'repo')
                     .map(result => [
@@ -129,6 +129,19 @@ export const searchResultsToFileContent = (
                                   Object.entries(result.metadata ?? {})
                                       .map(([key, value]) => (value ? `${key}:${value}` : key))
                                       .join('\n'),
+                              ]
+                            : []),
+                        ...(enableRepositoryMetadata
+                            ? [
+                                  JSON.stringify(
+                                      Object.entries(result.metadata ?? {}).reduce(
+                                          (obj: { [key: string]: string | null }, [key, value]) => {
+                                              obj[key] = value ?? null
+                                              return obj
+                                          },
+                                          {}
+                                      )
+                                  ),
                               ]
                             : []),
                     ]),
@@ -226,15 +239,18 @@ export const downloadSearchResults = (
     query: string,
     options: StreamSearchOptions,
     results: AggregateStreamingSearchResults | undefined,
-    shouldRerunSearch: boolean
+    shouldRerunSearch: boolean,
+    telemetryRecorder: TelemetryRecorder
 ): Promise<void> => {
     const resultsObservable = shouldRerunSearch
-        ? aggregateStreamingSearch(of(query), { ...options, displayLimit: EXPORT_RESULT_DISPLAY_LIMIT })
+        ? aggregateStreamingSearch(of(query), {
+              ...options,
+              displayLimit: EXPORT_RESULT_DISPLAY_LIMIT,
+              maxLineLen: -1, // disable content truncation
+          })
         : of(results)
 
-    // Once we update to RxJS 7, we need to change `toPromise` to `lastValueFrom`.
-    // See https://rxjs.dev/deprecations/to-promise
-    return resultsObservable.toPromise().then(results => {
+    return lastValueFrom(resultsObservable, { defaultValue: undefined }).then(results => {
         if (results?.state === 'error') {
             const error = results.progress.skipped.find(skipped => skipped.reason === 'error')
             if (error) {
@@ -257,7 +273,9 @@ export const downloadSearchResults = (
         a.style.display = 'none'
         a.download = buildFileName(query)
         a.click()
-        eventLogger.log('SearchExportPerformed', { count: results.results.length }, { count: results.results.length })
+
+        EVENT_LOGGER.log('SearchExportPerformed', { count: results.results.length }, { count: results.results.length })
+        telemetryRecorder.recordEvent('search.results', 'export', { metadata: { count: results.results.length } })
 
         // cleanup
         a.remove()

@@ -3,6 +3,7 @@ import { MATCH_ANY_PARAMETERS, WildcardMockLink } from 'wildcard-mock-link'
 
 import { getDocumentNode } from '@sourcegraph/http-client'
 import { ExternalServiceKind } from '@sourcegraph/shared/src/graphql-operations'
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { NOOP_TELEMETRY_SERVICE } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { MockedTestProvider } from '@sourcegraph/shared/src/testing/apollo'
 
@@ -55,8 +56,8 @@ export const NoWebhooksFound: StoryFn = () => (
                                     webhooks: {
                                         nodes: [],
                                     },
-                                    webhookLogs: {
-                                        totalCount: 0,
+                                    errorsOnly: {
+                                        nodes: [],
                                     },
                                 },
                             },
@@ -65,7 +66,12 @@ export const NoWebhooksFound: StoryFn = () => (
                     ])
                 }
             >
-                <SiteAdminWebhooksPage telemetryService={NOOP_TELEMETRY_SERVICE} />
+                <div className="container p-4">
+                    <SiteAdminWebhooksPage
+                        telemetryService={NOOP_TELEMETRY_SERVICE}
+                        telemetryRecorder={noOpTelemetryRecorder}
+                    />
+                </div>
             </MockedTestProvider>
         )}
     </WebStory>
@@ -159,8 +165,8 @@ export const FiveWebhooksFound: StoryFn = () => (
                                             },
                                         ],
                                     },
-                                    webhookLogs: {
-                                        totalCount: 5,
+                                    errorsOnly: {
+                                        nodes: [],
                                     },
                                 },
                             },
@@ -169,7 +175,12 @@ export const FiveWebhooksFound: StoryFn = () => (
                     ])
                 }
             >
-                <SiteAdminWebhooksPage telemetryService={NOOP_TELEMETRY_SERVICE} />
+                <div className="container p-4">
+                    <SiteAdminWebhooksPage
+                        telemetryService={NOOP_TELEMETRY_SERVICE}
+                        telemetryRecorder={noOpTelemetryRecorder}
+                    />
+                </div>
             </MockedTestProvider>
         )}
     </WebStory>

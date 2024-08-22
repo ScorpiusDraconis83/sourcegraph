@@ -17,13 +17,14 @@ import (
 
 	"github.com/sourcegraph/log/logtest"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/external/globals"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/webhooks"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/webhooks"
 	"github.com/sourcegraph/sourcegraph/internal/api"
+	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbmocks"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbtest"
@@ -33,7 +34,6 @@ import (
 	gitlabwebhooks "github.com/sourcegraph/sourcegraph/internal/extsvc/gitlab/webhooks"
 	internalgrpc "github.com/sourcegraph/sourcegraph/internal/grpc"
 	"github.com/sourcegraph/sourcegraph/internal/grpc/defaults"
-	"github.com/sourcegraph/sourcegraph/internal/httpcli"
 	"github.com/sourcegraph/sourcegraph/internal/repos"
 	"github.com/sourcegraph/sourcegraph/internal/repoupdater"
 	"github.com/sourcegraph/sourcegraph/internal/repoupdater/protocol"
@@ -151,22 +151,14 @@ func TestGitHubHandler(t *testing.T) {
 	server := httptest.NewServer(internalgrpc.MultiplexHandlers(gs, mux))
 	defer server.Close()
 
-	cf := httpcli.NewExternalClientFactory()
-	opts := []httpcli.Opt{}
-	doer, err := cf.Doer(opts...)
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	repoupdater.DefaultClient = repoupdater.NewClient(server.URL)
-	repoupdater.DefaultClient.HTTPClient = doer
 
 	payload, err := os.ReadFile(filepath.Join("testdata", "github-push.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	targetURL := fmt.Sprintf("%s/github-webhooks", globals.ExternalURL())
+	targetURL := fmt.Sprintf("%s/github-webhooks", conf.ExternalURLParsed())
 	req, err := http.NewRequest("POST", targetURL, bytes.NewReader(payload))
 	if err != nil {
 		t.Fatal(err)
@@ -200,8 +192,15 @@ func TestGitLabHandler(t *testing.T) {
 
 	db := dbmocks.NewMockDB()
 	repositories := dbmocks.NewMockRepoStore()
-	repositories.GetFirstRepoNameByCloneURLFunc.SetDefaultHook(func(ctx context.Context, s string) (api.RepoName, error) {
-		return api.RepoName(repoName), nil
+	repositories.ListFunc.SetDefaultHook(func(ctx context.Context, rlo database.ReposListOptions) ([]*types.Repo, error) {
+		require.Equal(t, rlo.ExternalRepos, []api.ExternalRepoSpec{
+			{
+				ID:          "26057560",
+				ServiceType: "gitlab",
+				ServiceID:   "https://gitlab.sgdev.org/",
+			},
+		})
+		return []*types.Repo{{Name: api.RepoName(repoName)}}, nil
 	})
 	db.ReposFunc.SetDefaultReturn(repositories)
 
@@ -225,7 +224,10 @@ func TestGitLabHandler(t *testing.T) {
 	}
 	t.Cleanup(func() { repoupdater.MockEnqueueRepoUpdate = nil })
 
-	if err := handler.handlePushEvent(context.Background(), db, &payload); err != nil {
+	baseURL, err := extsvc.NewCodeHostBaseURL("https://gitlab.sgdev.org")
+	require.NoError(t, err)
+
+	if err := handler.handlePushEvent(context.Background(), db, baseURL, &payload); err != nil {
 		t.Fatal(err)
 	}
 	assert.Equal(t, repoName, updateQueued)
@@ -236,8 +238,15 @@ func TestBitbucketServerHandler(t *testing.T) {
 
 	db := dbmocks.NewMockDB()
 	repositories := dbmocks.NewMockRepoStore()
-	repositories.GetFirstRepoNameByCloneURLFunc.SetDefaultHook(func(ctx context.Context, s string) (api.RepoName, error) {
-		return "bitbucket.sgdev.org/private/test-2020-06-01", nil
+	repositories.ListFunc.SetDefaultHook(func(ctx context.Context, rlo database.ReposListOptions) ([]*types.Repo, error) {
+		require.Equal(t, rlo.ExternalRepos, []api.ExternalRepoSpec{
+			{
+				ID:          "1",
+				ServiceType: "bitbucketServer",
+				ServiceID:   "https://bitbucket.sgdev.org/",
+			},
+		})
+		return []*types.Repo{{Name: api.RepoName(repoName)}}, nil
 	})
 	db.ReposFunc.SetDefaultReturn(repositories)
 
@@ -261,7 +270,10 @@ func TestBitbucketServerHandler(t *testing.T) {
 	}
 	t.Cleanup(func() { repoupdater.MockEnqueueRepoUpdate = nil })
 
-	if err := handler.handlePushEvent(context.Background(), db, &payload); err != nil {
+	baseURL, err := extsvc.NewCodeHostBaseURL("https://bitbucket.sgdev.org")
+	require.NoError(t, err)
+
+	if err := handler.handlePushEvent(context.Background(), db, baseURL, &payload); err != nil {
 		t.Fatal(err)
 	}
 	assert.Equal(t, repoName, updateQueued)
@@ -272,8 +284,15 @@ func TestBitbucketCloudHandler(t *testing.T) {
 
 	db := dbmocks.NewMockDB()
 	repositories := dbmocks.NewMockRepoStore()
-	repositories.GetFirstRepoNameByCloneURLFunc.SetDefaultHook(func(ctx context.Context, s string) (api.RepoName, error) {
-		return "bitbucket.org/sourcegraph-testing/sourcegraph", nil
+	repositories.ListFunc.SetDefaultHook(func(ctx context.Context, rlo database.ReposListOptions) ([]*types.Repo, error) {
+		require.Equal(t, rlo.ExternalRepos, []api.ExternalRepoSpec{
+			{
+				ID:          "{f46afc56-15a7-4579-9429-1b9329ad4c09}",
+				ServiceType: "bitbucketCloud",
+				ServiceID:   "https://bitbucket.org/",
+			},
+		})
+		return []*types.Repo{{Name: api.RepoName(repoName)}}, nil
 	})
 	db.ReposFunc.SetDefaultReturn(repositories)
 
@@ -297,7 +316,10 @@ func TestBitbucketCloudHandler(t *testing.T) {
 	}
 	t.Cleanup(func() { repoupdater.MockEnqueueRepoUpdate = nil })
 
-	if err := handler.handlePushEvent(context.Background(), db, &payload); err != nil {
+	baseURL, err := extsvc.NewCodeHostBaseURL("https://bitbucket.org")
+	require.NoError(t, err)
+
+	if err := handler.handlePushEvent(context.Background(), db, baseURL, &payload); err != nil {
 		t.Fatal(err)
 	}
 	assert.Equal(t, repoName, updateQueued)

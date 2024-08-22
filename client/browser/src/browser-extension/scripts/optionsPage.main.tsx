@@ -9,11 +9,12 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { trimEnd, uniq } from 'lodash'
 import { createRoot } from 'react-dom/client'
 import { from, noop, type Observable, of } from 'rxjs'
-import { catchError, distinctUntilChanged, filter, map, mapTo } from 'rxjs/operators'
+import { catchError, distinctUntilChanged, filter, map } from 'rxjs/operators'
 import type { Optional } from 'utility-types'
 
 import { asError, isDefined } from '@sourcegraph/common'
 import { gql, type GraphQLResult } from '@sourcegraph/http-client'
+import type { BillingCategory, BillingProduct } from '@sourcegraph/shared/src/telemetry'
 import type { TelemetryService } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { setLinkComponent, AnchorLink, useObservable } from '@sourcegraph/wildcard'
 
@@ -21,6 +22,11 @@ import type { CurrentUserResult } from '../../graphql-operations'
 import { fetchSite } from '../../shared/backend/server'
 import { WildcardThemeProvider } from '../../shared/components/WildcardThemeProvider'
 import { initSentry } from '../../shared/sentry'
+import {
+    type ConditionalTelemetryRecorder,
+    ConditionalTelemetryRecorderProvider,
+    noOpTelemetryRecorder,
+} from '../../shared/telemetry'
 import { ConditionalTelemetryService, EventLogger } from '../../shared/tracking/eventLogger'
 import { observeSourcegraphURL, getExtensionVersion, isDefaultSourcegraphUrl } from '../../shared/util/context'
 import { featureFlags } from '../../shared/util/featureFlags'
@@ -90,7 +96,7 @@ const isFullPage = !new URLSearchParams(window.location.search).get('popup')
 
 const validateSourcegraphUrl = (url: string): Observable<string | undefined> =>
     fetchSite(options => createRequestGraphQL(url)(options)).pipe(
-        mapTo(undefined),
+        map(() => undefined),
         catchError(error => {
             const { message } = asError(error)
             // We lose Error type when communicating from the background page
@@ -141,6 +147,31 @@ function useTelemetryService(sourcegraphUrl: string | undefined): TelemetryServi
     return telemetryService
 }
 
+function useTelemetryRecorder(
+    sourcegraphUrl: string | undefined
+): ConditionalTelemetryRecorder<BillingCategory, BillingProduct> {
+    const telemetryRecorder = useMemo(() => {
+        if (!sourcegraphUrl) {
+            return noOpTelemetryRecorder
+        }
+        const telemetryRecorderProvider = new ConditionalTelemetryRecorderProvider(
+            observingSendTelemetry,
+            createRequestGraphQL(sourcegraphUrl)
+        )
+        return telemetryRecorderProvider.getRecorder()
+    }, [sourcegraphUrl])
+
+    useEffect(
+        () => () => {
+            if (telemetryRecorder !== noOpTelemetryRecorder) {
+                telemetryRecorder.unsubscribe()
+            }
+        },
+        [telemetryRecorder]
+    )
+    return telemetryRecorder
+}
+
 const fetchCurrentUser = (
     sourcegraphURL: string
 ): Observable<Pick<NonNullable<CurrentUserResult['currentUser']>, 'settingsURL' | 'siteAdmin'>> => {
@@ -173,6 +204,7 @@ const Options: React.FunctionComponent<React.PropsWithChildren<unknown>> = () =>
     const sourcegraphUrl = useObservable(observingSourcegraphUrl)
     const [previousSourcegraphUrl, setPreviousSourcegraphUrl] = useState(sourcegraphUrl)
     const telemetryService = useTelemetryService(sourcegraphUrl)
+    const telemetryRecorder = useTelemetryRecorder(sourcegraphUrl)
     const previouslyUsedUrls = useObservable(observingPreviouslyUsedUrls)
     const isActivated = useObservable(observingIsActivated)
     const optionFlagsWithValues = useObservable(observingOptionFlagsWithValues)
@@ -246,9 +278,10 @@ const Options: React.FunctionComponent<React.PropsWithChildren<unknown>> = () =>
     const handleToggleActivated = useCallback(
         (isActivated: boolean): void => {
             telemetryService.log(isActivated ? 'BrowserExtensionEnabled' : 'BrowserExtensionDisabled')
+            telemetryRecorder.recordEvent('browserExtension', isActivated ? 'enabled' : 'disabled')
             storage.sync.set({ disableExtension: !isActivated }).catch(console.error)
         },
-        [telemetryService]
+        [telemetryService, telemetryRecorder]
     )
 
     const handleRemovePreviousSourcegraphUrl = useCallback(

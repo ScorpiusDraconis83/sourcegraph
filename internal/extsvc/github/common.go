@@ -996,6 +996,54 @@ func (c *V4Client) GetOpenPullRequestByRefs(ctx context.Context, owner, name, ba
 	return &pr, nil
 }
 
+// GetOpenPullRequestByRefsReduced fetches the pull request associated with the supplied,
+// but only the fields that are required to determine if the PR is open. It does not include
+// the timeline items, participants, labels and commits (and returns empty lists instead).
+func (c *V4Client) GetOpenPullRequestByRefsReduced(ctx context.Context, owner, name, baseRef, headRef string) (*PullRequest, error) {
+	version := c.determineGitHubVersion(ctx)
+	prFragment, err := pullRequestFragmentsSimple(version)
+	if err != nil {
+		return nil, err
+	}
+	var q strings.Builder
+	q.WriteString(prFragment)
+	q.WriteString("query {\n")
+	q.WriteString(fmt.Sprintf("repository(owner: %q, name: %q) {\n",
+		owner, name))
+	q.WriteString(fmt.Sprintf("pullRequests(baseRefName: %q, headRefName: %q, first: 1, states: OPEN) { \n",
+		abbreviateRef(baseRef), abbreviateRef(headRef),
+	))
+	q.WriteString("nodes{ ... pr }\n}\n}\n}")
+
+	var results struct {
+		Repository struct {
+			PullRequests struct {
+				Nodes []*struct {
+					PullRequest
+				}
+			}
+		}
+	}
+
+	err = c.requestGraphQL(ctx, q.String(), nil, &results)
+	if err != nil {
+		return nil, err
+	}
+	if len(results.Repository.PullRequests.Nodes) != 1 {
+		return nil, errors.Errorf("expected 1 pull request, got %d instead", len(results.Repository.PullRequests.Nodes))
+	}
+
+	node := results.Repository.PullRequests.Nodes[0]
+	pr := node.PullRequest
+	// Initialize lists that would otherwise be nil, to match downstream expectations to use the len function.
+	pr.Commits.Nodes = []CommitWithChecks{}
+	pr.Participants = []Actor{}
+	pr.TimelineItems = []TimelineItem{}
+	pr.Labels.Nodes = []Label{}
+
+	return &pr, nil
+}
+
 const createPullRequestCommentMutation = `
 mutation CreatePullRequestComment($input: AddCommentInput!) {
   addComment(input: $input) {
@@ -1503,6 +1551,59 @@ fragment pr on PullRequest {
 }
 `
 
+const pullRequestFragmentsFmtstrSimple = `
+fragment actor on Actor {
+  avatarUrl
+  login
+  url
+}
+
+fragment repo on Repository {
+  id
+  name
+  owner {
+    login
+  }
+}
+
+fragment pr on PullRequest {
+  id
+  title
+  body
+  state
+  url
+  number
+  createdAt
+  updatedAt
+  headRefOid
+  baseRefOid
+  headRefName
+  baseRefName
+  reviewDecision
+  %s
+  author {
+    ...actor
+  }
+  baseRepository {
+    ...repo
+  }
+  headRepository {
+    ...repo
+  }
+}
+`
+
+func pullRequestFragmentsSimple(version *semver.Version) (string, error) {
+	if ghe220Semver.Check(version) {
+		// Don't ask for isDraft for ghe 2.20.
+		return fmt.Sprintf(pullRequestFragmentsFmtstrSimple, ""), nil
+	}
+	if ghe221PlusOrDotComSemver.Check(version) {
+		return fmt.Sprintf(pullRequestFragmentsFmtstrSimple, "isDraft"), nil
+	}
+	return "", errors.Errorf("unsupported version of GitHub: %s", version)
+}
+
 func pullRequestFragments(version *semver.Version) (string, error) {
 	timelineItemTypes, err := timelineItemTypes(version)
 	if err != nil {
@@ -1658,7 +1759,7 @@ func (e OrgNotFoundError) NotFound() bool { return true }
 // IsNotFound reports whether err is a GitHub API error of type NOT_FOUND, the equivalent cached
 // response error, or HTTP 404.
 func IsNotFound(err error) bool {
-	if errors.HasType(err, &RepoNotFoundError{}) || errors.HasType(err, &OrgNotFoundError{}) || errors.HasType(err, ErrPullRequestNotFound(0)) ||
+	if errors.HasType[*RepoNotFoundError](err) || errors.HasType[*OrgNotFoundError](err) || errors.HasType[ErrPullRequestNotFound](err) ||
 		HTTPErrorCode(err) == http.StatusNotFound {
 		return true
 	}
@@ -1805,17 +1906,27 @@ type Repository struct {
 	// https://developer.github.com/changes/2019-12-03-internal-visibility-changes/#repository-visibility-fields
 	Visibility Visibility `json:"visibility,omitempty"`
 
-	// Parent is non-nil for forks and contains details of the parent repository.
-	Parent *ParentRepository `json:",omitempty"`
-
 	// DiskUsageKibibytes is, according to GitHub's docs, in kilobytes, but
 	// empirically it's in kibibytes (meaning: multiples of 1024 bytes, not
 	// 1000).
 	DiskUsageKibibytes int `json:"DiskUsage,omitempty"`
 }
 
-func (r *Repository) SizeBytes() bytesize.Bytes {
-	return bytesize.Bytes(r.DiskUsageKibibytes) * bytesize.KiB
+// PublicRepository is a reduced set of fields from a GitHub repository
+// that corresponds with the fields returned from the "List public repositories"
+// GitHub API endpoint: https://docs.github.com/en/rest/repos/repos?apiVersion=2022-11-28#list-public-repositories
+type PublicRepository struct {
+	ID            string // ID of repository (GitHub GraphQL ID, not GitHub database ID)
+	DatabaseID    int64  // The integer database id
+	NameWithOwner string // Full name of repository ("owner/name")
+	Description   string // Description of repository
+	URL           string // The web URL of this repository ("https://github.com/foo/bar")
+	IsPrivate     bool   // Whether the repository is private
+	IsFork        bool   // Whether the repository is a fork of another repository
+}
+
+func (r *Repository) SizeBytes() bytesize.Size {
+	return bytesize.Size(r.DiskUsageKibibytes) * bytesize.KiB
 }
 
 // ParentRepository is the parent of a GitHub repository.
@@ -1842,11 +1953,6 @@ type restRepositoryPermissions struct {
 	Pull  bool `json:"pull"`
 }
 
-type restParentRepository struct {
-	FullName string `json:"full_name,omitempty"`
-	Fork     bool   `json:"is_fork,omitempty"`
-}
-
 type restRepository struct {
 	ID          string `json:"node_id"` // GraphQL ID
 	DatabaseID  int64  `json:"id"`
@@ -1863,11 +1969,23 @@ type restRepository struct {
 	Forks       int                       `json:"forks_count"`
 	Visibility  string                    `json:"visibility"`
 	Topics      []string                  `json:"topics"`
-	Parent      *restParentRepository     `json:"parent,omitempty"`
 	// DiskUsageKibibytes uses the "size" field which is, according to GitHub's
 	// docs, in kilobytes, but empirically it's in kibibytes (meaning:
 	// multiples of 1024 bytes, not 1000).
 	DiskUsageKibibytes int `json:"size"`
+}
+
+// restPublicRepository is a reduced set of fields from a GitHub repository
+// that corresponds with the fields returned from the "List public repositories"
+// GitHub API endpoint: https://docs.github.com/en/rest/repos/repos?apiVersion=2022-11-28#list-public-repositories
+type restPublicRepository struct {
+	ID          string `json:"node_id"` // GraphQL ID
+	DatabaseID  int64  `json:"id"`
+	FullName    string `json:"full_name"` // same as nameWithOwner
+	Description string `json:"description"`
+	HTMLURL     string `json:"html_url"` // web URL
+	Private     bool   `json:"private"`
+	Fork        bool   `json:"fork"`
 }
 
 // getRepositoryFromAPI attempts to fetch a repository from the GitHub API without use of the redis cache.
@@ -1913,11 +2031,20 @@ func convertRestRepo(restRepo restRepository) *Repository {
 		DiskUsageKibibytes: restRepo.DiskUsageKibibytes,
 	}
 
-	if restRepo.Parent != nil {
-		repo.Parent = &ParentRepository{
-			NameWithOwner: restRepo.Parent.FullName,
-			IsFork:        restRepo.Parent.Fork,
-		}
+	return &repo
+}
+
+// convertRestPublicRepo converts public repo information returned by the rest API
+// to a standard format.
+func convertRestPublicRepo(restPublicRepo restPublicRepository) *PublicRepository {
+	repo := PublicRepository{
+		ID:            restPublicRepo.ID,
+		DatabaseID:    restPublicRepo.DatabaseID,
+		NameWithOwner: restPublicRepo.FullName,
+		Description:   restPublicRepo.Description,
+		URL:           restPublicRepo.HTMLURL,
+		IsPrivate:     restPublicRepo.Private,
+		IsFork:        restPublicRepo.Fork,
 	}
 
 	return &repo

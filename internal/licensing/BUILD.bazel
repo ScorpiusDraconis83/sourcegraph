@@ -5,7 +5,6 @@ go_library(
     name = "licensing",
     srcs = [
         "codygateway.go",
-        "conf.go",
         "constants.go",
         "data.go",
         "doc.go",
@@ -18,20 +17,19 @@ go_library(
         "user_count.go",
     ],
     importpath = "github.com/sourcegraph/sourcegraph/internal/licensing",
+    tags = [TAG_PLATFORM_SOURCE],
     visibility = ["//:__subpackages__"],
     deps = [
-        "//cmd/frontend/envvar",
         "//internal/conf",
         "//internal/conf/conftypes",
+        "//internal/dotcom",
         "//internal/env",
         "//internal/errcode",
         "//internal/license",
         "//internal/redispool",
         "//lib/errors",
         "@com_github_gomodule_redigo//redis",
-        "@com_github_sourcegraph_log//:log",
         "@org_golang_x_crypto//ssh",
-        "@org_golang_x_exp//slices",
         "@org_uber_go_atomic//:atomic",
     ],
 )
@@ -49,6 +47,7 @@ go_test(
     ],
     embed = [":licensing"],
     tags = [
+        TAG_PLATFORM_SOURCE,
         "requires-network",
     ],
     deps = [

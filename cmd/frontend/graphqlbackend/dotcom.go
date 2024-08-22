@@ -5,7 +5,6 @@ import (
 
 	"github.com/graph-gophers/graphql-go"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/gqlutil"
 )
 
@@ -32,6 +31,7 @@ type DotcomResolver interface {
 	ProductLicenseByID(ctx context.Context, id graphql.ID) (ProductLicense, error)
 	ProductSubscriptionByID(ctx context.Context, id graphql.ID) (ProductSubscription, error)
 	CodyGatewayDotcomUserByToken(context.Context, *CodyGatewayUsersByAccessTokenArgs) (CodyGatewayUser, error)
+	CodyGatewayRateLimitStatusByUserName(context.Context, *CodyGatewayRateLimitStatusByUserNameArgs) (*[]RateLimitStatus, error)
 }
 
 // ProductSubscription is the interface for the GraphQL type ProductSubscription.
@@ -41,7 +41,7 @@ type ProductSubscription interface {
 	Name() string
 	Account(context.Context) (*UserResolver, error)
 	ActiveLicense(context.Context) (ProductLicense, error)
-	ProductLicenses(context.Context, *graphqlutil.ConnectionArgs) (ProductLicenseConnection, error)
+	ProductLicenses(context.Context, *gqlutil.ConnectionArgs) (ProductLicenseConnection, error)
 	CodyGatewayAccess() CodyGatewayAccess
 	CreatedAt() gqlutil.DateTime
 	IsArchived() bool
@@ -76,7 +76,7 @@ type ProductSubscriptionArgs struct {
 }
 
 type ProductSubscriptionsArgs struct {
-	graphqlutil.ConnectionArgs
+	gqlutil.ConnectionArgs
 	Account *graphql.ID
 	Query   *string
 }
@@ -86,7 +86,7 @@ type ProductSubscriptionsArgs struct {
 type ProductSubscriptionConnection interface {
 	Nodes(context.Context) ([]ProductSubscription, error)
 	TotalCount(context.Context) (int32, error)
-	PageInfo(context.Context) (*graphqlutil.PageInfo, error)
+	PageInfo(context.Context) (*gqlutil.PageInfo, error)
 }
 
 // ProductLicense is the interface for the GraphQL type ProductLicense.
@@ -112,7 +112,7 @@ type ProductLicenseInput struct {
 }
 
 type ProductLicensesArgs struct {
-	graphqlutil.ConnectionArgs
+	gqlutil.ConnectionArgs
 	LicenseKeySubstring   *string
 	ProductSubscriptionID *graphql.ID
 }
@@ -121,7 +121,7 @@ type ProductLicensesArgs struct {
 type ProductLicenseConnection interface {
 	Nodes(context.Context) ([]ProductLicense, error)
 	TotalCount(context.Context) (int32, error)
-	PageInfo(context.Context) (*graphqlutil.PageInfo, error)
+	PageInfo(context.Context) (*gqlutil.PageInfo, error)
 }
 
 type ProductSubscriptionByAccessTokenArgs struct {
@@ -157,6 +157,10 @@ type UpdateCodyGatewayAccessInput struct {
 
 type CodyGatewayUsersByAccessTokenArgs struct {
 	Token string
+}
+
+type CodyGatewayRateLimitStatusByUserNameArgs struct {
+	Username string
 }
 
 type CodyGatewayUser interface {

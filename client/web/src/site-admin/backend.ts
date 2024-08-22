@@ -1,10 +1,16 @@
-import type { QueryResult } from '@apollo/client'
+import type { MutationTuple, QueryResult } from '@apollo/client'
 import { parse as parseJSONC } from 'jsonc-parser'
-import type { Observable } from 'rxjs'
-import { map, mapTo, tap } from 'rxjs/operators'
+import { lastValueFrom, type Observable } from 'rxjs'
+import { map, tap } from 'rxjs/operators'
 
 import { resetAllMemoizationCaches } from '@sourcegraph/common'
-import { createInvalidGraphQLMutationResponseError, dataOrThrowErrors, gql, useQuery } from '@sourcegraph/http-client'
+import {
+    createInvalidGraphQLMutationResponseError,
+    dataOrThrowErrors,
+    gql,
+    useMutation,
+    useQuery,
+} from '@sourcegraph/http-client'
 import type { Settings } from '@sourcegraph/shared/src/settings/settings'
 
 import { mutateGraphQL, queryGraphQL, requestGraphQL } from '../backend/graphql'
@@ -17,10 +23,15 @@ import type {
     CreateUserResult,
     DeleteOrganizationResult,
     DeleteOrganizationVariables,
+    DeleteWebhookResult,
+    DeleteWebhookVariables,
     ExternalServiceKind,
     FeatureFlagFields,
     FeatureFlagsResult,
     FeatureFlagsVariables,
+    GitserverFields,
+    GitserversResult,
+    GitserversVariables,
     OrganizationsConnectionFields,
     OrganizationsResult,
     OrganizationsVariables,
@@ -54,9 +65,6 @@ import type {
     WebhookPageHeaderVariables,
     WebhooksListResult,
     WebhooksListVariables,
-    GitserversVariables,
-    GitserversResult,
-    GitserverFields,
 } from '../graphql-operations'
 import { accessTokenFragment } from '../settings/tokens/AccessTokenNode'
 
@@ -66,7 +74,7 @@ import { WEBHOOK_LOGS_BY_ID } from './webhooks/backend'
  * Fetches all organizations.
  */
 export function fetchAllOrganizations(args: {
-    first?: number
+    first?: number | null
     query?: string
 }): Observable<OrganizationsConnectionFields> {
     return requestGraphQL<OrganizationsResult, OrganizationsVariables>(
@@ -112,7 +120,6 @@ const mirrorRepositoryInfoFieldsFragment = gql`
     fragment MirrorRepositoryInfoFields on MirrorRepositoryInfo {
         cloned
         cloneInProgress
-        cloneProgress @include(if: $displayCloneProgress)
         updatedAt
         nextSyncAt
         isCorrupted
@@ -150,7 +157,6 @@ const siteAdminRepositoryFieldsFragment = gql`
         externalRepository {
             ...ExternalRepositoryFields
         }
-        embeddingExists
     }
 `
 export const REPOSITORIES_QUERY = gql`
@@ -159,18 +165,15 @@ export const REPOSITORIES_QUERY = gql`
         $last: Int
         $after: String
         $before: String
-        $query: String
-        $indexed: Boolean
-        $notIndexed: Boolean
-        $embedded: Boolean
-        $notEmbedded: Boolean
-        $failedFetch: Boolean
-        $corrupted: Boolean
-        $cloneStatus: CloneStatus
-        $orderBy: RepositoryOrderBy
-        $descending: Boolean
-        $externalService: ID
-        $displayCloneProgress: Boolean = false
+        $query: String = ""
+        $indexed: Boolean = true
+        $notIndexed: Boolean = true
+        $failedFetch: Boolean = false
+        $corrupted: Boolean = false
+        $cloneStatus: CloneStatus = null
+        $orderBy: RepositoryOrderBy = REPOSITORY_NAME
+        $descending: Boolean = false
+        $externalService: ID = null
     ) {
         repositories(
             first: $first
@@ -180,8 +183,6 @@ export const REPOSITORIES_QUERY = gql`
             query: $query
             indexed: $indexed
             notIndexed: $notIndexed
-            embedded: $embedded
-            notEmbedded: $notEmbedded
             failedFetch: $failedFetch
             corrupted: $corrupted
             cloneStatus: $cloneStatus
@@ -317,20 +318,22 @@ export const CHECK_MIRROR_REPOSITORY_CONNECTION = gql`
     }
 `
 
-export function scheduleRepositoryPermissionsSync(args: { repository: Scalars['ID'] }): Observable<void> {
-    return requestGraphQL<ScheduleRepositoryPermissionsSyncResult, ScheduleRepositoryPermissionsSyncVariables>(
-        gql`
-            mutation ScheduleRepositoryPermissionsSync($repository: ID!) {
-                scheduleRepositoryPermissionsSync(repository: $repository) {
-                    alwaysNil
+export function scheduleRepositoryPermissionsSync(args: { repository: Scalars['ID'] }): Promise<void> {
+    return lastValueFrom(
+        requestGraphQL<ScheduleRepositoryPermissionsSyncResult, ScheduleRepositoryPermissionsSyncVariables>(
+            gql`
+                mutation ScheduleRepositoryPermissionsSync($repository: ID!) {
+                    scheduleRepositoryPermissionsSync(repository: $repository) {
+                        alwaysNil
+                    }
                 }
-            }
-        `,
-        args
-    ).pipe(
-        map(dataOrThrowErrors),
-        tap(() => resetAllMemoizationCaches()),
-        mapTo(undefined)
+            `,
+            args
+        ).pipe(
+            map(dataOrThrowErrors),
+            tap(() => resetAllMemoizationCaches()),
+            map(() => undefined)
+        )
     )
 }
 
@@ -344,7 +347,6 @@ export const RECLONE_REPOSITORY_MUTATION = gql`
 
 /**
  * Fetches the site and its configuration.
- *
  * @returns Observable that emits the site
  */
 export function fetchSite(): Observable<SiteResult['site']> {
@@ -480,7 +482,6 @@ export function fetchAllConfigAndSettings(): Observable<AllConfig> {
 
 /**
  * Updates the site's configuration.
- *
  * @returns An observable indicating whether or not a service restart is
  * required for the update to be applied.
  */
@@ -520,19 +521,21 @@ export function reloadSite(): Observable<void> {
     )
 }
 
-export function setUserIsSiteAdmin(userID: Scalars['ID'], siteAdmin: boolean): Observable<void> {
-    return requestGraphQL<SetUserIsSiteAdminResult, SetUserIsSiteAdminVariables>(
-        gql`
-            mutation SetUserIsSiteAdmin($userID: ID!, $siteAdmin: Boolean!) {
-                setUserIsSiteAdmin(userID: $userID, siteAdmin: $siteAdmin) {
-                    alwaysNil
+export function setUserIsSiteAdmin(userID: Scalars['ID'], siteAdmin: boolean): Promise<void> {
+    return lastValueFrom(
+        requestGraphQL<SetUserIsSiteAdminResult, SetUserIsSiteAdminVariables>(
+            gql`
+                mutation SetUserIsSiteAdmin($userID: ID!, $siteAdmin: Boolean!) {
+                    setUserIsSiteAdmin(userID: $userID, siteAdmin: $siteAdmin) {
+                        alwaysNil
+                    }
                 }
-            }
-        `,
-        { userID, siteAdmin }
-    ).pipe(
-        map(dataOrThrowErrors),
-        map(() => undefined)
+            `,
+            { userID, siteAdmin }
+        ).pipe(
+            map(dataOrThrowErrors),
+            map(() => undefined)
+        )
     )
 }
 
@@ -572,17 +575,17 @@ export function createUser(username: string, email: string | undefined): Observa
 }
 
 export function deleteOrganization(organization: Scalars['ID']): Promise<void> {
-    return requestGraphQL<DeleteOrganizationResult, DeleteOrganizationVariables>(
-        gql`
-            mutation DeleteOrganization($organization: ID!) {
-                deleteOrganization(organization: $organization) {
-                    alwaysNil
+    return lastValueFrom(
+        requestGraphQL<DeleteOrganizationResult, DeleteOrganizationVariables>(
+            gql`
+                mutation DeleteOrganization($organization: ID!) {
+                    deleteOrganization(organization: $organization) {
+                        alwaysNil
+                    }
                 }
-            }
-        `,
-        { organization }
-    )
-        .pipe(
+            `,
+            { organization }
+        ).pipe(
             map(dataOrThrowErrors),
             map(data => {
                 if (!data.deleteOrganization) {
@@ -590,7 +593,7 @@ export function deleteOrganization(organization: Scalars['ID']): Promise<void> {
                 }
             })
         )
-        .toPromise()
+    )
 }
 
 export const SITE_UPDATE_CHECK = gql`
@@ -653,13 +656,18 @@ export const SET_AUTO_UPGRADE = gql`
 `
 
 /**
- * Fetches all out-of-band migrations.
+ * Fetches out-of-band migrations.
+ *
+ * If excludeDeprecatedBeforeFirstVersion is true, exclude migrations which have not been deprecated,
+ * or were not deprecated before the Sourcegraph init version.
  */
-export function fetchAllOutOfBandMigrations(): Observable<OutOfBandMigrationFields[]> {
+export function fetchOutOfBandMigrations(
+    excludeDeprecatedBeforeFirstVersion?: boolean
+): Observable<OutOfBandMigrationFields[]> {
     return requestGraphQL<OutOfBandMigrationsResult, OutOfBandMigrationsVariables>(
         gql`
-            query OutOfBandMigrations {
-                outOfBandMigrations {
+            query OutOfBandMigrations($excludeDeprecatedBeforeFirstVersion: Boolean = false) {
+                outOfBandMigrations(ExcludeDeprecatedBeforeFirstVersion: $excludeDeprecatedBeforeFirstVersion) {
                     ...OutOfBandMigrationFields
                 }
             }
@@ -681,7 +689,8 @@ export function fetchAllOutOfBandMigrations(): Observable<OutOfBandMigrationFiel
                     created
                 }
             }
-        `
+        `,
+        { excludeDeprecatedBeforeFirstVersion }
     ).pipe(
         map(dataOrThrowErrors),
         map(data => data.outOfBandMigrations)
@@ -745,7 +754,6 @@ export const STATUS_AND_REPO_STATS = gql`
             failedFetch
             corrupted
             indexed
-            embedded
         }
         statusMessages {
             ... on GitUpdatesDisabled {
@@ -791,7 +799,7 @@ export const STATUS_AND_REPO_STATS = gql`
     }
 `
 
-export function queryAccessTokens(args: { first?: number }): Observable<SiteAdminAccessTokenConnectionFields> {
+export function queryAccessTokens(args: { first?: number | null }): Observable<SiteAdminAccessTokenConnectionFields> {
     return requestGraphQL<SiteAdminAccessTokensResult, SiteAdminAccessTokensVariables>(
         gql`
             query SiteAdminAccessTokens($first: Int) {
@@ -877,14 +885,6 @@ export const WEBHOOK_BY_ID = gql`
     }
 `
 
-export const DELETE_WEBHOOK = gql`
-    mutation DeleteWebhook($hookID: ID!) {
-        deleteWebhook(id: $hookID) {
-            alwaysNil
-        }
-    }
-`
-
 export const WEBHOOK_PAGE_HEADER = gql`
     query WebhookPageHeader {
         webhooks {
@@ -930,14 +930,11 @@ export const useWebhookQuery = (id: string): QueryResult<WebhookByIdResult, Webh
 
 export const useWebhookLogsConnection = (
     webhookID: string,
-    first: number,
     onlyErrors: boolean
 ): UseShowMorePaginationResult<WebhookLogsByWebhookIDResult, WebhookLogFields> =>
     useShowMorePagination<WebhookLogsByWebhookIDResult, WebhookLogsByWebhookIDVariables, WebhookLogFields>({
         query: WEBHOOK_LOGS_BY_ID,
         variables: {
-            first: first ?? 20,
-            after: null,
             onlyErrors,
             onlyUnmatched: false,
             webhookID,
@@ -1001,14 +998,8 @@ const siteAdminPackageFieldsFragment = gql`
 `
 
 export const PACKAGES_QUERY = gql`
-    query Packages(
-        $kind: PackageRepoReferenceKind
-        $name: String
-        $first: Int!
-        $after: String
-        $displayCloneProgress: Boolean = false
-    ) {
-        packageRepoReferences(kind: $kind, name: $name, first: $first, after: $after) {
+    query Packages($kind: PackageRepoReferenceKind = null, $query: String = "", $first: Int, $after: String) {
+        packageRepoReferences(kind: $kind, name: $query, first: $first, after: $after) {
             nodes {
                 ...SiteAdminPackageFields
             }
@@ -1089,3 +1080,32 @@ export const useGitserversConnection = (): UseShowMorePaginationResult<Gitserver
             return gitservers
         },
     })
+
+export const WEBHOOK_EXTERNAL_SERVICES = gql`
+    query WebhookExternalServices {
+        externalServices {
+            nodes {
+                ...WebhookExternalServiceFields
+            }
+        }
+    }
+
+    fragment WebhookExternalServiceFields on ExternalService {
+        id
+        kind
+        displayName
+        url
+    }
+`
+
+const DELETE_WEBHOOK = gql`
+    mutation DeleteWebhook($id: ID!) {
+        deleteWebhook(id: $id) {
+            alwaysNil
+        }
+    }
+`
+
+export function useDeleteWebhook(): MutationTuple<DeleteWebhookResult, DeleteWebhookVariables> {
+    return useMutation<DeleteWebhookResult, DeleteWebhookVariables>(DELETE_WEBHOOK)
+}

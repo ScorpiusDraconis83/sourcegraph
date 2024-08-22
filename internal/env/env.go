@@ -97,7 +97,7 @@ func Get(name, defaultValue, description string) string {
 
 	e := envflag{description: description, value: value}
 	if existing, ok := env[name]; ok && existing != e {
-		panic(fmt.Sprintf("env var %q already registered with a different description or value", name))
+		panic(fmt.Sprintf("env var %q already registered with a different description or value\n\tBefore: %q\n\tAfter: %q", name, existing, e))
 	}
 	env[name] = e
 
@@ -196,15 +196,4 @@ func HandleHelpFlag() {
 			os.Exit(0)
 		}
 	}
-}
-
-// HackClearEnvironCache can be used to clear the environ cache if os.Setenv was called and you want
-// subsequent env.Get calls to return the new value. It is a hack but useful because some env.Get
-// calls are hard to remove from static init time, and the ones we've moved to post-init we want to
-// be able to use the default values we set in package singleprogram.
-//
-// TODO(sqs): TODO(single-binary): this indicates our initialization order could be better, hence this
-// is labeled as a hack.
-func HackClearEnvironCache() {
-	environ = nil
 }

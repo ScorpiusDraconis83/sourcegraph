@@ -7,7 +7,6 @@ import (
 	"github.com/graph-gophers/graphql-go/relay"
 
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/actor"
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/auth"
@@ -500,7 +499,12 @@ func (r *searchContextResolver) Repositories(ctx context.Context) ([]graphqlback
 
 	searchContextRepositories := make([]graphqlbackend.SearchContextRepositoryRevisionsResolver, len(repoRevs))
 	for idx, repoRev := range repoRevs {
-		searchContextRepositories[idx] = &searchContextRepositoryRevisionsResolver{graphqlbackend.NewRepositoryResolver(r.db, gitserver.NewClient("graphql.searchcontext.repositories"), repoRev.Repo.ToRepo()), repoRev.Revisions}
+		searchContextRepositories[idx] = &searchContextRepositoryRevisionsResolver{graphqlbackend.NewMinimalRepositoryResolver(
+			r.db,
+			gitserver.NewClient("graphql.searchcontext.repositories"),
+			repoRev.Repo.ID,
+			repoRev.Repo.Name,
+		), repoRev.Revisions}
 	}
 	return searchContextRepositories, nil
 }
@@ -524,12 +528,12 @@ func (s *searchContextConnectionResolver) TotalCount() int32 {
 	return s.totalCount
 }
 
-func (s *searchContextConnectionResolver) PageInfo() *graphqlutil.PageInfo {
+func (s *searchContextConnectionResolver) PageInfo() *gqlutil.PageInfo {
 	if len(s.searchContexts) == 0 || !s.hasNextPage {
-		return graphqlutil.HasNextPage(false)
+		return gqlutil.HasNextPage(false)
 	}
 	// The after value (offset) for the next page is computed from the current after value + the number of retrieved search contexts
-	return graphqlutil.NextPageCursor(marshalSearchContextCursor(s.afterCursor + int32(len(s.searchContexts))))
+	return gqlutil.NextPageCursor(marshalSearchContextCursor(s.afterCursor + int32(len(s.searchContexts))))
 }
 
 type searchContextRepositoryRevisionsResolver struct {

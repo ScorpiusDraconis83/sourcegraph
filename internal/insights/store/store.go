@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/lib/pq"
 	"strconv"
 	"strings"
 	"time"
@@ -30,7 +31,7 @@ type Interface interface {
 	RecordSeriesPointsAndRecordingTimes(ctx context.Context, pts []RecordSeriesPointArgs, recordingTimes types.InsightSeriesRecordingTimes) error
 	SetInsightSeriesRecordingTimes(ctx context.Context, recordingTimes []types.InsightSeriesRecordingTimes) error
 	GetInsightSeriesRecordingTimes(ctx context.Context, id int, opts SeriesPointsOpts) (types.InsightSeriesRecordingTimes, error)
-	LoadAggregatedIncompleteDatapoints(ctx context.Context, seriesID int) (results []IncompleteDatapoint, err error)
+	LoadIncompleteDatapoints(ctx context.Context, seriesID int) (results []IncompleteDatapoint, err error)
 	AddIncompleteDatapoint(ctx context.Context, input AddIncompleteDatapointInput) error
 	GetAllDataForInsightViewID(ctx context.Context, opts ExportOpts) ([]SeriesPointForExport, error)
 }
@@ -828,26 +829,38 @@ func scanAll(rows *sql.Rows, scan scanFunc) (err error) {
 
 var quote = sqlf.Sprintf
 
-// LoadAggregatedIncompleteDatapoints returns incomplete datapoints for a given series aggregated for each reason and time. This will effectively
-// remove any repository granularity information from the result.
-func (s *Store) LoadAggregatedIncompleteDatapoints(ctx context.Context, seriesID int) (results []IncompleteDatapoint, err error) {
+// LoadIncompleteDatapoints returns incomplete datapoints for a given series aggregated for each reason and time. This will effectively
+// remove any repository granularity information from the result, but the repoIds are retained as a list.
+func (s *Store) LoadIncompleteDatapoints(ctx context.Context, seriesID int) (results []IncompleteDatapoint, err error) {
 	if seriesID == 0 {
 		return nil, errors.New("invalid seriesID")
 	}
 
-	q := "select reason, time from insight_series_incomplete_points where series_id = %s group by reason, time;"
+	q := "select reason, time, ARRAY_AGG(repo_id) from insight_series_incomplete_points where series_id = %s group by reason, time;"
 	rows, err := s.Query(ctx, sqlf.Sprintf(q, seriesID))
 	if err != nil {
 		return nil, err
 	}
 	return results, scanAll(rows, func(s scanner) (err error) {
 		var tmp IncompleteDatapoint
+		var repoIds []sql.NullInt64
 		if err = rows.Scan(
 			&tmp.Reason,
-			&tmp.Time); err != nil {
+			&tmp.Time,
+			pq.Array(&repoIds)); err != nil {
 			return err
 		}
-		results = append(results, tmp)
+		mappedRepoIds := make([]int, len(repoIds))
+		for i, repoId := range repoIds {
+			if repoId.Valid {
+				mappedRepoIds[i] = int(repoId.Int64)
+			}
+		}
+		results = append(results, IncompleteDatapoint{
+			Reason:  tmp.Reason,
+			Time:    tmp.Time,
+			RepoIds: mappedRepoIds,
+		})
 		return nil
 	})
 }
@@ -865,9 +878,10 @@ func (s *Store) AddIncompleteDatapoint(ctx context.Context, input AddIncompleteD
 }
 
 type IncompleteDatapoint struct {
-	Reason IncompleteReason
-	RepoId *int
-	Time   time.Time
+	Reason  IncompleteReason
+	RepoId  *int
+	Time    time.Time
+	RepoIds []int
 }
 
 type IncompleteReason string
@@ -886,6 +900,7 @@ type SeriesPointForExport struct {
 	SeriesQuery      string
 	RecordingTime    time.Time
 	RepoName         *string
+	RepoId           *api.RepoID
 	Value            int
 	Capture          *string
 }
@@ -904,14 +919,8 @@ func (s *Store) GetAllDataForInsightViewID(ctx context.Context, opts ExportOpts)
 	if err != nil {
 		return nil, errors.Wrap(err, "GetUnauthorizedRepoIDs")
 	}
-	excludedRepoIDs := make([]*sqlf.Query, 0)
-	for _, repoID := range denylist {
-		excludedRepoIDs = append(excludedRepoIDs, sqlf.Sprintf("%d", repoID))
-	}
+
 	var preds []*sqlf.Query
-	if len(excludedRepoIDs) > 0 {
-		preds = append(preds, sqlf.Sprintf("sp.repo_id not in (%s)", sqlf.Join(excludedRepoIDs, ",")))
-	}
 	if len(opts.IncludeRepoRegex) > 0 {
 		includePreds := []*sqlf.Query{}
 		for _, regex := range opts.IncludeRepoRegex {
@@ -952,6 +961,7 @@ func (s *Store) GetAllDataForInsightViewID(ctx context.Context, opts ExportOpts)
 			&tmp.SeriesQuery,
 			&tmp.RecordingTime,
 			&tmp.RepoName,
+			&tmp.RepoId,
 			&tmp.Value,
 			&tmp.Capture,
 		); err != nil {
@@ -976,11 +986,44 @@ func (s *Store) GetAllDataForInsightViewID(ctx context.Context, opts ExportOpts)
 		return nil, errors.Wrap(err, "fetching code insights data")
 	}
 
+	// 🚨 SECURITY: The function below filters out repositories that a user should not have access to.
+	// This operation was previously done via the SQL predicates, but to enable customers with more than
+	// 65535 repositories we need to run this filter in the application layer.
+	results = FilterSeriesPoints(denylist, results)
+
 	return results, nil
 }
 
+func FilterSeriesPoints(denyList []api.RepoID, points []SeriesPointForExport) []SeriesPointForExport {
+	// If there is nothing to filter, then return early. This skips the assignment in the later for-loop.
+	if len(denyList) == 0 {
+		return points
+	}
+	// We turn the denyList into a map to ensure O(n) time complexity
+	denyMap := make(map[api.RepoID]struct{})
+	for _, repoID := range denyList {
+		denyMap[repoID] = struct{}{}
+	}
+	// Based on https://stackoverflow.com/a/59051095
+	n := 0
+	for _, x := range points {
+		// 🚨 SECURITY: Points that have no RepoId must only be visible to users who have no excluded repositories.
+		// See https://github.com/sourcegraph/sourcegraph/pull/61580#discussion_r1552271816 for more details.
+		if x.RepoId != nil && !isDenied(*x.RepoId, denyMap) {
+			points[n] = x
+			n++
+		}
+	}
+	return points[:n]
+}
+
+func isDenied(id api.RepoID, denyMap map[api.RepoID]struct{}) bool {
+	_, ok := denyMap[id]
+	return ok
+}
+
 const exportCodeInsightsDataSql = `
-select iv.title, ivs.label, i.query, isrt.recording_time, rn.name, coalesce(sp.value, 0) as value, sp.capture
+select iv.title, ivs.label, i.query, isrt.recording_time, rn.name, sp.repo_id, coalesce(sp.value, 0) as value, sp.capture
 from %s isrt
     join insight_series i on i.id = isrt.insight_series_id
     join insight_view_series ivs ON i.id = ivs.insight_series_id

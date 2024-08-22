@@ -3,11 +3,13 @@ package gitresolvers
 import (
 	"context"
 	"fmt"
+	"io"
 	stdpath "path"
 	"strings"
 	"time"
 
 	"github.com/sourcegraph/sourcegraph/internal/api"
+	"github.com/sourcegraph/sourcegraph/internal/codeintel/core"
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/resolvers"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
 )
@@ -41,30 +43,42 @@ func NewGitTreeEntryResolver(commit resolvers.GitCommitResolver, path string, is
 	}
 }
 
-func (r *treeEntryResolver) Repository() resolvers.RepositoryResolver          { return r.commit.Repository() }
-func (r *treeEntryResolver) Commit() resolvers.GitCommitResolver               { return r.commit }
-func (r *treeEntryResolver) Path() string                                      { return r.path }
-func (r *treeEntryResolver) Name() string                                      { return stdpath.Base(r.path) }
-func (r *treeEntryResolver) URL() string                                       { return r.commit.URI() + r.uriSuffix }
-func (r *treeEntryResolver) RecordID() string                                  { return r.path }
-func (r *treeEntryResolver) ToGitTree() (resolvers.GitTreeEntryResolver, bool) { return r, r.isDir }
-func (r *treeEntryResolver) ToGitBlob() (resolvers.GitTreeEntryResolver, bool) { return r, !r.isDir }
+func (r *treeEntryResolver) Repository() resolvers.RepositoryResolver     { return r.commit.Repository() }
+func (r *treeEntryResolver) Commit() resolvers.GitCommitResolver          { return r.commit }
+func (r *treeEntryResolver) Path() string                                 { return r.path }
+func (r *treeEntryResolver) Name() string                                 { return stdpath.Base(r.path) }
+func (r *treeEntryResolver) URL() string                                  { return r.commit.URI() + r.uriSuffix }
+func (r *treeEntryResolver) RecordID() string                             { return r.path }
+func (r *treeEntryResolver) ToGitTree() (resolvers.GitBlobResolver, bool) { return r, r.isDir }
+func (r *treeEntryResolver) ToGitBlob() (resolvers.GitTreeResolver, bool) { return r, !r.isDir }
 
 func (r *treeEntryResolver) Content(ctx context.Context, args *resolvers.GitTreeContentPageArgs) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	content, err := r.gitserverClient.ReadFile(
-		ctx,
-		api.RepoName(r.commit.Repository().Name()), // repository name
-		api.CommitID(r.commit.OID()),               // commit oid
-		r.path,                                     // path
-	)
+	content, err := GetFullContents(ctx,
+		r.gitserverClient,
+		api.RepoName(r.Repository().Name()),
+		api.CommitID(r.commit.OID()),
+		core.NewRepoRelPathUnchecked(r.path))
 	if err != nil {
 		return "", err
 	}
 
 	return joinSelection(strings.Split(string(content), "\n"), args.StartLine, args.EndLine), nil
+}
+
+func GetFullContents(ctx context.Context, gitserverClient gitserver.Client, repoName api.RepoName, commit api.CommitID, path core.RepoRelPath) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	fr, err := gitserverClient.NewFileReader(ctx, repoName, commit, path.RawValue())
+	if err != nil {
+		return nil, err
+	}
+	defer fr.Close()
+	content, err := io.ReadAll(fr)
+	if err != nil {
+		return nil, err
+	}
+	return content, nil
 }
 
 func joinSelection(lines []string, startLine, endLine *int32) string {

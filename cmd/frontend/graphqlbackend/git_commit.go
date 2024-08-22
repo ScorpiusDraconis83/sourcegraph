@@ -2,6 +2,7 @@ package graphqlbackend
 
 import (
 	"context"
+	"io"
 	"io/fs"
 	"net/url"
 	"os"
@@ -14,13 +15,13 @@ import (
 
 	"github.com/sourcegraph/log"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/backend"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/externallink"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/backend"
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver/gitdomain"
+	"github.com/sourcegraph/sourcegraph/internal/gqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/trace"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
@@ -91,8 +92,17 @@ func (r *GitCommitResolver) resolveCommit(ctx context.Context) (*gitdomain.Commi
 			return
 		}
 
-		opts := gitserver.ResolveRevisionOptions{}
-		r.commit, r.commitErr = r.gitserverClient.GetCommit(ctx, r.gitRepo, api.CommitID(r.oid), opts)
+		r.commit, r.commitErr = r.gitserverClient.GetCommit(ctx, r.gitRepo, api.CommitID(r.oid))
+		if r.commitErr != nil && errors.HasType[*gitdomain.RevisionNotFoundError](r.commitErr) {
+			// If the commit is not found, attempt to do a ensure revision call.
+			_, err := r.gitserverClient.ResolveRevision(ctx, r.gitRepo, string(r.oid), gitserver.ResolveRevisionOptions{EnsureRevision: true})
+			if err != nil {
+				r.logger.Error("failed to resolve commit", log.Error(err), log.String("oid", string(r.oid)))
+			} else {
+				// Try again to resolve the commit.
+				r.commit, r.commitErr = r.gitserverClient.GetCommit(ctx, r.gitRepo, api.CommitID(r.oid))
+			}
+		}
 	})
 	return r.commit, r.commitErr
 }
@@ -170,9 +180,6 @@ func (r *GitCommitResolver) Subject(ctx context.Context) (string, error) {
 }
 
 func (r *GitCommitResolver) Body(ctx context.Context) (*string, error) {
-	if r.repoResolver.isPerforceDepot(ctx) {
-		return nil, nil
-	}
 
 	commit, err := r.resolveCommit(ctx)
 	if err != nil {
@@ -180,6 +187,10 @@ func (r *GitCommitResolver) Body(ctx context.Context) (*string, error) {
 	}
 
 	body := commit.Message.Body()
+	if r.repoResolver.isPerforceDepot(ctx) {
+		return maybeTransformP4Body(body), nil
+	}
+
 	if body == "" {
 		return nil, nil
 	}
@@ -215,12 +226,11 @@ func (r *GitCommitResolver) CanonicalURL() string {
 }
 
 func (r *GitCommitResolver) ExternalURLs(ctx context.Context) ([]*externallink.Resolver, error) {
-	repo, err := r.repoResolver.repo(ctx)
+	linker, err := r.repoResolver.getLinker(ctx)
 	if err != nil {
 		return nil, err
 	}
-
-	return externallink.Commit(ctx, r.db, repo, api.CommitID(r.oid))
+	return linker.Commit(api.CommitID(r.oid)), nil
 }
 
 type TreeArgs struct {
@@ -312,16 +322,33 @@ func (*rootTreeFileInfo) Size() int64        { return 0 }
 func (*rootTreeFileInfo) Sys() any           { return nil }
 
 func (r *GitCommitResolver) FileNames(ctx context.Context) ([]string, error) {
-	return r.gitserverClient.LsFiles(ctx, r.gitRepo, api.CommitID(r.oid))
-}
-
-func (r *GitCommitResolver) Languages(ctx context.Context) ([]string, error) {
-	repo, err := r.repoResolver.repo(ctx)
+	it, err := r.gitserverClient.ReadDir(ctx, r.gitRepo, api.CommitID(r.oid), "", true)
 	if err != nil {
 		return nil, err
 	}
+	defer it.Close()
 
-	inventory, err := backend.NewRepos(r.logger, r.db, r.gitserverClient).GetInventory(ctx, repo, api.CommitID(r.oid), false)
+	names := make([]string, 0)
+
+	for {
+		entry, err := it.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		if entry.IsDir() {
+			continue
+		}
+		names = append(names, entry.Name())
+	}
+
+	return names, nil
+}
+
+func (r *GitCommitResolver) Languages(ctx context.Context) ([]string, error) {
+	inventory, err := backend.NewRepos(r.logger, r.db, r.gitserverClient).GetInventory(ctx, r.repoResolver.RepoName(), api.CommitID(r.oid), false)
 	if err != nil {
 		return nil, err
 	}
@@ -334,12 +361,7 @@ func (r *GitCommitResolver) Languages(ctx context.Context) ([]string, error) {
 }
 
 func (r *GitCommitResolver) LanguageStatistics(ctx context.Context) ([]*languageStatisticsResolver, error) {
-	repo, err := r.repoResolver.repo(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	inventory, err := backend.NewRepos(r.logger, r.db, r.gitserverClient).GetInventory(ctx, repo, api.CommitID(r.oid), false)
+	inventory, err := backend.NewRepos(r.logger, r.db, r.gitserverClient).GetInventory(ctx, r.repoResolver.RepoName(), api.CommitID(r.oid), false)
 	if err != nil {
 		return nil, err
 	}
@@ -353,7 +375,7 @@ func (r *GitCommitResolver) LanguageStatistics(ctx context.Context) ([]*language
 }
 
 type AncestorsArgs struct {
-	graphqlutil.ConnectionArgs
+	gqlutil.ConnectionArgs
 	Query       *string
 	Path        *string
 	Follow      bool
@@ -396,7 +418,7 @@ func (r *GitCommitResolver) Diff(ctx context.Context, args *struct {
 func (r *GitCommitResolver) BehindAhead(ctx context.Context, args *struct {
 	Revspec string
 }) (*behindAheadCountsResolver, error) {
-	counts, err := r.gitserverClient.GetBehindAhead(ctx, r.gitRepo, args.Revspec, string(r.oid))
+	counts, err := r.gitserverClient.BehindAhead(ctx, r.gitRepo, args.Revspec, string(r.oid))
 	if err != nil {
 		return nil, err
 	}
@@ -427,25 +449,23 @@ func (r *GitCommitResolver) inputRevOrImmutableRev() string {
 // portion (unlike for commit page URLs, which must include some revspec in
 // "/REPO/-/commit/REVSPEC").
 func (r *GitCommitResolver) repoRevURL() *url.URL {
-	// Dereference to copy to avoid mutation
-	repoUrl := *r.repoResolver.RepoMatch.URL()
 	var rev string
 	if r.inputRev != nil {
 		rev = *r.inputRev // use the original input rev from the user
 	} else {
 		rev = string(r.oid)
 	}
+	repoUrl := r.repoResolver.url()
 	if rev != "" {
 		repoUrl.Path += "@" + rev
 	}
-	return &repoUrl
+	return repoUrl
 }
 
 func (r *GitCommitResolver) canonicalRepoRevURL() *url.URL {
-	// Dereference to copy the URL to avoid mutation
-	repoUrl := *r.repoResolver.RepoMatch.URL()
+	repoUrl := r.repoResolver.url()
 	repoUrl.Path += "@" + string(r.oid)
-	return &repoUrl
+	return repoUrl
 }
 
 func (r *GitCommitResolver) Ownership(ctx context.Context, args ListOwnershipArgs) (OwnershipConnectionResolver, error) {

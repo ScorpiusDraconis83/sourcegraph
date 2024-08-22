@@ -9,14 +9,14 @@ import (
 	"github.com/sourcegraph/go-ctags"
 	"github.com/sourcegraph/log"
 
-	"github.com/sourcegraph/sourcegraph/cmd/symbols/fetcher"
-	"github.com/sourcegraph/sourcegraph/cmd/symbols/gitserver"
 	"github.com/sourcegraph/sourcegraph/cmd/symbols/internal/api"
 	sqlite "github.com/sourcegraph/sourcegraph/cmd/symbols/internal/database"
 	"github.com/sourcegraph/sourcegraph/cmd/symbols/internal/database/janitor"
 	"github.com/sourcegraph/sourcegraph/cmd/symbols/internal/database/writer"
-	symbolparser "github.com/sourcegraph/sourcegraph/cmd/symbols/parser"
-	"github.com/sourcegraph/sourcegraph/cmd/symbols/types"
+	"github.com/sourcegraph/sourcegraph/cmd/symbols/internal/fetcher"
+	"github.com/sourcegraph/sourcegraph/cmd/symbols/internal/gitserver"
+	symbolparser "github.com/sourcegraph/sourcegraph/cmd/symbols/internal/parser"
+	"github.com/sourcegraph/sourcegraph/cmd/symbols/internal/types"
 	"github.com/sourcegraph/sourcegraph/internal/ctags_config"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/diskcache"
@@ -32,7 +32,7 @@ func LoadConfig() {
 
 var config types.SqliteConfig
 
-func SetupSqlite(observationCtx *observation.Context, db database.DB, gitserverClient gitserver.GitserverClient, repositoryFetcher fetcher.RepositoryFetcher) (types.SearchFunc, func(http.ResponseWriter, *http.Request), []goroutine.BackgroundRoutine, string, error) {
+func SetupSqlite(observationCtx *observation.Context, db database.DB, gitserverClient gitserver.GitserverClient, repositoryFetcher fetcher.RepositoryFetcher) (types.SearchFunc, func(http.ResponseWriter, *http.Request), []goroutine.BackgroundRoutine, error) {
 	logger := observationCtx.Logger.Scoped("sqlite.setup")
 
 	if err := baseConfig.Validate(); err != nil {
@@ -47,7 +47,7 @@ func SetupSqlite(observationCtx *observation.Context, db database.DB, gitserverC
 		return symbolparser.SpawnCtags(logger, config.Ctags, source)
 	}
 
-	parserPool, err := symbolparser.NewParserPool(parserFactory, config.NumCtagsProcesses, parserTypesForDeployment())
+	parserPool, err := symbolparser.NewParserPool(observationCtx, "src", parserFactory, config.NumCtagsProcesses, parserTypesForDeployment())
 	if err != nil {
 		logger.Fatal("failed to create parser pool", log.Error(err))
 	}
@@ -66,7 +66,7 @@ func SetupSqlite(observationCtx *observation.Context, db database.DB, gitserverC
 	cacheSizeBytes := int64(config.CacheSizeMB) * 1000 * 1000
 	cacheEvicter := janitor.NewCacheEvicter(evictionInterval, cache, cacheSizeBytes, janitor.NewMetrics(observationCtx))
 
-	return searchFunc, nil, []goroutine.BackgroundRoutine{cacheEvicter}, config.Ctags.UniversalCommand, nil
+	return searchFunc, nil, []goroutine.BackgroundRoutine{cacheEvicter}, nil
 }
 
 func parserTypesForDeployment() []ctags_config.ParserType {

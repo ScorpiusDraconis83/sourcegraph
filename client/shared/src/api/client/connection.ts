@@ -1,6 +1,5 @@
 import * as comlink from 'comlink'
-import { from, Subscription, type Unsubscribable } from 'rxjs'
-import { first } from 'rxjs/operators'
+import { firstValueFrom, Subscription, type Unsubscribable } from 'rxjs'
 
 import { logger } from '@sourcegraph/common'
 
@@ -22,7 +21,13 @@ export async function createExtensionHostClientConnection(
     initData: Omit<InitData, 'initialSettings'>,
     platformContext: Pick<
         PlatformContext,
-        'settings' | 'updateSettings' | 'getGraphQLClient' | 'requestGraphQL' | 'telemetryService' | 'clientApplication'
+        | 'settings'
+        | 'updateSettings'
+        | 'getGraphQLClient'
+        | 'requestGraphQL'
+        | 'telemetryService'
+        | 'telemetryRecorder'
+        | 'clientApplication'
     >
 ): Promise<{
     subscription: Unsubscribable
@@ -42,7 +47,7 @@ export async function createExtensionHostClientConnection(
     /** Proxy to the exposed extension host API */
     const initializeExtensionHost = comlink.wrap<ExtensionHostAPIFactory>(endpoints.proxy)
 
-    const initialSettings = await from(platformContext.settings).pipe(first()).toPromise()
+    const initialSettings = await firstValueFrom(platformContext.settings)
     const proxy = await initializeExtensionHost({
         ...initData,
         // TODO what to do in error case?

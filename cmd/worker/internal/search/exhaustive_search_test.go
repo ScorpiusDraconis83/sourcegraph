@@ -20,11 +20,11 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/database/basestore"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbtest"
+	"github.com/sourcegraph/sourcegraph/internal/object/mocks"
 	"github.com/sourcegraph/sourcegraph/internal/observation"
 	"github.com/sourcegraph/sourcegraph/internal/search/exhaustive/service"
 	"github.com/sourcegraph/sourcegraph/internal/search/exhaustive/store"
 	"github.com/sourcegraph/sourcegraph/internal/search/exhaustive/types"
-	"github.com/sourcegraph/sourcegraph/internal/uploadstore/mocks"
 	"github.com/sourcegraph/sourcegraph/lib/iterator"
 	"github.com/sourcegraph/sourcegraph/schema"
 )
@@ -102,7 +102,10 @@ func TestExhaustiveSearch(t *testing.T) {
 	require.NoError(err)
 	for _, routine := range routines {
 		go routine.Start()
-		defer routine.Stop()
+		defer func() {
+			err := routine.Stop(context.Background())
+			require.NoError(err)
+		}()
 	}
 	require.Eventually(func() bool {
 		return !searchJob.hasWork(workerCtx)
@@ -117,11 +120,10 @@ func TestExhaustiveSearch(t *testing.T) {
 			vals = append(vals, v)
 		}
 		sort.Strings(vals)
-		require.Equal([]string{
-			"repo,revspec,revision\n1,spec,rev1\n",
-			"repo,revspec,revision\n1,spec,rev2\n",
-			"repo,revspec,revision\n2,spec,rev3\n",
-		}, vals)
+		require.Equal([]string{`{"type":"path","path":"path/to/file.go","repositoryID":1,"repository":"repo1","commit":"rev1","language":"Go"}
+`, `{"type":"path","path":"path/to/file.go","repositoryID":1,"repository":"repo1","commit":"rev2","language":"Go"}
+`, `{"type":"path","path":"path/to/file.go","repositoryID":2,"repository":"repo2","commit":"rev3","language":"Go"}
+`}, vals)
 	}
 
 	// Minor assertion that the job is regarded as finished.
@@ -230,14 +232,14 @@ func tTimeout(t *testing.T, max time.Duration) time.Duration {
 	return timeout
 }
 
-func newMockUploadStore(t *testing.T) (*mocks.MockStore, map[string]string) {
+func newMockUploadStore(t *testing.T) (*mocks.MockStorage, map[string]string) {
 	t.Helper()
 
 	// Each entry in bucket corresponds to one 1 uploaded csv file.
 	mu := sync.Mutex{}
 	bucket := make(map[string]string)
 
-	mockStore := mocks.NewMockStore()
+	mockStore := mocks.NewMockStorage()
 	mockStore.UploadFunc.SetDefaultHook(func(ctx context.Context, key string, r io.Reader) (int64, error) {
 		b, err := io.ReadAll(r)
 		if err != nil {

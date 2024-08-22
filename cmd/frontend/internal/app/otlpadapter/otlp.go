@@ -28,8 +28,8 @@ func newExporter(
 	case otlpenv.ProtocolGRPC:
 		exporterFactory = otlpexporter.NewFactory()
 		tempConfig := exporterFactory.CreateDefaultConfig().(*otlpexporter.Config)
-		tempConfig.GRPCClientSettings.Endpoint = endpoint
-		tempConfig.GRPCClientSettings.TLSSetting = configtls.TLSClientSetting{
+		tempConfig.Endpoint = endpoint
+		tempConfig.TLSSetting = configtls.ClientConfig{
 			Insecure: otlpenv.IsInsecure(endpoint),
 		}
 		signalExporterConfig = tempConfig
@@ -37,7 +37,7 @@ func newExporter(
 	case otlpenv.ProtocolHTTPJSON:
 		exporterFactory = otlphttpexporter.NewFactory()
 		tempConfig := exporterFactory.CreateDefaultConfig().(*otlphttpexporter.Config)
-		tempConfig.HTTPClientSettings.Endpoint = endpoint
+		tempConfig.Endpoint = endpoint
 		signalExporterConfig = tempConfig
 
 	default:
@@ -51,8 +51,14 @@ func newReceiver(receiverURL *url.URL) (receiver.Factory, component.Config) {
 	receiverFactory := otlpreceiver.NewFactory()
 	signalReceiverConfig := receiverFactory.CreateDefaultConfig().(*otlpreceiver.Config)
 	signalReceiverConfig.GRPC = nil // disable gRPC receiver, we don't need it
-	signalReceiverConfig.HTTP = &confighttp.HTTPServerSettings{
-		Endpoint: receiverURL.Host,
+	signalReceiverConfig.HTTP = &otlpreceiver.HTTPConfig{
+		ServerConfig: &confighttp.ServerConfig{
+			Endpoint: receiverURL.Host,
+		},
+		// Set explicit defaults based on docstrings of each field.
+		TracesURLPath:  "/v1/traces",
+		MetricsURLPath: "/v1/metrics",
+		LogsURLPath:    "/v1/logs",
 	}
 
 	return receiverFactory, signalReceiverConfig

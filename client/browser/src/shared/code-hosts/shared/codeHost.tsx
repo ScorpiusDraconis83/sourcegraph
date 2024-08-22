@@ -18,6 +18,8 @@ import {
     concat,
     BehaviorSubject,
     fromEvent,
+    lastValueFrom,
+    throwError,
 } from 'rxjs'
 import {
     catchError,
@@ -32,8 +34,7 @@ import {
     tap,
     startWith,
     distinctUntilChanged,
-    retryWhen,
-    mapTo,
+    retry,
     take,
 } from 'rxjs/operators'
 
@@ -55,7 +56,6 @@ import {
     registerHighlightContributions,
     isExternalLink,
     type LineOrPositionOrRange,
-    lprToSelectionsZeroIndexed,
 } from '@sourcegraph/common'
 import type { WorkspaceRoot } from '@sourcegraph/extension-api-types'
 import { gql, isHTTPAuthError } from '@sourcegraph/http-client'
@@ -72,6 +72,7 @@ import {
 } from '@sourcegraph/shared/src/hover/HoverOverlay'
 import { getModeFromPath } from '@sourcegraph/shared/src/languages'
 import type { PlatformContext, URLToFileContext } from '@sourcegraph/shared/src/platform/context'
+import { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { createURLWithUTM } from '@sourcegraph/shared/src/tracking/utm'
 import {
@@ -81,9 +82,8 @@ import {
     type RepoSpec,
     type ResolvedRevisionSpec,
     type RevisionSpec,
-    toRootURI,
-    toURIWithPath,
     type ViewStateSpec,
+    makeRepoGitURI,
 } from '@sourcegraph/shared/src/util/url'
 
 import { background } from '../../../browser-extension/web-extension-api/runtime'
@@ -97,6 +97,7 @@ import { WildcardThemeProvider } from '../../components/WildcardThemeProvider'
 import { isExtension, isInPage } from '../../context'
 import type { SourcegraphIntegrationURLs, BrowserPlatformContext } from '../../platform/context'
 import { resolveRevision, retryWhenCloneInProgressError, resolvePrivateRepo } from '../../repo/backend'
+import { ConditionalTelemetryRecorderProvider } from '../../telemetry'
 import { ConditionalTelemetryService, EventLogger } from '../../tracking/eventLogger'
 import { DEFAULT_SOURCEGRAPH_URL, getPlatformName, isDefaultSourcegraphUrl } from '../../util/context'
 import { type MutationRecordLike, querySelectorOrSelf } from '../../util/dom'
@@ -113,6 +114,7 @@ import { NotAuthenticatedError, RepoURLParseError } from './errors'
 import { initializeExtensions } from './extensions'
 import { SignInButton } from './SignInButton'
 import { resolveRepoNamesForDiffOrFileInfo, defaultRevisionToCommitID } from './util/fileInfo'
+import { lprToSelectionsZeroIndexed } from './util/selections'
 import {
     type ViewOnSourcegraphButtonClassProps,
     ViewOnSourcegraphButton,
@@ -289,7 +291,7 @@ export interface FileInfoWithContent extends FileInfoWithRepoName {
     content?: string
 }
 
-export interface CodeIntelligenceProps extends TelemetryProps {
+export interface CodeIntelligenceProps extends TelemetryProps, TelemetryV2Props {
     platformContext: Pick<
         BrowserPlatformContext,
         'urlToFile' | 'requestGraphQL' | 'settings' | 'refreshSettings' | 'sourcegraphURL' | 'clientApplication'
@@ -321,8 +323,12 @@ function initCodeIntelligence({
     extensionsController,
     render,
     telemetryService,
+    telemetryRecorder,
     repoSyncErrors,
-}: Pick<CodeIntelligenceProps, 'codeHost' | 'platformContext' | 'extensionsController' | 'telemetryService'> & {
+}: Pick<
+    CodeIntelligenceProps,
+    'codeHost' | 'platformContext' | 'extensionsController' | 'telemetryService' | 'telemetryRecorder'
+> & {
     render: Renderer
     mutations: Observable<MutationRecordLike[]>
     repoSyncErrors: Observable<boolean>
@@ -470,9 +476,9 @@ function initCodeIntelligence({
                         {...codeHost.hoverOverlayClassProps}
                         className={classNames(styles.hoverOverlay, codeHost.hoverOverlayClassProps?.className)}
                         telemetryService={telemetryService}
+                        telemetryRecorder={telemetryRecorder}
                         hoverRef={this.nextOverlayElement}
                         extensionsController={extensionsController}
-                        platformContext={platformContext}
                         location={H.createLocation(window.location)}
                         useBrandedLogo={true}
                     />
@@ -643,10 +649,12 @@ const isSafeToContinueCodeIntel = async ({
 
         rawRepoName = context.rawRepoName
 
-        const isRepoCloned = await resolvePrivateRepo({
-            rawRepoName,
-            requestGraphQL,
-        }).toPromise()
+        const isRepoCloned = await lastValueFrom(
+            resolvePrivateRepo({
+                rawRepoName,
+                requestGraphQL,
+            })
+        )
 
         return isRepoCloned
     } catch (error) {
@@ -678,7 +686,7 @@ const isSafeToContinueCodeIntel = async ({
             // Show "Configure Sourcegraph" button
             console.warn('Repository is not cloned.', error)
 
-            const settingsURL = await observeUserSettingsURL(requestGraphQL).toPromise()
+            const settingsURL = await lastValueFrom(observeUserSettingsURL(requestGraphQL), { defaultValue: undefined })
 
             if (rawRepoName && settingsURL) {
                 render(
@@ -710,6 +718,7 @@ export async function handleCodeHost({
     extensionsController,
     platformContext,
     telemetryService,
+    telemetryRecorder,
     render,
     minimalUI,
     hideActions,
@@ -777,6 +786,7 @@ export async function handleCodeHost({
         extensionsController,
         platformContext,
         telemetryService,
+        telemetryRecorder,
         render,
         mutations,
         repoSyncErrors,
@@ -815,7 +825,7 @@ export async function handleCodeHost({
             switchMap(([, { rawRepoName, revision }]) =>
                 resolveRevision({ repoName: rawRepoName, revision, requestGraphQL }).pipe(
                     retryWhenCloneInProgressError(),
-                    mapTo(true),
+                    map(() => true),
                     startWith(undefined)
                 )
             ),
@@ -929,6 +939,7 @@ export async function handleCodeHost({
                                     fileInfoOrError={error}
                                     sourcegraphURL={sourcegraphURL}
                                     telemetryService={telemetryService}
+                                    telemetryRecorder={telemetryRecorder}
                                     platformContext={platformContext}
                                     extensionsController={extensionsController}
                                     buttonProps={codeViewEvent.toolbarButtonProps}
@@ -942,17 +953,9 @@ export async function handleCodeHost({
                     },
                 }),
                 // Retry auth errors after the user closed a sign-in tab
-                retryWhen(errors =>
-                    errors.pipe(
-                        // Don't swallow non-auth errors
-                        tap(error => {
-                            if (!isHTTPAuthError(error)) {
-                                throw error
-                            }
-                        }),
-                        switchMap(() => signInCloses)
-                    )
-                ),
+                retry({
+                    delay: error => (isHTTPAuthError(error) ? signInCloses : throwError(() => error)),
+                }),
                 catchError(error => {
                     // Log errors but don't break the handling of other code views
                     console.error('Could not resolve file info for code view', error)
@@ -1030,9 +1033,14 @@ export async function handleCodeHost({
                 } = codeViewEvent
 
                 const initializeModelAndViewerForFileInfo = async (
-                    fileInfo: FileInfoWithContent & FileInfoWithRepoName
+                    fileInfo: FileInfoWithContent
                 ): Promise<CodeEditorWithPartialModel> => {
-                    const uri = toURIWithPath(fileInfo)
+                    const uri = makeRepoGitURI({
+                        repoName: fileInfo.repoName,
+                        commitID: fileInfo.commitID,
+                        revision: fileInfo.revision,
+                        filePath: fileInfo.filePath,
+                    })
 
                     // Model
                     const languageId = getModeFromPath(fileInfo.filePath)
@@ -1050,7 +1058,11 @@ export async function handleCodeHost({
 
                     const extensionHostAPI = await extensionsController.extHostAPI
 
-                    const rootURI = toRootURI(fileInfo)
+                    const rootURI = makeRepoGitURI({
+                        repoName: fileInfo.repoName,
+                        commitID: fileInfo.commitID,
+                        revision: fileInfo.revision,
+                    })
                     const [, viewerId] = await Promise.all([
                         // Only add the model if it doesn't exist
                         // (there may be several code views on the page pointing to the same model)
@@ -1227,6 +1239,7 @@ export async function handleCodeHost({
                             fileInfoOrError={diffOrBlobInfo}
                             sourcegraphURL={sourcegraphURL}
                             telemetryService={telemetryService}
+                            telemetryRecorder={telemetryRecorder}
                             platformContext={platformContext}
                             extensionsController={extensionsController}
                             buttonProps={toolbarButtonProps}
@@ -1352,6 +1365,11 @@ export function injectCodeIntelligenceToCodeHost(
     const telemetryService = new ConditionalTelemetryService(innerTelemetryService, isTelemetryEnabled)
     subscriptions.add(telemetryService)
 
+    const telemetryRecorderProvider = new ConditionalTelemetryRecorderProvider(isTelemetryEnabled, requestGraphQL)
+    const telemetryRecorder = telemetryRecorderProvider.getRecorder()
+    subscriptions.add(telemetryRecorder)
+    platformContext.telemetryRecorder = telemetryRecorder
+
     let codeHostSubscription: Subscription
     // In the browser extension, observe whether the `disableExtension` storage flag is set.
     // In the native integration, this flag does not exist.
@@ -1390,6 +1408,7 @@ export function injectCodeIntelligenceToCodeHost(
                     extensionsController,
                     platformContext,
                     telemetryService,
+                    telemetryRecorder,
                     render: renderWithThemeProvider as Renderer,
                     minimalUI,
                     hideActions,

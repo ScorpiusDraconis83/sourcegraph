@@ -10,6 +10,7 @@ import (
 	"net/smtp"
 	"net/textproto"
 	"strconv"
+	"time"
 
 	"github.com/jordan-wright/email"
 	"github.com/prometheus/client_golang/prometheus"
@@ -72,9 +73,6 @@ func render(fromAddress, fromName string, message Message) (*email.Email, error)
 // should use this directly to send emails.  Source is used to categorize metrics, and
 // should indicate the product feature that is sending this email.
 //
-// Callers that do not live in the frontend should call internalapi.Client.SendEmail
-// instead.
-//
 // 🚨 SECURITY: If the email address is associated with a user, make sure to assess whether
 // the email should be verified or not, and conduct the appropriate checks before sending.
 // This helps reduce the chance that we damage email sender reputations when attempting to
@@ -129,8 +127,19 @@ func Send(ctx context.Context, source string, message Message) (err error) {
 		return errors.Wrap(err, "get bytes")
 	}
 
-	// Set up client
-	client, err := smtp.Dial(net.JoinHostPort(config.EmailSmtp.Host, strconv.Itoa(config.EmailSmtp.Port)))
+	dialCtx, cancel := context.WithTimeout(ctx, 30*time.Second) // 30 seconds should be enough for any network call.
+	defer cancel()
+
+	addr := net.JoinHostPort(config.EmailSmtp.Host, strconv.Itoa(config.EmailSmtp.Port))
+
+	var d net.Dialer
+	conn, err := d.DialContext(dialCtx, "tcp", addr)
+	if err != nil {
+		return errors.Wrapf(err, "establishing TCP connection to %q", addr)
+	}
+
+	host, _, _ := net.SplitHostPort(addr)
+	client, err := smtp.NewClient(conn, host)
 	if err != nil {
 		return errors.Wrap(err, "new SMTP client")
 	}

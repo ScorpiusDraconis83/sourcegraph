@@ -2,6 +2,18 @@
 
 set -eu
 
+# --- begin runfiles.bash initialization v3 ---
+# Copy-pasted from the Bazel Bash runfiles library v3.
+set -uo pipefail; set +e; f=bazel_tools/tools/bash/runfiles/runfiles.bash
+# shellcheck disable=SC1090
+source "${RUNFILES_DIR:-/dev/null}/$f" 2>/dev/null || \
+  source "$(grep -sm1 "^$f " "${RUNFILES_MANIFEST_FILE:-/dev/null}" | cut -f2- -d' ')" 2>/dev/null || \
+  source "$0.runfiles/$f" 2>/dev/null || \
+  source "$(grep -sm1 "^$f " "$0.runfiles_manifest" | cut -f2- -d' ')" 2>/dev/null || \
+  source "$(grep -sm1 "^$f " "$0.exe.runfiles_manifest" | cut -f2- -d' ')" 2>/dev/null || \
+  { echo>&2 "ERROR: cannot find $f"; exit 1; }; f=; set -e
+# --- end runfiles.bash initialization v3 ---
+
 ## Setting up inputs/data
 gcloud="$(pwd)/$1" # used in workdir folder, so need an absolute path
 packer="$(pwd)/$2"
@@ -19,7 +31,7 @@ trap 'rm -Rf "$workdir_abs"' EXIT
 cp "${base}/executor.pkr.hcl" workdir/
 cp "${base}/aws_regions.json" workdir/
 cp "${base}/install.sh" workdir/
-cp "$executor" workdir
+cp "$executor" workdir/
 
 # Copy src-cli, see //dev/tools:src-cli
 cp "$srccli" workdir/
@@ -31,10 +43,10 @@ cp "$srccli" workdir/
 docker tag executor-vm:candidate "sourcegraph/executor-vm:$VERSION"
 docker save --output workdir/executor-vm.tar "sourcegraph/executor-vm:$VERSION"
 
-"$gcloud" secrets versions access latest --secret=e2e-builder-sa-key --quiet --project=sourcegraph-ci >"workdir/builder-sa-key.json"
+GCP_PROJECT="aspect-dev"
+"$gcloud" secrets versions access latest --secret=e2e-builder-sa-key --quiet --project="$GCP_PROJECT" >"workdir/builder-sa-key.json"
 
-export PKR_VAR_name
-PKR_VAR_name="${IMAGE_FAMILY}-${BUILDKITE_BUILD_NUMBER}"
+export PKR_VAR_name="${IMAGE_FAMILY}-${BUILDKITE_BUILD_NUMBER}"
 export PKR_VAR_image_family="${IMAGE_FAMILY}"
 export PKR_VAR_tagged_release="${EXECUTOR_IS_TAGGED_RELEASE}"
 export PKR_VAR_version="${VERSION}"

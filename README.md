@@ -1,3 +1,12 @@
+> [!NOTE]
+> Sourcegraph transitioned to a private monorepo. This repository, `sourcegraph/sourcegraph-public-snapshot` is a publicly available copy of the `sourcegraph/sourcegraph` repository as it was just before the migration.
+
+> [!TIP]
+> If you are interested in working with the code, this [commit](https://github.com/sourcegraph/sourcegraph-public-snapshot/commit/1cd36d2dbbd2a9ab638cc437d208d2717eaefb0b) is the last one made under an Apache License.
+
+---
+
+
 <p align="center">
 <a href="https://sourcegraph.com/" target="_blank">
 <picture>
@@ -7,7 +16,7 @@
 </p>
 
 <p align="center">
-    <a href="https://docs.sourcegraph.com">Docs</a> •
+    <a href="https://sourcegraph.com/docs">Docs</a> •
     <a href="https://sourcegraph.com/github.com/sourcegraph/sourcegraph/-/blob/CONTRIBUTING.md">Contributing</a> •
     <a href="https://twitter.com/sourcegraph">Twitter</a> •
     <a href="https://discord.gg/s2qDtYGnAE">Discord</a>
@@ -38,7 +47,7 @@
 
 ## Getting started
 
-- [Use Sourcegraph on the cloud or self-hosted](https://docs.sourcegraph.com/)
+- [Use Sourcegraph on the cloud or self-hosted](https://sourcegraph.com/docs/)
 - [Sourcegraph.com public code search](https://sourcegraph.com/search)
 
 <br><br>
@@ -47,13 +56,12 @@
 
 ## Development
 
-Refer to the [Developing Sourcegraph guide](https://docs.sourcegraph.com/dev) to get started.
+Refer to the [Developing Sourcegraph guide](https://docs-legacy.sourcegraph.com/dev) to get started.
 
 ### Documentation
 
 The `doc` directory has additional documentation for developing and understanding Sourcegraph:
 
-- [Project FAQ](./doc/admin/faq.md)
 - [Architecture](./doc/dev/background-information/architecture/index.md): high-level architecture
 - [Database setup](./doc/dev/background-information/postgresql.md): database best practices
 - [Go style guide](./doc/dev/background-information/languages/go.md)
@@ -64,3 +72,5 @@ The `doc` directory has additional documentation for developing and understandin
 ## License
 
 This repository contains primarily non-OSS-licensed files. See [LICENSE](LICENSE).
+
+Copyright (c) 2018-present Sourcegraph Inc.

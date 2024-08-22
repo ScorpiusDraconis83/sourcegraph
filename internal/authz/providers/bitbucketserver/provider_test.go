@@ -109,7 +109,7 @@ func testProviderFetchAccount(f *fixtures, cli *bitbucketserver.Client) func(*te
 					tc.err = "<nil>"
 				}
 
-				acct, err := p.FetchAccount(tc.ctx, tc.user, nil, nil)
+				acct, err := p.FetchAccount(tc.ctx, tc.user)
 
 				if have, want := fmt.Sprint(err), tc.err; have != want {
 					t.Errorf("error:\nhave: %q\nwant: %q", have, want)
@@ -315,7 +315,7 @@ func marshalJSON(v any) []byte {
 // need a Bitbucket Server API up and running to run those tests. But if
 // you want to work on these tests / code, you need to start a new instance
 // of Bitbucket Server with docker, create an Application Link as per
-// https://docs.sourcegraph.com/admin/external_service/bitbucket_server, and
+// https://sourcegraph.com/docs/admin/code_hosts/bitbucket_server, and
 // then run the tests with -update=true.
 type fixtures struct {
 	users             map[string]*bitbucketserver.User

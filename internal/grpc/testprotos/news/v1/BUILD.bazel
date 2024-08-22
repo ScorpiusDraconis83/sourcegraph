@@ -5,6 +5,7 @@ load("@io_bazel_rules_go//proto:def.bzl", "go_proto_library")
 proto_library(
     name = "news_proto",
     srcs = ["news.proto"],
+    strip_import_prefix = "/internal",
     visibility = ["//:__subpackages__"],
     deps = ["@com_google_protobuf//:timestamp_proto"],
 )
@@ -20,6 +21,7 @@ go_library(
     name = "news",
     embed = [":v1_go_proto"],
     importpath = "github.com/sourcegraph/sourcegraph/internal/grpc/testprotos/news/v1",
+    tags = [TAG_PLATFORM_SOURCE],
     visibility = ["//:__subpackages__"],
 )
 

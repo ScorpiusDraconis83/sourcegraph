@@ -8,11 +8,12 @@ import (
 
 	"github.com/graph-gophers/graphql-go"
 	"github.com/graph-gophers/graphql-go/relay"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/sourcegraph/log"
 
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/audit"
 	"github.com/sourcegraph/sourcegraph/internal/auth"
 	"github.com/sourcegraph/sourcegraph/internal/database"
@@ -21,6 +22,12 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/license"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
+
+var productSubscriptionAccess = promauto.NewCounterVec(prometheus.CounterOpts{
+	Namespace: "src",
+	Subsystem: "productsubscription",
+	Name:      "graphql_access",
+}, []string{"action"})
 
 const auditEntityProductSubscriptions = "dotcom-productsubscriptions"
 
@@ -68,7 +75,7 @@ func productSubscriptionByDBID(ctx context.Context, logger log.Logger, db databa
 		return nil, err
 	}
 	// 🚨 SECURITY: Only site admins and the subscription account's user may view a product subscription.
-	grantReason, err := serviceAccountOrOwnerOrSiteAdmin(ctx, db, &v.UserID, false)
+	grantReason, err := hasRBACPermsOrOwnerOrSiteAdmin(ctx, db, &v.UserID, false)
 	if err != nil {
 		return nil, err
 	}
@@ -81,6 +88,9 @@ func productSubscriptionByDBID(ctx context.Context, logger log.Logger, db databa
 			log.String("accessed_product_subscription_id", id),
 		},
 	})
+	// Track usage
+	productSubscriptionAccess.With(prometheus.Labels{"action": action}).Inc()
+
 	return &productSubscription{logger: logger, v: v, db: db}, nil
 }
 
@@ -140,7 +150,7 @@ func (r *productSubscription) computeActiveLicense(ctx context.Context) (*dbLice
 	return r.activeLicense, r.activeLicenseErr
 }
 
-func (r *productSubscription) ProductLicenses(ctx context.Context, args *graphqlutil.ConnectionArgs) (graphqlbackend.ProductLicenseConnection, error) {
+func (r *productSubscription) ProductLicenses(ctx context.Context, args *gqlutil.ConnectionArgs) (graphqlbackend.ProductLicenseConnection, error) {
 	// 🚨 SECURITY: Only site admins may list historical product licenses (to reduce confusion
 	// around old license reuse). Other viewers should use ProductSubscription.activeLicense.
 	if err := auth.CheckCurrentUserIsSiteAdmin(ctx, r.db); err != nil {
@@ -156,6 +166,23 @@ func (r *productSubscription) CodyGatewayAccess() graphqlbackend.CodyGatewayAcce
 	return codyGatewayAccessResolver{sub: r}
 }
 
+func NewErrActiveLicenseRequired() error {
+	return &ErrActiveLicenseRequired{error: errors.New("an active license is required")}
+}
+
+type ErrActiveLicenseRequired struct {
+	// Embed error to please GraphQL-go.
+	error
+}
+
+func (e ErrActiveLicenseRequired) Error() string {
+	return e.error.Error()
+}
+
+func (e ErrActiveLicenseRequired) Extensions() map[string]any {
+	return map[string]any{"code": "ErrActiveLicenseRequired"}
+}
+
 func (r *productSubscription) CurrentSourcegraphAccessToken(ctx context.Context) (*string, error) {
 	activeLicense, err := r.computeActiveLicense(ctx)
 	if err != nil {
@@ -163,7 +190,7 @@ func (r *productSubscription) CurrentSourcegraphAccessToken(ctx context.Context)
 	}
 
 	if activeLicense == nil {
-		return nil, errors.New("an active license is required")
+		return nil, NewErrActiveLicenseRequired()
 	}
 
 	if !activeLicense.AccessTokenEnabled {
@@ -246,7 +273,7 @@ func (r ProductSubscriptionLicensingResolver) CreateProductSubscription(ctx cont
 
 func (r ProductSubscriptionLicensingResolver) UpdateProductSubscription(ctx context.Context, args *graphqlbackend.UpdateProductSubscriptionArgs) (*graphqlbackend.EmptyResponse, error) {
 	// 🚨 SECURITY: Only site admins or the service accounts may update product subscriptions.
-	_, err := serviceAccountOrSiteAdmin(ctx, r.DB, true)
+	_, err := hasRBACPermsOrSiteAdmin(ctx, r.DB, true)
 	if err != nil {
 		return nil, err
 	}
@@ -255,8 +282,8 @@ func (r ProductSubscriptionLicensingResolver) UpdateProductSubscription(ctx cont
 	if err != nil {
 		return nil, err
 	}
-	if err := (dbSubscriptions{db: r.DB}).Update(ctx, sub.v.ID, dbSubscriptionUpdate{
-		codyGatewayAccess: args.Update.CodyGatewayAccess,
+	if err := (dbSubscriptions{db: r.DB}).Update(ctx, sub.v.ID, DBSubscriptionUpdate{
+		CodyGatewayAccess: args.Update.CodyGatewayAccess,
 	}); err != nil {
 		return nil, err
 	}
@@ -301,7 +328,7 @@ func (r ProductSubscriptionLicensingResolver) ProductSubscriptions(ctx context.C
 
 	// 🚨 SECURITY: Users may only list their own product subscriptions. Site admins may list
 	// licenses for all users, or for any other user.
-	grantReason, err := serviceAccountOrOwnerOrSiteAdmin(ctx, r.DB, accountUserID, false)
+	grantReason, err := hasRBACPermsOrOwnerOrSiteAdmin(ctx, r.DB, accountUserID, false)
 	if err != nil {
 		return nil, err
 	}
@@ -381,10 +408,10 @@ func (r *productSubscriptionConnection) TotalCount(ctx context.Context) (int32, 
 	return int32(count), err
 }
 
-func (r *productSubscriptionConnection) PageInfo(ctx context.Context) (*graphqlutil.PageInfo, error) {
+func (r *productSubscriptionConnection) PageInfo(ctx context.Context) (*gqlutil.PageInfo, error) {
 	results, err := r.compute(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return graphqlutil.HasNextPage(r.opt.LimitOffset != nil && len(results) > r.opt.Limit), nil
+	return gqlutil.HasNextPage(r.opt.LimitOffset != nil && len(results) > r.opt.Limit), nil
 }

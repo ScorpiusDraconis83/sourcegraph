@@ -8,18 +8,16 @@ fragment Commit on GitCommit {
         date
         person {
             name
-            displayName
             email
-            avatarURL
+            ...Avatar_Person
         }
     }
     committer {
         date
         person {
             name
-            displayName
             email
-            avatarURL
+            ...Avatar_Person
         }
     }
 }

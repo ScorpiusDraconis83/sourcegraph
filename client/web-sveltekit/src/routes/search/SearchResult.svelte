@@ -1,8 +1,5 @@
-<article data-testid="search-result">
+<article data-show-copy-target data-testid="search-result">
     <div class="header">
-        <div class="icon">
-            <slot name="icon" />
-        </div>
         <div class="title">
             <slot name="title" />
         </div>
@@ -20,19 +17,24 @@
 </article>
 
 <style lang="scss">
+    article {
+        :global([data-copy-button]) {
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        &:is(:hover, :focus-within) :global([data-copy-button]) {
+            opacity: 1;
+        }
+    }
+
     .header {
         display: flex;
         align-items: center;
-        padding: 0.5rem;
+        padding: 0.5rem 0.75rem;
         position: sticky;
         top: 0;
-        background-color: var(--body-bg);
+        background-color: var(--search-result-header-bg);
         border-bottom: 1px solid var(--border-color);
-    }
-
-    .icon {
-        flex-shrink: 0;
-        --color: var(--text-muted);
     }
 
     .title {
@@ -40,20 +42,10 @@
         overflow: hidden;
         display: flex;
         flex-wrap: wrap;
+        align-items: center;
 
         // .title-inner
         overflow-wrap: anywhere;
-
-        // .muted-repo-file-link
-        color: var(--text-muted);
-
-        :global(a) {
-            color: var(--text-muted);
-
-            &:hover {
-                color: var(--text-muted);
-            }
-        }
     }
 
     .info {
@@ -62,9 +54,11 @@
         flex-wrap: wrap;
         color: var(--text-muted);
         flex-shrink: 0;
+        gap: 0.5rem;
+        align-items: center;
     }
 
-    .body {
+    .body:not(:empty) {
         background-color: var(--code-bg);
         border-bottom: 1px solid var(--border-color);
     }

@@ -3,6 +3,7 @@ package resolvers
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 
 	"github.com/graph-gophers/graphql-go"
@@ -11,17 +12,16 @@ import (
 
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/backend"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/cody"
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/auth"
-	"github.com/sourcegraph/sourcegraph/internal/cody"
 	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/embeddings"
 	repobg "github.com/sourcegraph/sourcegraph/internal/embeddings/background/repo"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
+	"github.com/sourcegraph/sourcegraph/internal/gqlutil"
 )
 
 func NewResolver(
@@ -46,7 +46,6 @@ type Resolver struct {
 	gitserverClient        gitserver.Client
 	embeddingsClient       embeddings.Client
 	repoEmbeddingJobsStore repobg.RepoEmbeddingJobsStore
-	emails                 backend.UserEmailsService
 }
 
 func (r *Resolver) EmbeddingsSearch(ctx context.Context, args graphqlbackend.EmbeddingsSearchInputArgs) (graphqlbackend.EmbeddingsSearchResultsResolver, error) {
@@ -63,8 +62,8 @@ func (r *Resolver) EmbeddingsMultiSearch(ctx context.Context, args graphqlbacken
 		return nil, errors.New("embeddings are not configured or disabled")
 	}
 
-	if isEnabled := cody.IsCodyEnabled(ctx); !isEnabled {
-		return nil, errors.New("cody experimental feature flag is not enabled for current user")
+	if isEnabled, reason := cody.IsCodyEnabled(ctx, r.db); !isEnabled {
+		return nil, errors.Newf("cody is not enabled: %s", reason)
 	}
 
 	if err := cody.CheckVerifiedEmailRequirement(ctx, r.db, r.logger); err != nil {
@@ -109,8 +108,8 @@ func (r *Resolver) EmbeddingsMultiSearch(ctx context.Context, args graphqlbacken
 }
 
 func (r *Resolver) IsContextRequiredForChatQuery(ctx context.Context, args graphqlbackend.IsContextRequiredForChatQueryInputArgs) (bool, error) {
-	if isEnabled := cody.IsCodyEnabled(ctx); !isEnabled {
-		return false, errors.New("cody experimental feature flag is not enabled for current user")
+	if isEnabled, reason := cody.IsCodyEnabled(ctx, r.db); !isEnabled {
+		return false, errors.Newf("cody is not enabled: %s", reason)
 	}
 
 	if err := cody.CheckVerifiedEmailRequirement(ctx, r.db, r.logger); err != nil {
@@ -120,7 +119,7 @@ func (r *Resolver) IsContextRequiredForChatQuery(ctx context.Context, args graph
 	return embeddings.IsContextRequiredForChatQuery(args.Query), nil
 }
 
-func (r *Resolver) RepoEmbeddingJobs(ctx context.Context, args graphqlbackend.ListRepoEmbeddingJobsArgs) (*graphqlutil.ConnectionResolver[graphqlbackend.RepoEmbeddingJobResolver], error) {
+func (r *Resolver) RepoEmbeddingJobs(ctx context.Context, args graphqlbackend.ListRepoEmbeddingJobsArgs) (*gqlutil.ConnectionResolver[graphqlbackend.RepoEmbeddingJobResolver], error) {
 	if !conf.EmbeddingsEnabled() {
 		return nil, errors.New("embeddings are not configured or disabled")
 	}
@@ -160,19 +159,6 @@ func (r *Resolver) ScheduleRepositoriesForEmbedding(ctx context.Context, args gr
 	}
 
 	return &graphqlbackend.EmptyResponse{}, nil
-}
-
-func (r *Resolver) MigrateToQdrant(ctx context.Context) (*graphqlbackend.EmptyResponse, error) {
-	if !conf.EmbeddingsEnabled() {
-		return nil, errors.New("embeddings are not configured or disabled")
-	}
-
-	ec := conf.GetEmbeddingsConfig(conf.Get().SiteConfig())
-	if ec == nil || !ec.Qdrant.Enabled {
-		return nil, errors.New("qdrant is not enabled")
-	}
-
-	return &graphqlbackend.EmptyResponse{}, r.repoEmbeddingJobsStore.RescheduleAllRepos(ctx)
 }
 
 func (r *Resolver) CancelRepoEmbeddingJob(ctx context.Context, args graphqlbackend.CancelRepoEmbeddingJobArgs) (*graphqlbackend.EmptyResponse, error) {
@@ -219,7 +205,14 @@ func embeddingsSearchResultsToResolvers(
 		for i, result := range results {
 			i, result := i, result
 			p.Go(func() {
-				content, err := gs.ReadFile(ctx, result.RepoName, result.Revision, result.FileName)
+				r, err := gs.NewFileReader(ctx, result.RepoName, result.Revision, result.FileName)
+				if err != nil {
+					allContents[i] = nil
+					allErrors[i] = err
+					return
+				}
+				defer r.Close()
+				content, err := io.ReadAll(r)
 				allContents[i] = content
 				allErrors[i] = err
 			})

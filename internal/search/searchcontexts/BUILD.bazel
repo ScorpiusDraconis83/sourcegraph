@@ -3,16 +3,20 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "searchcontexts",
-    srcs = ["search_contexts.go"],
+    srcs = [
+        "conf.go",
+        "search_contexts.go",
+    ],
     importpath = "github.com/sourcegraph/sourcegraph/internal/search/searchcontexts",
+    tags = [TAG_PLATFORM_SEARCH],
     visibility = ["//:__subpackages__"],
     deps = [
-        "//cmd/frontend/envvar",
         "//internal/actor",
         "//internal/api",
         "//internal/auth",
         "//internal/conf",
         "//internal/database",
+        "//internal/dotcom",
         "//internal/errcode",
         "//internal/lazyregexp",
         "//internal/search",
@@ -32,18 +36,19 @@ go_test(
     srcs = ["search_contexts_test.go"],
     embed = [":searchcontexts"],
     tags = [
+        TAG_PLATFORM_SEARCH,
         # Test requires localhost database
         "requires-network",
     ],
     deps = [
-        "//cmd/frontend/envvar",
         "//internal/actor",
         "//internal/database",
         "//internal/database/dbmocks",
         "//internal/database/dbtest",
+        "//internal/dotcom",
         "//internal/types",
         "//lib/errors",
-        "@com_github_derision_test_go_mockgen//testutil/require",
+        "@com_github_derision_test_go_mockgen_v2//testutil/require",
         "@com_github_google_go_cmp//cmp",
         "@com_github_google_go_cmp//cmp/cmpopts",
         "@com_github_sourcegraph_log//logtest",

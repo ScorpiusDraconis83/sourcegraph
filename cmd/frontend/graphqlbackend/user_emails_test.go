@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	mockrequire "github.com/derision-test/go-mockgen/testutil/require"
+	mockrequire "github.com/derision-test/go-mockgen/v2/testutil/require"
 	"github.com/google/go-cmp/cmp"
 	"github.com/graph-gophers/graphql-go/relay"
 	"github.com/stretchr/testify/assert"
@@ -20,14 +20,9 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/database/dbmocks"
 	"github.com/sourcegraph/sourcegraph/internal/database/fakedb"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
-	"github.com/sourcegraph/sourcegraph/internal/txemail"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
-
-func init() {
-	txemail.DisableSilently()
-}
 
 func TestUserEmail_ViewerCanManuallyVerify(t *testing.T) {
 	t.Parallel()
@@ -166,7 +161,7 @@ func TestSetUserEmailVerified(t *testing.T) {
 			t.Run(test.name, func(t *testing.T) {
 				test.setup()
 
-				_, err := newSchemaResolver(db, gitserver.NewTestClient(t)).SetUserEmailVerified(
+				_, err := newSchemaResolver(db, gitserver.NewTestClient(t), nil).SetUserEmailVerified(
 					test.ctx,
 					&setUserEmailVerifiedArgs{
 						User: MarshalUserID(1),
@@ -270,7 +265,7 @@ func TestSetUserEmailVerified(t *testing.T) {
 }
 
 func TestPrimaryEmail(t *testing.T) {
-	var primaryEmailQuery = `query hasPrimaryEmail($id: ID!){
+	primaryEmailQuery := `query hasPrimaryEmail($id: ID!){
 		node(id: $id) {
 			... on User {
 				primaryEmail {

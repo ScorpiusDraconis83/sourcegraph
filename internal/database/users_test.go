@@ -572,9 +572,6 @@ func TestUsers_Update(t *testing.T) {
 	if want := "a1"; user.AvatarURL != want {
 		t.Errorf("got avatar URL %q, want %q", user.AvatarURL, want)
 	}
-	if want := false; user.CompletedPostSignup != want {
-		t.Errorf("got wrong CompletedPostSignUp %t, want %t", user.CompletedPostSignup, want)
-	}
 
 	if err := db.Users().Update(ctx, user.ID, UserUpdate{
 		DisplayName: pointers.Ptr(""),
@@ -593,20 +590,6 @@ func TestUsers_Update(t *testing.T) {
 	}
 	if want := "a1"; user.AvatarURL != want {
 		t.Errorf("got avatar URL %q, want %q", user.AvatarURL, want)
-	}
-
-	// Update CompletedPostSignUp
-	if err := db.Users().Update(ctx, user.ID, UserUpdate{
-		CompletedPostSignup: pointers.Ptr(true),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	user, err = db.Users().GetByID(ctx, user.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := true; user.CompletedPostSignup != want {
-		t.Errorf("got wrong CompletedPostSignUp %t, want %t", user.CompletedPostSignup, want)
 	}
 
 	// Can't update to duplicate username.
@@ -802,7 +785,7 @@ func TestUsers_Delete(t *testing.T) {
 			if _, err := db.SavedSearches().Create(ctx, &types.SavedSearch{
 				Description: "desc",
 				Query:       "foo",
-				UserID:      &user.ID,
+				Owner:       types.NamespaceUser(user.ID),
 			}); err != nil {
 				t.Fatal(err)
 			}
@@ -1371,6 +1354,38 @@ func TestUsers_CreateWithExternalAccount_NilData(t *testing.T) {
 	if diff := cmp.Diff(want, account, et.CompareEncryptable); diff != "" {
 		t.Fatalf("Mismatch (-want +got):\n%s", diff)
 	}
+}
+
+func TestUsers_CreateCancelAccessRequest(t *testing.T) {
+	if testing.Short() {
+		t.Skip()
+	}
+	t.Parallel()
+	logger := logtest.Scoped(t)
+	db := NewDB(logger, dbtest.NewDB(t))
+	ctx := context.Background()
+
+	usersStore := db.Users()
+	accessRequestsStore := db.AccessRequests()
+
+	_, err := accessRequestsStore.Create(ctx, &types.AccessRequest{
+		Email:          "a123@email.com",
+		Name:           "a123",
+		AdditionalInfo: "info1",
+	})
+	require.NoError(t, err)
+
+	_, err = usersStore.Create(ctx, NewUser{Username: "u1ted", Email: "a123@email.com", EmailVerificationCode: "e"})
+	require.NoError(t, err)
+
+	updated, _ := accessRequestsStore.GetByEmail(ctx, "a123@email.com")
+
+	assert.Equal(t, updated.Status, types.AccessRequestStatusCanceled)
+}
+
+func TestUserNotFoundFulfillsNotFound(t *testing.T) {
+	err := NewUserNotFoundError(123)
+	require.True(t, errcode.IsNotFound(err))
 }
 
 func normalizeUsers(users []*types.User) []*types.User {

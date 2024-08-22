@@ -3,12 +3,11 @@ package zoekt
 import (
 	"regexp/syntax" //nolint:depguard // using the grafana fork of regexp clashes with zoekt, which uses the std regexp/syntax.
 
-	"github.com/go-enry/go-enry/v2"
-	"github.com/grafana/regexp"
-
 	"github.com/sourcegraph/sourcegraph/internal/search"
 	"github.com/sourcegraph/sourcegraph/internal/search/query"
 	"github.com/sourcegraph/sourcegraph/internal/search/result"
+	"github.com/sourcegraph/sourcegraph/internal/search/zoektquery"
+	"github.com/sourcegraph/sourcegraph/lib/codeintel/languages"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 
 	zoekt "github.com/sourcegraph/zoekt/query"
@@ -30,35 +29,45 @@ func QueryToZoektQuery(b query.Basic, resultTypes result.Types, feat *search.Fea
 		}
 	}
 
-	// Handle file: and -file: filters.
-	filesInclude, filesExclude := b.IncludeExcludeValues(query.FieldFile)
-	// Handle lang: and -lang: filters.
-	langInclude, langExclude := b.IncludeExcludeValues(query.FieldLang)
-	filesInclude = append(filesInclude, mapSlice(langInclude, query.LangToFileRegexp)...)
-	filesExclude = append(filesExclude, mapSlice(langExclude, query.LangToFileRegexp)...)
-
 	var and []zoekt.Q
 	if q != nil {
 		and = append(and, q)
 	}
 
-	// zoekt also uses regular expressions for file paths
-	// TODO PathPatternsAreCaseSensitive
-	// TODO whitespace in file path patterns?
-	for _, i := range filesInclude {
-		q, err := FileRe(i, isCaseSensitive)
+	// Handle file: and -file: filters.
+	filesInclude, filesExclude := b.IncludeExcludeValues(query.FieldFile)
+
+	// Handle lang: and -lang: filters.
+	// By default, languages are converted to file filters. When the 'search-content-based-lang-detection'
+	// feature is enabled, we use Zoekt's native language filters, which are based on the actual language
+	// of the file (as determined by go-enry).
+	langInclude, langExclude := b.IncludeExcludeValues(query.FieldLang)
+	if feat.ContentBasedLangFilters {
+		for _, lang := range langInclude {
+			and = append(and, toLangFilter(lang))
+		}
+		for _, lang := range langExclude {
+			filter := toLangFilter(lang)
+			and = append(and, &zoekt.Not{Child: filter})
+		}
+	} else {
+		// By default, convert the language filters to file regexp patterns. Note: these
+		// are always case-insensitive, to match broadly on extensions like file.C.
+		langFilters, err := toFileFilters(
+			mapSlice(langInclude, query.LangToFileRegexp),
+			mapSlice(langExclude, query.LangToFileRegexp),
+			false)
 		if err != nil {
 			return nil, err
 		}
-		and = append(and, q)
+		and = append(and, langFilters...)
 	}
-	if len(filesExclude) > 0 {
-		q, err := FileRe(query.UnionRegExps(filesExclude), isCaseSensitive)
-		if err != nil {
-			return nil, err
-		}
-		and = append(and, &zoekt.Not{Child: q})
+
+	fileFilters, err := toFileFilters(filesInclude, filesExclude, isCaseSensitive)
+	if err != nil {
+		return nil, err
 	}
+	and = append(and, fileFilters...)
 
 	var repoHasFilters []zoekt.Q
 	for _, filter := range b.RepoHasFileContent() {
@@ -68,24 +77,33 @@ func QueryToZoektQuery(b query.Basic, resultTypes result.Types, feat *search.Fea
 		and = append(and, zoekt.NewAnd(repoHasFilters...))
 	}
 
-	// Languages are already partially expressed with IncludePatterns, but Zoekt creates
-	// more precise language metadata based on file contents analyzed by go-enry, so it's
-	// useful to pass lang: queries down.
-	//
-	// Currently, negated lang queries create filename-based ExcludePatterns that cannot be
-	// corrected by the more precise language metadata. If this is a problem, indexed search
-	// queries should have a special query converter that produces *only* Language predicates
-	// instead of filepatterns.
-	if len(langInclude) > 0 && feat.ContentBasedLangFilters {
-		or := &zoekt.Or{}
-		for _, lang := range langInclude {
-			lang, _ = enry.GetLanguageByAlias(lang) // Invariant: lang is valid.
-			or.Children = append(or.Children, &zoekt.Language{Language: lang})
-		}
-		and = append(and, or)
-	}
-
 	return zoekt.Simplify(zoekt.NewAnd(and...)), nil
+}
+
+func toLangFilter(lang string) zoekt.Q {
+	lang, _ = languages.GetLanguageByNameOrAlias(lang) // Invariant: lang is valid.
+	return &zoekt.Language{Language: lang}
+}
+
+// toFileFilters converts a list of file regexp patterns to Zoekt file filters.
+func toFileFilters(filesInclude []string, filesExclude []string, isCaseSensitive bool) ([]zoekt.Q, error) {
+	var filters []zoekt.Q
+	// TODO whitespace in file path patterns?
+	for _, i := range filesInclude {
+		q, err := zoektquery.FileRe(i, isCaseSensitive)
+		if err != nil {
+			return nil, err
+		}
+		filters = append(filters, q)
+	}
+	if len(filesExclude) > 0 {
+		q, err := zoektquery.FileRe(query.UnionRegExps(filesExclude), isCaseSensitive)
+		if err != nil {
+			return nil, err
+		}
+		filters = append(filters, &zoekt.Not{Child: q})
+	}
+	return filters, nil
 }
 
 func QueryForFileContentArgs(opt query.RepoHasFileContentArgs, caseSensitive bool) zoekt.Q {
@@ -111,53 +129,6 @@ func QueryForFileContentArgs(opt query.RepoHasFileContentArgs, caseSensitive boo
 	}
 	q = zoekt.Simplify(q)
 	return q
-}
-
-func toZoektPatternNew(expression query.Node, isCaseSensitive, patternMatchesContent, patternMatchesPath bool, typ search.IndexedRequestType) (zoekt.Q, error) {
-	q, err := zoekt.Parse(query.StringHuman([]query.Node{expression}))
-	if err != nil {
-		return nil, err
-	}
-	fileNameOnly := patternMatchesPath && !patternMatchesContent
-	contentOnly := !patternMatchesPath && patternMatchesContent
-
-	// Enforce fileNameOnly and contentOnly
-	q = zoekt.Map(q, func(r zoekt.Q) zoekt.Q {
-		if s, ok := r.(*zoekt.Regexp); ok {
-			s.CaseSensitive = isCaseSensitive
-			s.Content = contentOnly
-			s.FileName = fileNameOnly
-		}
-		if s, ok := r.(*zoekt.Substring); ok {
-			s.CaseSensitive = isCaseSensitive
-			s.Content = contentOnly
-			s.FileName = fileNameOnly
-		}
-		return r
-	})
-
-	// Need to expand the content atoms before applying zoekt.Symbol. This is
-	// so we keep the non-symbol logic of matching filename or symbol.
-	q = zoekt.Map(q, zoekt.ExpandFileContent)
-
-	// If type symbol wrap all content atoms with zoekt.Symbol.
-	if typ == search.SymbolRequest {
-		q = zoekt.Map(q, func(q zoekt.Q) zoekt.Q {
-			switch s := q.(type) {
-			case *zoekt.Substring:
-				if s.Content {
-					return &zoekt.Symbol{Expr: s}
-				}
-			case *zoekt.Regexp:
-				if s.Content {
-					return &zoekt.Symbol{Expr: s}
-				}
-			}
-			return q
-		})
-	}
-
-	return zoekt.Simplify(q), nil
 }
 
 func toZoektPattern(
@@ -190,12 +161,7 @@ func toZoektPattern(
 			fileNameOnly := patternMatchesPath && !patternMatchesContent
 			contentOnly := !patternMatchesPath && patternMatchesContent
 
-			pattern := n.Value
-			if n.Annotation.Labels.IsSet(query.Literal) {
-				pattern = regexp.QuoteMeta(pattern)
-			}
-
-			q, err = parseRe(pattern, fileNameOnly, contentOnly, isCaseSensitive)
+			q, err = zoektquery.ParseRe(n.RegExpPattern(), fileNameOnly, contentOnly, isCaseSensitive)
 			if err != nil {
 				return nil, err
 			}
@@ -210,6 +176,11 @@ func toZoektPattern(
 			if n.Negated {
 				q = &zoekt.Not{Child: q}
 			}
+
+			if n.Annotation.Labels.IsSet(query.Boost) {
+				q = &zoekt.Boost{Child: q, Boost: query.ZoektScoreBoost}
+			}
+
 			return q, nil
 		}
 		// unreachable

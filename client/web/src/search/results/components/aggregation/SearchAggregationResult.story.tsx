@@ -3,6 +3,7 @@ import type { Meta, StoryFn } from '@storybook/react'
 import { noop } from 'lodash'
 
 import { getDocumentNode } from '@sourcegraph/http-client'
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { NOOP_TELEMETRY_SERVICE } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { MockedTestProvider } from '@sourcegraph/shared/src/testing/apollo'
 import { BrandedStory } from '@sourcegraph/wildcard/src/stories'
@@ -18,9 +19,7 @@ import { SearchAggregationResult } from './SearchAggregationResult'
 
 const config: Meta = {
     title: 'web/search/results/SearchAggregationResult',
-    parameters: {
-        chromatic: { disableSnapshots: false },
-    },
+    parameters: {},
 }
 
 export default config
@@ -147,6 +146,7 @@ export const SearchAggregationResultDemo: StoryFn = () => (
                     patternType={SearchPatternType.literal}
                     caseSensitive={false}
                     telemetryService={NOOP_TELEMETRY_SERVICE}
+                    telemetryRecorder={noOpTelemetryRecorder}
                     onQuerySubmit={noop}
                 />
             </MockedTestProvider>

@@ -6,10 +6,9 @@ import (
 	"github.com/graph-gophers/graphql-go"
 	"github.com/graph-gophers/graphql-go/relay"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/envvar"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/database"
+	"github.com/sourcegraph/sourcegraph/internal/dotcom"
 	"github.com/sourcegraph/sourcegraph/internal/errcode"
 	"github.com/sourcegraph/sourcegraph/internal/gqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/notebooks"
@@ -354,12 +353,12 @@ func (n *notebookConnectionResolver) TotalCount(ctx context.Context) int32 {
 	return n.totalCount
 }
 
-func (n *notebookConnectionResolver) PageInfo(ctx context.Context) *graphqlutil.PageInfo {
+func (n *notebookConnectionResolver) PageInfo(ctx context.Context) *gqlutil.PageInfo {
 	if len(n.notebooks) == 0 || !n.hasNextPage {
-		return graphqlutil.HasNextPage(false)
+		return gqlutil.HasNextPage(false)
 	}
 	// The after value (offset) for the next page is computed from the current after value + the number of retrieved notebooks
-	return graphqlutil.NextPageCursor(marshalNotebookCursor(n.afterCursor + int64(len(n.notebooks))))
+	return gqlutil.NextPageCursor(marshalNotebookCursor(n.afterCursor + int64(len(n.notebooks))))
 }
 
 type notebookResolver struct {
@@ -431,7 +430,7 @@ func (r *notebookResolver) Namespace(ctx context.Context) (*graphqlbackend.Names
 			// On Cloud, the user can have access to an org notebook if it is public. But if the user is not a member of
 			// that org, then he does not have access to further information about the org. Instead of returning an error
 			// (which would prevent the user from viewing the notebook) we return an empty namespace.
-			if envvar.SourcegraphDotComMode() && errors.HasType(err, &database.OrgNotFoundError{}) {
+			if dotcom.SourcegraphDotComMode() && errors.HasType[*database.OrgNotFoundError](err) {
 				return nil, nil
 			}
 			return nil, err
@@ -511,6 +510,10 @@ func (r *notebookBlockResolver) ToSymbolBlock() (graphqlbackend.SymbolBlockResol
 		return &symbolBlockResolver{r.block}, true
 	}
 	return nil, false
+}
+
+func (r *notebookResolver) PatternType(_ context.Context) string {
+	return r.notebook.PatternType
 }
 
 type markdownBlockResolver struct {

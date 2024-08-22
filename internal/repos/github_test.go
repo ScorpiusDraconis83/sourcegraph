@@ -174,8 +174,8 @@ func TestPublicRepos_PaginationTerminatesGracefully(t *testing.T) {
 	if count != 100 {
 		t.Errorf("unexpected repo count, wanted: 100, but got: %d", count)
 	}
-	if countArchived != 1 {
-		t.Errorf("unexpected archived repo count, wanted: 1, but got: %d", countArchived)
+	if countArchived != 2 {
+		t.Errorf("unexpected archived repo count, wanted: 2, but got: %d", countArchived)
 	}
 }
 
@@ -1067,6 +1067,35 @@ func TestRepositoryQuery_DoSingleRequest(t *testing.T) {
 			testutil.AssertGolden(t, "testdata/golden/"+t.Name(), Update(t.Name()), have)
 		})
 	}
+}
+
+func TestGitHubSource_InternalRepositories(t *testing.T) {
+	conf := &schema.GitHubConnection{
+		Url:             "https://ghe.sgdev.org",
+		Token:           os.Getenv("GITHUB_ACCESS_TOKEN"),
+		RepositoryQuery: []string{"internal"},
+	}
+
+	// The GitHubSource uses the github.Client under the hood, which
+	// uses rcache, a caching layer that uses Redis.
+	// We need to clear the cache before we run the tests
+	rcache.SetupForTest(t)
+
+	cf, save := NewClientFactory(t, t.Name())
+	defer save(t)
+
+	svc := typestest.MakeExternalService(t, extsvc.VariantGitHub, conf)
+
+	ctx := context.Background()
+	githubSrc, err := NewGitHubSource(ctx, logtest.Scoped(t), dbmocks.NewMockDB(), svc, cf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	repos, err := ListAll(context.Background(), githubSrc)
+	require.NoError(t, err)
+
+	testutil.AssertGolden(t, "testdata/golden/"+t.Name(), Update(t.Name()), repos)
 }
 
 func TestGithubSource_SearchRepositories(t *testing.T) {

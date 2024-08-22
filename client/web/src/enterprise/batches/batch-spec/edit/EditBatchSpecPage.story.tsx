@@ -4,6 +4,7 @@ import { MATCH_ANY_PARAMETERS, WildcardMockLink } from 'wildcard-mock-link'
 import { getDocumentNode } from '@sourcegraph/http-client'
 import type { OrgSettingFields, UserSettingFields } from '@sourcegraph/shared/src/graphql-operations'
 import { EMPTY_SETTINGS_CASCADE } from '@sourcegraph/shared/src/settings/settings'
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { MockedTestProvider } from '@sourcegraph/shared/src/testing/apollo'
 
 import type { AuthenticatedUser } from '../../../../auth'
@@ -94,7 +95,6 @@ const FIRST_TIME_MOCKS = new WildcardMockLink([
 const MOCK_ORGANIZATION = {
     __typename: 'Org',
     name: 'acme-corp',
-    displayName: 'ACME Corporation',
     id: 'acme-corp-id',
 }
 
@@ -115,6 +115,7 @@ export const EditFirstTime: StoryFn<WebStoryChildrenProps> = props => (
             namespace={{ __typename: 'User', url: '', id: 'test1234' }}
             settingsCascade={SETTINGS_CASCADE}
             authenticatedUser={mockAuthenticatedUser}
+            telemetryRecorder={noOpTelemetryRecorder}
         />
     </MockedTestProvider>
 )
@@ -157,6 +158,7 @@ export const EditLatestBatchSpec: StoryFn<WebStoryChildrenProps> = props => (
             namespace={{ __typename: 'User', url: '', id: 'test1234' }}
             settingsCascade={SETTINGS_CASCADE}
             authenticatedUser={mockAuthenticatedUser}
+            telemetryRecorder={noOpTelemetryRecorder}
         />
     </MockedTestProvider>
 )
@@ -183,6 +185,7 @@ export const BatchChangeNotFound: StoryFn<WebStoryChildrenProps> = props => (
             namespace={{ __typename: 'User', url: '', id: 'test1234' }}
             settingsCascade={SETTINGS_CASCADE}
             authenticatedUser={mockAuthenticatedUser}
+            telemetryRecorder={noOpTelemetryRecorder}
         />
     </MockedTestProvider>
 )
@@ -209,6 +212,7 @@ export const InvalidBatchSpec: StoryFn<WebStoryChildrenProps> = props => (
             namespace={{ __typename: 'User', url: '', id: 'test1234' }}
             settingsCascade={SETTINGS_CASCADE}
             authenticatedUser={mockAuthenticatedUser}
+            telemetryRecorder={noOpTelemetryRecorder}
         />
     </MockedTestProvider>
 )
@@ -235,6 +239,7 @@ export const ExecutorsNotActive: StoryFn<WebStoryChildrenProps> = props => (
             namespace={{ __typename: 'User', url: '', id: 'test1234' }}
             settingsCascade={SETTINGS_CASCADE}
             authenticatedUser={mockAuthenticatedUser}
+            telemetryRecorder={noOpTelemetryRecorder}
         />
     </MockedTestProvider>
 )

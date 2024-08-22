@@ -1,14 +1,14 @@
-import React, { useState } from 'react'
+import React from 'react'
 
-import { mdiCheckCircleOutline, mdiCheckboxBlankCircleOutline, mdiCogOutline, mdiDelete, mdiOpenInNew } from '@mdi/js'
+import { mdiCheckboxBlankCircleOutline, mdiCheckCircleOutline } from '@mdi/js'
 import classNames from 'classnames'
 
-import { AnchorLink, Button, ButtonLink, H3, Icon, Link, Text } from '@sourcegraph/wildcard'
+import { H3, Icon, Text } from '@sourcegraph/wildcard'
 
 import { defaultExternalServices } from '../../../components/externalServices/externalServices'
-import { AppLogo } from '../../../components/gitHubApps/AppLogo'
-import { RemoveGitHubAppModal } from '../../../components/gitHubApps/RemoveGitHubAppModal'
 import type { BatchChangesCodeHostFields } from '../../../graphql-operations'
+
+import { GitHubAppControls } from './GitHubAppControls'
 
 import styles from './CommitSigningIntegrationNode.module.scss'
 
@@ -51,7 +51,7 @@ export const CommitSigningIntegrationNode: React.FunctionComponent<
                 {readOnly ? (
                     <ReadOnlyAppDetails config={node.commitSigningConfiguration} />
                 ) : (
-                    <AppDetailsControls
+                    <GitHubAppControls
                         baseURL={node.externalServiceURL}
                         config={node.commitSigningConfiguration}
                         refetch={refetch}
@@ -59,65 +59,6 @@ export const CommitSigningIntegrationNode: React.FunctionComponent<
                 )}
             </div>
         </li>
-    )
-}
-
-interface AppDetailsControlsProps {
-    baseURL: string
-    config: BatchChangesCodeHostFields['commitSigningConfiguration']
-    refetch: () => void
-}
-
-const AppDetailsControls: React.FunctionComponent<AppDetailsControlsProps> = ({ baseURL, config, refetch }) => {
-    const [removeModalOpen, setRemoveModalOpen] = useState<boolean>(false)
-
-    const createURL = `/site-admin/batch-changes/github-apps/new?baseURL=${encodeURIComponent(baseURL)}`
-    return config ? (
-        <>
-            {removeModalOpen && (
-                <RemoveGitHubAppModal onCancel={() => setRemoveModalOpen(false)} afterDelete={refetch} app={config} />
-            )}
-            <div className="d-flex align-items-center">
-                <AppLogo src={config.logo} name={config.name} className={classNames(styles.appLogoLarge, 'mr-2')} />
-
-                <div className={styles.appDetailsColumn}>
-                    <Text size="small" className="font-weight-bold mb-0">
-                        {config.name}
-                    </Text>
-                    <Text size="small" className="text-muted mb-0">
-                        AppID: {config.appID}
-                    </Text>
-                </div>
-            </div>
-            <div className="ml-auto">
-                <AnchorLink to={config.appURL} target="_blank" className="mr-3">
-                    <small>
-                        View In GitHub <Icon inline={true} svgPath={mdiOpenInNew} aria-hidden={true} />
-                    </small>
-                </AnchorLink>
-                <ButtonLink
-                    className="mr-2"
-                    aria-label="Edit"
-                    to={`github-apps/${config.id}`}
-                    variant="secondary"
-                    size="sm"
-                >
-                    <Icon aria-hidden={true} svgPath={mdiCogOutline} /> Edit
-                </ButtonLink>
-                <Button
-                    aria-label="Remove GitHub App"
-                    onClick={() => setRemoveModalOpen(true)}
-                    variant="danger"
-                    size="sm"
-                >
-                    <Icon aria-hidden={true} svgPath={mdiDelete} /> Remove
-                </Button>
-            </div>
-        </>
-    ) : (
-        <ButtonLink to={createURL} className="ml-auto text-nowrap" variant="success" as={Link} size="sm">
-            Create GitHub App
-        </ButtonLink>
     )
 }
 

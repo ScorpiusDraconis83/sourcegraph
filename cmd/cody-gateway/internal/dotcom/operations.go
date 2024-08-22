@@ -10,135 +10,6 @@ import (
 	"github.com/sourcegraph/sourcegraph/cmd/cody-gateway/internal/dotcom/genhelper"
 )
 
-// CheckAccessTokenDotcomDotcomQuery includes the requested fields of the GraphQL type DotcomQuery.
-// The GraphQL type's documentation follows.
-//
-// Mutations that are only used on Sourcegraph.com.
-// FOR INTERNAL USE ONLY.
-type CheckAccessTokenDotcomDotcomQuery struct {
-	// The access available to the product subscription with the given access token.
-	// The returned ProductSubscription may be archived or not associated with an active license.
-	//
-	// Only Sourcegraph.com site admins, the account owners of the product subscription, and
-	// specific service accounts may perform this query.
-	// FOR INTERNAL USE ONLY.
-	ProductSubscriptionByAccessToken CheckAccessTokenDotcomDotcomQueryProductSubscriptionByAccessTokenProductSubscription `json:"productSubscriptionByAccessToken"`
-}
-
-// GetProductSubscriptionByAccessToken returns CheckAccessTokenDotcomDotcomQuery.ProductSubscriptionByAccessToken, and is useful for accessing the field via an interface.
-func (v *CheckAccessTokenDotcomDotcomQuery) GetProductSubscriptionByAccessToken() CheckAccessTokenDotcomDotcomQueryProductSubscriptionByAccessTokenProductSubscription {
-	return v.ProductSubscriptionByAccessToken
-}
-
-// CheckAccessTokenDotcomDotcomQueryProductSubscriptionByAccessTokenProductSubscription includes the requested fields of the GraphQL type ProductSubscription.
-// The GraphQL type's documentation follows.
-//
-// A product subscription that was created on Sourcegraph.com.
-// FOR INTERNAL USE ONLY.
-type CheckAccessTokenDotcomDotcomQueryProductSubscriptionByAccessTokenProductSubscription struct {
-	ProductSubscriptionState `json:"-"`
-}
-
-// GetId returns CheckAccessTokenDotcomDotcomQueryProductSubscriptionByAccessTokenProductSubscription.Id, and is useful for accessing the field via an interface.
-func (v *CheckAccessTokenDotcomDotcomQueryProductSubscriptionByAccessTokenProductSubscription) GetId() string {
-	return v.ProductSubscriptionState.Id
-}
-
-// GetUuid returns CheckAccessTokenDotcomDotcomQueryProductSubscriptionByAccessTokenProductSubscription.Uuid, and is useful for accessing the field via an interface.
-func (v *CheckAccessTokenDotcomDotcomQueryProductSubscriptionByAccessTokenProductSubscription) GetUuid() string {
-	return v.ProductSubscriptionState.Uuid
-}
-
-// GetAccount returns CheckAccessTokenDotcomDotcomQueryProductSubscriptionByAccessTokenProductSubscription.Account, and is useful for accessing the field via an interface.
-func (v *CheckAccessTokenDotcomDotcomQueryProductSubscriptionByAccessTokenProductSubscription) GetAccount() *ProductSubscriptionStateAccountUser {
-	return v.ProductSubscriptionState.Account
-}
-
-// GetIsArchived returns CheckAccessTokenDotcomDotcomQueryProductSubscriptionByAccessTokenProductSubscription.IsArchived, and is useful for accessing the field via an interface.
-func (v *CheckAccessTokenDotcomDotcomQueryProductSubscriptionByAccessTokenProductSubscription) GetIsArchived() bool {
-	return v.ProductSubscriptionState.IsArchived
-}
-
-// GetCodyGatewayAccess returns CheckAccessTokenDotcomDotcomQueryProductSubscriptionByAccessTokenProductSubscription.CodyGatewayAccess, and is useful for accessing the field via an interface.
-func (v *CheckAccessTokenDotcomDotcomQueryProductSubscriptionByAccessTokenProductSubscription) GetCodyGatewayAccess() ProductSubscriptionStateCodyGatewayAccess {
-	return v.ProductSubscriptionState.CodyGatewayAccess
-}
-
-// GetActiveLicense returns CheckAccessTokenDotcomDotcomQueryProductSubscriptionByAccessTokenProductSubscription.ActiveLicense, and is useful for accessing the field via an interface.
-func (v *CheckAccessTokenDotcomDotcomQueryProductSubscriptionByAccessTokenProductSubscription) GetActiveLicense() *ProductSubscriptionStateActiveLicenseProductLicense {
-	return v.ProductSubscriptionState.ActiveLicense
-}
-
-func (v *CheckAccessTokenDotcomDotcomQueryProductSubscriptionByAccessTokenProductSubscription) UnmarshalJSON(b []byte) error {
-
-	if string(b) == "null" {
-		return nil
-	}
-
-	var firstPass struct {
-		*CheckAccessTokenDotcomDotcomQueryProductSubscriptionByAccessTokenProductSubscription
-		graphql.NoUnmarshalJSON
-	}
-	firstPass.CheckAccessTokenDotcomDotcomQueryProductSubscriptionByAccessTokenProductSubscription = v
-
-	err := json.Unmarshal(b, &firstPass)
-	if err != nil {
-		return err
-	}
-
-	err = json.Unmarshal(
-		b, &v.ProductSubscriptionState)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-type __premarshalCheckAccessTokenDotcomDotcomQueryProductSubscriptionByAccessTokenProductSubscription struct {
-	Id string `json:"id"`
-
-	Uuid string `json:"uuid"`
-
-	Account *ProductSubscriptionStateAccountUser `json:"account"`
-
-	IsArchived bool `json:"isArchived"`
-
-	CodyGatewayAccess ProductSubscriptionStateCodyGatewayAccess `json:"codyGatewayAccess"`
-
-	ActiveLicense *ProductSubscriptionStateActiveLicenseProductLicense `json:"activeLicense"`
-}
-
-func (v *CheckAccessTokenDotcomDotcomQueryProductSubscriptionByAccessTokenProductSubscription) MarshalJSON() ([]byte, error) {
-	premarshaled, err := v.__premarshalJSON()
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(premarshaled)
-}
-
-func (v *CheckAccessTokenDotcomDotcomQueryProductSubscriptionByAccessTokenProductSubscription) __premarshalJSON() (*__premarshalCheckAccessTokenDotcomDotcomQueryProductSubscriptionByAccessTokenProductSubscription, error) {
-	var retval __premarshalCheckAccessTokenDotcomDotcomQueryProductSubscriptionByAccessTokenProductSubscription
-
-	retval.Id = v.ProductSubscriptionState.Id
-	retval.Uuid = v.ProductSubscriptionState.Uuid
-	retval.Account = v.ProductSubscriptionState.Account
-	retval.IsArchived = v.ProductSubscriptionState.IsArchived
-	retval.CodyGatewayAccess = v.ProductSubscriptionState.CodyGatewayAccess
-	retval.ActiveLicense = v.ProductSubscriptionState.ActiveLicense
-	return &retval, nil
-}
-
-// CheckAccessTokenResponse is returned by CheckAccessToken on success.
-type CheckAccessTokenResponse struct {
-	// Queries that are only used on Sourcegraph.com.
-	//
-	// FOR INTERNAL USE ONLY.
-	Dotcom CheckAccessTokenDotcomDotcomQuery `json:"dotcom"`
-}
-
-// GetDotcom returns CheckAccessTokenResponse.Dotcom, and is useful for accessing the field via an interface.
-func (v *CheckAccessTokenResponse) GetDotcom() CheckAccessTokenDotcomDotcomQuery { return v.Dotcom }
-
 // CheckDotcomUserAccessTokenDotcomDotcomQuery includes the requested fields of the GraphQL type DotcomQuery.
 // The GraphQL type's documentation follows.
 //
@@ -642,463 +513,6 @@ func (v *DotcomUserStateCodyGatewayAccess) __premarshalJSON() (*__premarshalDotc
 	return &retval, nil
 }
 
-// ListProductSubscriptionFields includes the GraphQL fields of ProductSubscription requested by the fragment ListProductSubscriptionFields.
-// The GraphQL type's documentation follows.
-//
-// A product subscription that was created on Sourcegraph.com.
-// FOR INTERNAL USE ONLY.
-type ListProductSubscriptionFields struct {
-	ProductSubscriptionState `json:"-"`
-	// Available access tokens for authenticating as the subscription holder with managed
-	// Sourcegraph services.
-	SourcegraphAccessTokens []string `json:"sourcegraphAccessTokens"`
-}
-
-// GetSourcegraphAccessTokens returns ListProductSubscriptionFields.SourcegraphAccessTokens, and is useful for accessing the field via an interface.
-func (v *ListProductSubscriptionFields) GetSourcegraphAccessTokens() []string {
-	return v.SourcegraphAccessTokens
-}
-
-// GetId returns ListProductSubscriptionFields.Id, and is useful for accessing the field via an interface.
-func (v *ListProductSubscriptionFields) GetId() string { return v.ProductSubscriptionState.Id }
-
-// GetUuid returns ListProductSubscriptionFields.Uuid, and is useful for accessing the field via an interface.
-func (v *ListProductSubscriptionFields) GetUuid() string { return v.ProductSubscriptionState.Uuid }
-
-// GetAccount returns ListProductSubscriptionFields.Account, and is useful for accessing the field via an interface.
-func (v *ListProductSubscriptionFields) GetAccount() *ProductSubscriptionStateAccountUser {
-	return v.ProductSubscriptionState.Account
-}
-
-// GetIsArchived returns ListProductSubscriptionFields.IsArchived, and is useful for accessing the field via an interface.
-func (v *ListProductSubscriptionFields) GetIsArchived() bool {
-	return v.ProductSubscriptionState.IsArchived
-}
-
-// GetCodyGatewayAccess returns ListProductSubscriptionFields.CodyGatewayAccess, and is useful for accessing the field via an interface.
-func (v *ListProductSubscriptionFields) GetCodyGatewayAccess() ProductSubscriptionStateCodyGatewayAccess {
-	return v.ProductSubscriptionState.CodyGatewayAccess
-}
-
-// GetActiveLicense returns ListProductSubscriptionFields.ActiveLicense, and is useful for accessing the field via an interface.
-func (v *ListProductSubscriptionFields) GetActiveLicense() *ProductSubscriptionStateActiveLicenseProductLicense {
-	return v.ProductSubscriptionState.ActiveLicense
-}
-
-func (v *ListProductSubscriptionFields) UnmarshalJSON(b []byte) error {
-
-	if string(b) == "null" {
-		return nil
-	}
-
-	var firstPass struct {
-		*ListProductSubscriptionFields
-		graphql.NoUnmarshalJSON
-	}
-	firstPass.ListProductSubscriptionFields = v
-
-	err := json.Unmarshal(b, &firstPass)
-	if err != nil {
-		return err
-	}
-
-	err = json.Unmarshal(
-		b, &v.ProductSubscriptionState)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-type __premarshalListProductSubscriptionFields struct {
-	SourcegraphAccessTokens []string `json:"sourcegraphAccessTokens"`
-
-	Id string `json:"id"`
-
-	Uuid string `json:"uuid"`
-
-	Account *ProductSubscriptionStateAccountUser `json:"account"`
-
-	IsArchived bool `json:"isArchived"`
-
-	CodyGatewayAccess ProductSubscriptionStateCodyGatewayAccess `json:"codyGatewayAccess"`
-
-	ActiveLicense *ProductSubscriptionStateActiveLicenseProductLicense `json:"activeLicense"`
-}
-
-func (v *ListProductSubscriptionFields) MarshalJSON() ([]byte, error) {
-	premarshaled, err := v.__premarshalJSON()
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(premarshaled)
-}
-
-func (v *ListProductSubscriptionFields) __premarshalJSON() (*__premarshalListProductSubscriptionFields, error) {
-	var retval __premarshalListProductSubscriptionFields
-
-	retval.SourcegraphAccessTokens = v.SourcegraphAccessTokens
-	retval.Id = v.ProductSubscriptionState.Id
-	retval.Uuid = v.ProductSubscriptionState.Uuid
-	retval.Account = v.ProductSubscriptionState.Account
-	retval.IsArchived = v.ProductSubscriptionState.IsArchived
-	retval.CodyGatewayAccess = v.ProductSubscriptionState.CodyGatewayAccess
-	retval.ActiveLicense = v.ProductSubscriptionState.ActiveLicense
-	return &retval, nil
-}
-
-// ListProductSubscriptionsDotcomDotcomQuery includes the requested fields of the GraphQL type DotcomQuery.
-// The GraphQL type's documentation follows.
-//
-// Mutations that are only used on Sourcegraph.com.
-// FOR INTERNAL USE ONLY.
-type ListProductSubscriptionsDotcomDotcomQuery struct {
-	// A list of product subscriptions.
-	// FOR INTERNAL USE ONLY.
-	ProductSubscriptions ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnection `json:"productSubscriptions"`
-}
-
-// GetProductSubscriptions returns ListProductSubscriptionsDotcomDotcomQuery.ProductSubscriptions, and is useful for accessing the field via an interface.
-func (v *ListProductSubscriptionsDotcomDotcomQuery) GetProductSubscriptions() ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnection {
-	return v.ProductSubscriptions
-}
-
-// ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnection includes the requested fields of the GraphQL type ProductSubscriptionConnection.
-// The GraphQL type's documentation follows.
-//
-// A list of product subscriptions.
-// FOR INTERNAL USE ONLY.
-type ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnection struct {
-	// The total count of product subscriptions in the connection. This total count may be larger than the number of
-	// nodes in this object when the result is paginated.
-	TotalCount int `json:"totalCount"`
-	// Pagination information.
-	PageInfo ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionPageInfo `json:"pageInfo"`
-	// A list of product subscriptions.
-	Nodes []ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionNodesProductSubscription `json:"nodes"`
-}
-
-// GetTotalCount returns ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnection.TotalCount, and is useful for accessing the field via an interface.
-func (v *ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnection) GetTotalCount() int {
-	return v.TotalCount
-}
-
-// GetPageInfo returns ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnection.PageInfo, and is useful for accessing the field via an interface.
-func (v *ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnection) GetPageInfo() ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionPageInfo {
-	return v.PageInfo
-}
-
-// GetNodes returns ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnection.Nodes, and is useful for accessing the field via an interface.
-func (v *ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnection) GetNodes() []ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionNodesProductSubscription {
-	return v.Nodes
-}
-
-// ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionNodesProductSubscription includes the requested fields of the GraphQL type ProductSubscription.
-// The GraphQL type's documentation follows.
-//
-// A product subscription that was created on Sourcegraph.com.
-// FOR INTERNAL USE ONLY.
-type ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionNodesProductSubscription struct {
-	ListProductSubscriptionFields `json:"-"`
-}
-
-// GetSourcegraphAccessTokens returns ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionNodesProductSubscription.SourcegraphAccessTokens, and is useful for accessing the field via an interface.
-func (v *ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionNodesProductSubscription) GetSourcegraphAccessTokens() []string {
-	return v.ListProductSubscriptionFields.SourcegraphAccessTokens
-}
-
-// GetId returns ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionNodesProductSubscription.Id, and is useful for accessing the field via an interface.
-func (v *ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionNodesProductSubscription) GetId() string {
-	return v.ListProductSubscriptionFields.ProductSubscriptionState.Id
-}
-
-// GetUuid returns ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionNodesProductSubscription.Uuid, and is useful for accessing the field via an interface.
-func (v *ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionNodesProductSubscription) GetUuid() string {
-	return v.ListProductSubscriptionFields.ProductSubscriptionState.Uuid
-}
-
-// GetAccount returns ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionNodesProductSubscription.Account, and is useful for accessing the field via an interface.
-func (v *ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionNodesProductSubscription) GetAccount() *ProductSubscriptionStateAccountUser {
-	return v.ListProductSubscriptionFields.ProductSubscriptionState.Account
-}
-
-// GetIsArchived returns ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionNodesProductSubscription.IsArchived, and is useful for accessing the field via an interface.
-func (v *ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionNodesProductSubscription) GetIsArchived() bool {
-	return v.ListProductSubscriptionFields.ProductSubscriptionState.IsArchived
-}
-
-// GetCodyGatewayAccess returns ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionNodesProductSubscription.CodyGatewayAccess, and is useful for accessing the field via an interface.
-func (v *ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionNodesProductSubscription) GetCodyGatewayAccess() ProductSubscriptionStateCodyGatewayAccess {
-	return v.ListProductSubscriptionFields.ProductSubscriptionState.CodyGatewayAccess
-}
-
-// GetActiveLicense returns ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionNodesProductSubscription.ActiveLicense, and is useful for accessing the field via an interface.
-func (v *ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionNodesProductSubscription) GetActiveLicense() *ProductSubscriptionStateActiveLicenseProductLicense {
-	return v.ListProductSubscriptionFields.ProductSubscriptionState.ActiveLicense
-}
-
-func (v *ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionNodesProductSubscription) UnmarshalJSON(b []byte) error {
-
-	if string(b) == "null" {
-		return nil
-	}
-
-	var firstPass struct {
-		*ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionNodesProductSubscription
-		graphql.NoUnmarshalJSON
-	}
-	firstPass.ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionNodesProductSubscription = v
-
-	err := json.Unmarshal(b, &firstPass)
-	if err != nil {
-		return err
-	}
-
-	err = json.Unmarshal(
-		b, &v.ListProductSubscriptionFields)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-type __premarshalListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionNodesProductSubscription struct {
-	SourcegraphAccessTokens []string `json:"sourcegraphAccessTokens"`
-
-	Id string `json:"id"`
-
-	Uuid string `json:"uuid"`
-
-	Account *ProductSubscriptionStateAccountUser `json:"account"`
-
-	IsArchived bool `json:"isArchived"`
-
-	CodyGatewayAccess ProductSubscriptionStateCodyGatewayAccess `json:"codyGatewayAccess"`
-
-	ActiveLicense *ProductSubscriptionStateActiveLicenseProductLicense `json:"activeLicense"`
-}
-
-func (v *ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionNodesProductSubscription) MarshalJSON() ([]byte, error) {
-	premarshaled, err := v.__premarshalJSON()
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(premarshaled)
-}
-
-func (v *ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionNodesProductSubscription) __premarshalJSON() (*__premarshalListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionNodesProductSubscription, error) {
-	var retval __premarshalListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionNodesProductSubscription
-
-	retval.SourcegraphAccessTokens = v.ListProductSubscriptionFields.SourcegraphAccessTokens
-	retval.Id = v.ListProductSubscriptionFields.ProductSubscriptionState.Id
-	retval.Uuid = v.ListProductSubscriptionFields.ProductSubscriptionState.Uuid
-	retval.Account = v.ListProductSubscriptionFields.ProductSubscriptionState.Account
-	retval.IsArchived = v.ListProductSubscriptionFields.ProductSubscriptionState.IsArchived
-	retval.CodyGatewayAccess = v.ListProductSubscriptionFields.ProductSubscriptionState.CodyGatewayAccess
-	retval.ActiveLicense = v.ListProductSubscriptionFields.ProductSubscriptionState.ActiveLicense
-	return &retval, nil
-}
-
-// ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionPageInfo includes the requested fields of the GraphQL type PageInfo.
-// The GraphQL type's documentation follows.
-//
-// Pagination information for forward-only pagination. See https://facebook.github.io/relay/graphql/connections.htm#sec-undefined.PageInfo.
-type ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionPageInfo struct {
-	// When paginating forwards, the cursor to continue.
-	EndCursor *string `json:"endCursor"`
-	// When paginating forwards, are there more items?
-	HasNextPage bool `json:"hasNextPage"`
-}
-
-// GetEndCursor returns ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionPageInfo.EndCursor, and is useful for accessing the field via an interface.
-func (v *ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionPageInfo) GetEndCursor() *string {
-	return v.EndCursor
-}
-
-// GetHasNextPage returns ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionPageInfo.HasNextPage, and is useful for accessing the field via an interface.
-func (v *ListProductSubscriptionsDotcomDotcomQueryProductSubscriptionsProductSubscriptionConnectionPageInfo) GetHasNextPage() bool {
-	return v.HasNextPage
-}
-
-// ListProductSubscriptionsResponse is returned by ListProductSubscriptions on success.
-type ListProductSubscriptionsResponse struct {
-	// Queries that are only used on Sourcegraph.com.
-	//
-	// FOR INTERNAL USE ONLY.
-	Dotcom ListProductSubscriptionsDotcomDotcomQuery `json:"dotcom"`
-}
-
-// GetDotcom returns ListProductSubscriptionsResponse.Dotcom, and is useful for accessing the field via an interface.
-func (v *ListProductSubscriptionsResponse) GetDotcom() ListProductSubscriptionsDotcomDotcomQuery {
-	return v.Dotcom
-}
-
-// ProductSubscriptionState includes the GraphQL fields of ProductSubscription requested by the fragment ProductSubscriptionState.
-// The GraphQL type's documentation follows.
-//
-// A product subscription that was created on Sourcegraph.com.
-// FOR INTERNAL USE ONLY.
-type ProductSubscriptionState struct {
-	// The unique ID of this product subscription.
-	Id string `json:"id"`
-	// The unique UUID of this product subscription. Unlike ProductSubscription.id, this does not
-	// encode the type and is not a GraphQL node ID.
-	Uuid string `json:"uuid"`
-	// The user (i.e., customer) to whom this subscription is granted, or null if the account has been deleted.
-	Account *ProductSubscriptionStateAccountUser `json:"account"`
-	// Whether this product subscription was archived.
-	IsArchived bool `json:"isArchived"`
-	// Cody Gateway access granted to this subscription. Properties may be inferred from the active license, or be defined in overrides.
-	CodyGatewayAccess ProductSubscriptionStateCodyGatewayAccess `json:"codyGatewayAccess"`
-	// The currently active product license associated with this product subscription, if any.
-	ActiveLicense *ProductSubscriptionStateActiveLicenseProductLicense `json:"activeLicense"`
-}
-
-// GetId returns ProductSubscriptionState.Id, and is useful for accessing the field via an interface.
-func (v *ProductSubscriptionState) GetId() string { return v.Id }
-
-// GetUuid returns ProductSubscriptionState.Uuid, and is useful for accessing the field via an interface.
-func (v *ProductSubscriptionState) GetUuid() string { return v.Uuid }
-
-// GetAccount returns ProductSubscriptionState.Account, and is useful for accessing the field via an interface.
-func (v *ProductSubscriptionState) GetAccount() *ProductSubscriptionStateAccountUser {
-	return v.Account
-}
-
-// GetIsArchived returns ProductSubscriptionState.IsArchived, and is useful for accessing the field via an interface.
-func (v *ProductSubscriptionState) GetIsArchived() bool { return v.IsArchived }
-
-// GetCodyGatewayAccess returns ProductSubscriptionState.CodyGatewayAccess, and is useful for accessing the field via an interface.
-func (v *ProductSubscriptionState) GetCodyGatewayAccess() ProductSubscriptionStateCodyGatewayAccess {
-	return v.CodyGatewayAccess
-}
-
-// GetActiveLicense returns ProductSubscriptionState.ActiveLicense, and is useful for accessing the field via an interface.
-func (v *ProductSubscriptionState) GetActiveLicense() *ProductSubscriptionStateActiveLicenseProductLicense {
-	return v.ActiveLicense
-}
-
-// ProductSubscriptionStateAccountUser includes the requested fields of the GraphQL type User.
-// The GraphQL type's documentation follows.
-//
-// A user.
-type ProductSubscriptionStateAccountUser struct {
-	// The user's username.
-	Username string `json:"username"`
-}
-
-// GetUsername returns ProductSubscriptionStateAccountUser.Username, and is useful for accessing the field via an interface.
-func (v *ProductSubscriptionStateAccountUser) GetUsername() string { return v.Username }
-
-// ProductSubscriptionStateActiveLicenseProductLicense includes the requested fields of the GraphQL type ProductLicense.
-// The GraphQL type's documentation follows.
-//
-// A product license that was created on Sourcegraph.com.
-// FOR INTERNAL USE ONLY.
-type ProductSubscriptionStateActiveLicenseProductLicense struct {
-	// Information about this product license.
-	Info *ProductSubscriptionStateActiveLicenseProductLicenseInfo `json:"info"`
-}
-
-// GetInfo returns ProductSubscriptionStateActiveLicenseProductLicense.Info, and is useful for accessing the field via an interface.
-func (v *ProductSubscriptionStateActiveLicenseProductLicense) GetInfo() *ProductSubscriptionStateActiveLicenseProductLicenseInfo {
-	return v.Info
-}
-
-// ProductSubscriptionStateActiveLicenseProductLicenseInfo includes the requested fields of the GraphQL type ProductLicenseInfo.
-// The GraphQL type's documentation follows.
-//
-// Information about this site's product license (which activates certain Sourcegraph features).
-type ProductSubscriptionStateActiveLicenseProductLicenseInfo struct {
-	// Tags indicating the product plan and features activated by this license.
-	Tags []string `json:"tags"`
-}
-
-// GetTags returns ProductSubscriptionStateActiveLicenseProductLicenseInfo.Tags, and is useful for accessing the field via an interface.
-func (v *ProductSubscriptionStateActiveLicenseProductLicenseInfo) GetTags() []string { return v.Tags }
-
-// ProductSubscriptionStateCodyGatewayAccess includes the requested fields of the GraphQL type CodyGatewayAccess.
-// The GraphQL type's documentation follows.
-//
-// Cody Gateway access granted to a subscription.
-// FOR INTERNAL USE ONLY.
-type ProductSubscriptionStateCodyGatewayAccess struct {
-	CodyGatewayAccessFields `json:"-"`
-}
-
-// GetEnabled returns ProductSubscriptionStateCodyGatewayAccess.Enabled, and is useful for accessing the field via an interface.
-func (v *ProductSubscriptionStateCodyGatewayAccess) GetEnabled() bool {
-	return v.CodyGatewayAccessFields.Enabled
-}
-
-// GetChatCompletionsRateLimit returns ProductSubscriptionStateCodyGatewayAccess.ChatCompletionsRateLimit, and is useful for accessing the field via an interface.
-func (v *ProductSubscriptionStateCodyGatewayAccess) GetChatCompletionsRateLimit() *CodyGatewayAccessFieldsChatCompletionsRateLimitCodyGatewayRateLimit {
-	return v.CodyGatewayAccessFields.ChatCompletionsRateLimit
-}
-
-// GetCodeCompletionsRateLimit returns ProductSubscriptionStateCodyGatewayAccess.CodeCompletionsRateLimit, and is useful for accessing the field via an interface.
-func (v *ProductSubscriptionStateCodyGatewayAccess) GetCodeCompletionsRateLimit() *CodyGatewayAccessFieldsCodeCompletionsRateLimitCodyGatewayRateLimit {
-	return v.CodyGatewayAccessFields.CodeCompletionsRateLimit
-}
-
-// GetEmbeddingsRateLimit returns ProductSubscriptionStateCodyGatewayAccess.EmbeddingsRateLimit, and is useful for accessing the field via an interface.
-func (v *ProductSubscriptionStateCodyGatewayAccess) GetEmbeddingsRateLimit() *CodyGatewayAccessFieldsEmbeddingsRateLimitCodyGatewayRateLimit {
-	return v.CodyGatewayAccessFields.EmbeddingsRateLimit
-}
-
-func (v *ProductSubscriptionStateCodyGatewayAccess) UnmarshalJSON(b []byte) error {
-
-	if string(b) == "null" {
-		return nil
-	}
-
-	var firstPass struct {
-		*ProductSubscriptionStateCodyGatewayAccess
-		graphql.NoUnmarshalJSON
-	}
-	firstPass.ProductSubscriptionStateCodyGatewayAccess = v
-
-	err := json.Unmarshal(b, &firstPass)
-	if err != nil {
-		return err
-	}
-
-	err = json.Unmarshal(
-		b, &v.CodyGatewayAccessFields)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-type __premarshalProductSubscriptionStateCodyGatewayAccess struct {
-	Enabled bool `json:"enabled"`
-
-	ChatCompletionsRateLimit *CodyGatewayAccessFieldsChatCompletionsRateLimitCodyGatewayRateLimit `json:"chatCompletionsRateLimit"`
-
-	CodeCompletionsRateLimit *CodyGatewayAccessFieldsCodeCompletionsRateLimitCodyGatewayRateLimit `json:"codeCompletionsRateLimit"`
-
-	EmbeddingsRateLimit *CodyGatewayAccessFieldsEmbeddingsRateLimitCodyGatewayRateLimit `json:"embeddingsRateLimit"`
-}
-
-func (v *ProductSubscriptionStateCodyGatewayAccess) MarshalJSON() ([]byte, error) {
-	premarshaled, err := v.__premarshalJSON()
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(premarshaled)
-}
-
-func (v *ProductSubscriptionStateCodyGatewayAccess) __premarshalJSON() (*__premarshalProductSubscriptionStateCodyGatewayAccess, error) {
-	var retval __premarshalProductSubscriptionStateCodyGatewayAccess
-
-	retval.Enabled = v.CodyGatewayAccessFields.Enabled
-	retval.ChatCompletionsRateLimit = v.CodyGatewayAccessFields.ChatCompletionsRateLimit
-	retval.CodeCompletionsRateLimit = v.CodyGatewayAccessFields.CodeCompletionsRateLimit
-	retval.EmbeddingsRateLimit = v.CodyGatewayAccessFields.EmbeddingsRateLimit
-	return &retval, nil
-}
-
 // RateLimitFields includes the GraphQL fields of CodyGatewayRateLimit requested by the fragment RateLimitFields.
 // The GraphQL type's documentation follows.
 //
@@ -1139,13 +553,69 @@ func (v *RateLimitFields) GetLimit() genhelper.BigInt { return v.Limit }
 // GetIntervalSeconds returns RateLimitFields.IntervalSeconds, and is useful for accessing the field via an interface.
 func (v *RateLimitFields) GetIntervalSeconds() int { return v.IntervalSeconds }
 
-// __CheckAccessTokenInput is used internally by genqlient
-type __CheckAccessTokenInput struct {
-	Token string `json:"token"`
+// SnippetAttributionResponse is returned by SnippetAttribution on success.
+type SnippetAttributionResponse struct {
+	// EXPERIMENTAL: Searches the instances indexed code for code matching snippet.
+	SnippetAttribution SnippetAttributionSnippetAttributionSnippetAttributionConnection `json:"snippetAttribution"`
 }
 
-// GetToken returns __CheckAccessTokenInput.Token, and is useful for accessing the field via an interface.
-func (v *__CheckAccessTokenInput) GetToken() string { return v.Token }
+// GetSnippetAttribution returns SnippetAttributionResponse.SnippetAttribution, and is useful for accessing the field via an interface.
+func (v *SnippetAttributionResponse) GetSnippetAttribution() SnippetAttributionSnippetAttributionSnippetAttributionConnection {
+	return v.SnippetAttribution
+}
+
+// SnippetAttributionSnippetAttributionSnippetAttributionConnection includes the requested fields of the GraphQL type SnippetAttributionConnection.
+// The GraphQL type's documentation follows.
+//
+// EXPERIMENTAL: A list of snippet attributions.
+type SnippetAttributionSnippetAttributionSnippetAttributionConnection struct {
+	// totalCount is the total number of repository attributions we found before
+	// stopping the search.
+	//
+	// Note: if we didn't finish searching the full corpus then limitHit will be
+	// true. For filtering use case this means if limitHit is true you need to be
+	// conservative with TotalCount and assume it could be higher.
+	TotalCount int `json:"totalCount"`
+	// limitHit is true if we stopped searching before looking into the full
+	// corpus. If limitHit is true then it is possible there are more than
+	// totalCount attributions.
+	LimitHit bool `json:"limitHit"`
+	// The page set of SnippetAttribution entries in this connection.
+	Nodes []SnippetAttributionSnippetAttributionSnippetAttributionConnectionNodesSnippetAttribution `json:"nodes"`
+}
+
+// GetTotalCount returns SnippetAttributionSnippetAttributionSnippetAttributionConnection.TotalCount, and is useful for accessing the field via an interface.
+func (v *SnippetAttributionSnippetAttributionSnippetAttributionConnection) GetTotalCount() int {
+	return v.TotalCount
+}
+
+// GetLimitHit returns SnippetAttributionSnippetAttributionSnippetAttributionConnection.LimitHit, and is useful for accessing the field via an interface.
+func (v *SnippetAttributionSnippetAttributionSnippetAttributionConnection) GetLimitHit() bool {
+	return v.LimitHit
+}
+
+// GetNodes returns SnippetAttributionSnippetAttributionSnippetAttributionConnection.Nodes, and is useful for accessing the field via an interface.
+func (v *SnippetAttributionSnippetAttributionSnippetAttributionConnection) GetNodes() []SnippetAttributionSnippetAttributionSnippetAttributionConnectionNodesSnippetAttribution {
+	return v.Nodes
+}
+
+// SnippetAttributionSnippetAttributionSnippetAttributionConnectionNodesSnippetAttribution includes the requested fields of the GraphQL type SnippetAttribution.
+// The GraphQL type's documentation follows.
+//
+// EXPERIMENTAL: Attribution result from snippetAttribution.
+type SnippetAttributionSnippetAttributionSnippetAttributionConnectionNodesSnippetAttribution struct {
+	// The name of the repository containing the snippet.
+	//
+	// Note: we do not return a type Repository since repositoryName may
+	// represent a repository not on this instance. eg a match from the
+	// sourcegraph.com open source corpus.
+	RepositoryName string `json:"repositoryName"`
+}
+
+// GetRepositoryName returns SnippetAttributionSnippetAttributionSnippetAttributionConnectionNodesSnippetAttribution.RepositoryName, and is useful for accessing the field via an interface.
+func (v *SnippetAttributionSnippetAttributionSnippetAttributionConnectionNodesSnippetAttribution) GetRepositoryName() string {
+	return v.RepositoryName
+}
 
 // __CheckDotcomUserAccessTokenInput is used internally by genqlient
 type __CheckDotcomUserAccessTokenInput struct {
@@ -1155,75 +625,17 @@ type __CheckDotcomUserAccessTokenInput struct {
 // GetToken returns __CheckDotcomUserAccessTokenInput.Token, and is useful for accessing the field via an interface.
 func (v *__CheckDotcomUserAccessTokenInput) GetToken() string { return v.Token }
 
-// CheckAccessToken returns traits of the product subscription associated with
-// the given access token.
-func CheckAccessToken(
-	ctx context.Context,
-	client graphql.Client,
-	token string,
-) (*CheckAccessTokenResponse, error) {
-	req := &graphql.Request{
-		OpName: "CheckAccessToken",
-		Query: `
-query CheckAccessToken ($token: String!) {
-	dotcom {
-		productSubscriptionByAccessToken(accessToken: $token) {
-			... ProductSubscriptionState
-		}
-	}
+// __SnippetAttributionInput is used internally by genqlient
+type __SnippetAttributionInput struct {
+	Snippet string `json:"snippet"`
+	First   int    `json:"first"`
 }
-fragment ProductSubscriptionState on ProductSubscription {
-	id
-	uuid
-	account {
-		username
-	}
-	isArchived
-	codyGatewayAccess {
-		... CodyGatewayAccessFields
-	}
-	activeLicense {
-		info {
-			tags
-		}
-	}
-}
-fragment CodyGatewayAccessFields on CodyGatewayAccess {
-	enabled
-	chatCompletionsRateLimit {
-		... RateLimitFields
-	}
-	codeCompletionsRateLimit {
-		... RateLimitFields
-	}
-	embeddingsRateLimit {
-		... RateLimitFields
-	}
-}
-fragment RateLimitFields on CodyGatewayRateLimit {
-	allowedModels
-	source
-	limit
-	intervalSeconds
-}
-`,
-		Variables: &__CheckAccessTokenInput{
-			Token: token,
-		},
-	}
-	var err error
 
-	var data CheckAccessTokenResponse
-	resp := &graphql.Response{Data: &data}
+// GetSnippet returns __SnippetAttributionInput.Snippet, and is useful for accessing the field via an interface.
+func (v *__SnippetAttributionInput) GetSnippet() string { return v.Snippet }
 
-	err = client.MakeRequest(
-		ctx,
-		req,
-		resp,
-	)
-
-	return &data, err
-}
+// GetFirst returns __SnippetAttributionInput.First, and is useful for accessing the field via an interface.
+func (v *__SnippetAttributionInput) GetFirst() int { return v.First }
 
 // CheckDotcomUserAccessToken returns traits of the product subscription associated with
 // the given access token.
@@ -1286,70 +698,34 @@ fragment RateLimitFields on CodyGatewayRateLimit {
 	return &data, err
 }
 
-func ListProductSubscriptions(
+// Searches the instances indexed code for code matching snippet.
+func SnippetAttribution(
 	ctx context.Context,
 	client graphql.Client,
-) (*ListProductSubscriptionsResponse, error) {
+	snippet string,
+	first int,
+) (*SnippetAttributionResponse, error) {
 	req := &graphql.Request{
-		OpName: "ListProductSubscriptions",
+		OpName: "SnippetAttribution",
 		Query: `
-query ListProductSubscriptions {
-	dotcom {
-		productSubscriptions {
-			totalCount
-			pageInfo {
-				endCursor
-				hasNextPage
-			}
-			nodes {
-				... ListProductSubscriptionFields
-			}
+query SnippetAttribution ($snippet: String!, $first: Int!) {
+	snippetAttribution(snippet: $snippet, first: $first) {
+		totalCount
+		limitHit
+		nodes {
+			repositoryName
 		}
 	}
-}
-fragment ListProductSubscriptionFields on ProductSubscription {
-	... ProductSubscriptionState
-	sourcegraphAccessTokens
-}
-fragment ProductSubscriptionState on ProductSubscription {
-	id
-	uuid
-	account {
-		username
-	}
-	isArchived
-	codyGatewayAccess {
-		... CodyGatewayAccessFields
-	}
-	activeLicense {
-		info {
-			tags
-		}
-	}
-}
-fragment CodyGatewayAccessFields on CodyGatewayAccess {
-	enabled
-	chatCompletionsRateLimit {
-		... RateLimitFields
-	}
-	codeCompletionsRateLimit {
-		... RateLimitFields
-	}
-	embeddingsRateLimit {
-		... RateLimitFields
-	}
-}
-fragment RateLimitFields on CodyGatewayRateLimit {
-	allowedModels
-	source
-	limit
-	intervalSeconds
 }
 `,
+		Variables: &__SnippetAttributionInput{
+			Snippet: snippet,
+			First:   first,
+		},
 	}
 	var err error
 
-	var data ListProductSubscriptionsResponse
+	var data SnippetAttributionResponse
 	resp := &graphql.Response{Data: &data}
 
 	err = client.MakeRequest(

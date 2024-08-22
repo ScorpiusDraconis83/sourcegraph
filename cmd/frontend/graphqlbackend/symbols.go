@@ -4,22 +4,31 @@ import (
 	"context"
 	"strings"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
+	"github.com/sourcegraph/sourcegraph/internal/gqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/search/result"
 	"github.com/sourcegraph/sourcegraph/internal/search/symbol"
+	"github.com/sourcegraph/sourcegraph/internal/types"
 )
 
 type symbolsArgs struct {
-	graphqlutil.ConnectionArgs
+	gqlutil.ConnectionArgs
 	Query           *string
 	IncludePatterns *[]string
 }
 
 func (r *GitTreeEntryResolver) Symbols(ctx context.Context, args *symbolsArgs) (*symbolConnectionResolver, error) {
-	symbols, err := symbol.DefaultZoektSymbolsClient().Compute(ctx, r.commit.repoResolver.RepoMatch.RepoName(), api.CommitID(r.commit.oid), r.commit.inputRev, args.Query, args.First, args.IncludePatterns)
+	symbols, err := symbol.DefaultZoektSymbolsClient().Compute(
+		ctx,
+		types.MinimalRepo{ID: r.commit.repoResolver.id, Name: r.commit.repoResolver.name},
+		api.CommitID(r.commit.oid),
+		r.commit.inputRev,
+		args.Query,
+		args.First,
+		args.IncludePatterns,
+	)
 	if err != nil && len(symbols) == 0 {
 		return nil, err
 	}
@@ -33,7 +42,14 @@ func (r *GitTreeEntryResolver) Symbol(ctx context.Context, args *struct {
 	Line      int32
 	Character int32
 }) (*symbolResolver, error) {
-	symbolMatch, err := symbol.DefaultZoektSymbolsClient().GetMatchAtLineCharacter(ctx, r.commit.repoResolver.RepoMatch.RepoName(), api.CommitID(r.commit.oid), r.Path(), int(args.Line), int(args.Character))
+	symbolMatch, err := symbol.DefaultZoektSymbolsClient().GetMatchAtLineCharacter(
+		ctx,
+		types.MinimalRepo{ID: r.commit.repoResolver.id, Name: r.commit.repoResolver.name},
+		api.CommitID(r.commit.oid),
+		r.Path(),
+		int(args.Line),
+		int(args.Character),
+	)
 	if err != nil || symbolMatch == nil {
 		return nil, err
 	}
@@ -41,7 +57,15 @@ func (r *GitTreeEntryResolver) Symbol(ctx context.Context, args *struct {
 }
 
 func (r *GitCommitResolver) Symbols(ctx context.Context, args *symbolsArgs) (*symbolConnectionResolver, error) {
-	symbols, err := symbol.DefaultZoektSymbolsClient().Compute(ctx, r.repoResolver.RepoMatch.RepoName(), api.CommitID(r.oid), r.inputRev, args.Query, args.First, args.IncludePatterns)
+	symbols, err := symbol.DefaultZoektSymbolsClient().Compute(
+		ctx,
+		types.MinimalRepo{ID: r.repoResolver.id, Name: r.repoResolver.name},
+		api.CommitID(r.oid),
+		r.inputRev,
+		args.Query,
+		args.First,
+		args.IncludePatterns,
+	)
 	if err != nil && len(symbols) == 0 {
 		return nil, err
 	}
@@ -87,8 +111,8 @@ func (r *symbolConnectionResolver) Nodes(ctx context.Context) ([]symbolResolver,
 	return symbols, nil
 }
 
-func (r *symbolConnectionResolver) PageInfo(ctx context.Context) (*graphqlutil.PageInfo, error) {
-	return graphqlutil.HasNextPage(len(r.symbols) > limitOrDefault(r.first)), nil
+func (r *symbolConnectionResolver) PageInfo(ctx context.Context) (*gqlutil.PageInfo, error) {
+	return gqlutil.HasNextPage(len(r.symbols) > limitOrDefault(r.first)), nil
 }
 
 type symbolResolver struct {

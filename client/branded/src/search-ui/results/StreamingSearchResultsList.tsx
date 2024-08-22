@@ -9,13 +9,7 @@ import { type FilePrefetcher, PrefetchableFile } from '@sourcegraph/shared/src/c
 import { displayRepoName } from '@sourcegraph/shared/src/components/RepoLink'
 import { VirtualList } from '@sourcegraph/shared/src/components/VirtualList'
 import type { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
-import type {
-    BuildSearchQueryURLParameters,
-    QueryState,
-    SearchContextProps,
-    SearchMode,
-    SubmitSearchParameters,
-} from '@sourcegraph/shared/src/search'
+import type { BuildSearchQueryURLParameters, QueryState, SearchContextProps } from '@sourcegraph/shared/src/search'
 import {
     type AggregateStreamingSearchResults,
     getMatchUrl,
@@ -23,6 +17,7 @@ import {
     type SearchMatch,
 } from '@sourcegraph/shared/src/search/stream'
 import type { SettingsCascadeProps } from '@sourcegraph/shared/src/settings/settings'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 
 import {
@@ -39,12 +34,12 @@ import { StreamingSearchResultFooter } from './StreamingSearchResultsFooter'
 import { useItemsToShow } from './use-items-to-show'
 import { useSearchResultsKeyboardNavigation } from './useSearchResultsKeyboardNavigation'
 
-import resultContainerStyles from '../components/ResultContainer.module.scss'
 import styles from './StreamingSearchResultsList.module.scss'
 
 export interface StreamingSearchResultsListProps
     extends SettingsCascadeProps,
         TelemetryProps,
+        TelemetryV2Props,
         Pick<SearchContextProps, 'searchContextsEnabled'>,
         PlatformContextProps<'requestGraphQL'> {
     isSourcegraphDotCom: boolean
@@ -71,7 +66,10 @@ export interface StreamingSearchResultsListProps
     enableKeyboardNavigation?: boolean
 
     showQueryExamplesOnNoResultsPage?: boolean
-
+    /**
+     * Whether to show keyword search examples instead of standard search examples.
+     */
+    showQueryExamplesForKeywordSearch?: boolean
     /**
      * The query state to be used for the query examples and owner search.
      * If not provided, the query examples and owner search will not
@@ -79,12 +77,6 @@ export interface StreamingSearchResultsListProps
      */
     queryState?: QueryState
     buildSearchURLQueryFromQueryState?: (queryParameters: BuildSearchQueryURLParameters) => string
-
-    searchMode?: SearchMode
-    setSearchMode?: (mode: SearchMode) => void
-    submitSearch?: (parameters: SubmitSearchParameters) => void
-    searchQueryFromURL?: string
-    caseSensitive?: boolean
 
     selectedSearchContextSpec?: string
 
@@ -95,6 +87,12 @@ export interface StreamingSearchResultsListProps
     logSearchResultClicked?: (index: number, type: string, resultsLength: number) => void
 
     enableRepositoryMetadata?: boolean
+    className?: string
+
+    /**
+     * Hide the file preview button in `FileContentSearchResult` and `FilePathSearchResult`
+     */
+    hideFilePreviewButton?: boolean
 }
 
 export const StreamingSearchResultsList: React.FunctionComponent<
@@ -105,6 +103,7 @@ export const StreamingSearchResultsList: React.FunctionComponent<
     fetchHighlightedFileLineRanges,
     settingsCascade,
     telemetryService,
+    telemetryRecorder,
     isSourcegraphDotCom,
     searchContextsEnabled,
     platformContext,
@@ -115,15 +114,13 @@ export const StreamingSearchResultsList: React.FunctionComponent<
     prefetchFileEnabled,
     enableKeyboardNavigation,
     showQueryExamplesOnNoResultsPage,
+    showQueryExamplesForKeywordSearch = true,
     queryState,
     buildSearchURLQueryFromQueryState,
-    searchMode,
-    setSearchMode,
-    submitSearch,
-    caseSensitive,
-    searchQueryFromURL,
     logSearchResultClicked,
     enableRepositoryMetadata,
+    className,
+    hideFilePreviewButton = false,
 }) => {
     const resultsNumber = results?.results.length || 0
     const { itemsToShow, handleBottomHit } = useItemsToShow(executedQuery, resultsNumber)
@@ -143,16 +140,13 @@ export const StreamingSearchResultsList: React.FunctionComponent<
                                 filePath={result.path}
                                 revision={getRevision(result.branches, result.commit)}
                                 repoName={result.repository}
-                                // PrefetchableFile adds an extra wrapper, so we lift the <li> up and match the ResultContainer styles.
-                                // Better approach would be to use `as` to avoid wrapping, but that requires a larger refactor of the
-                                // child components than is worth doing right now for this experimental feature
-                                className={resultContainerStyles.resultContainer}
                                 as="li"
                             >
                                 {result.type === 'content' && (
                                     <FileContentSearchResult
                                         index={index}
                                         telemetryService={telemetryService}
+                                        telemetryRecorder={telemetryRecorder}
                                         result={result}
                                         onSelect={() => logSearchResultClicked?.(index, 'fileMatch', resultsNumber)}
                                         defaultExpanded={false}
@@ -163,12 +157,14 @@ export const StreamingSearchResultsList: React.FunctionComponent<
                                         settingsCascade={settingsCascade}
                                         openInNewTab={openMatchesInNewTab}
                                         containerClassName={resultClassName}
+                                        hideFilePreviewButton={hideFilePreviewButton}
                                     />
                                 )}
                                 {result.type === 'symbol' && (
                                     <SymbolSearchResult
                                         index={index}
                                         telemetryService={telemetryService}
+                                        telemetryRecorder={telemetryRecorder}
                                         result={result}
                                         onSelect={() => logSearchResultClicked?.(index, 'symbolMatch', resultsNumber)}
                                         fetchHighlightedFileLineRanges={fetchHighlightedFileLineRanges}
@@ -186,7 +182,9 @@ export const StreamingSearchResultsList: React.FunctionComponent<
                                         repoDisplayName={displayRepoName(result.repository)}
                                         containerClassName={resultClassName}
                                         telemetryService={telemetryService}
+                                        telemetryRecorder={telemetryRecorder}
                                         settingsCascade={settingsCascade}
+                                        hideFilePreviewButton={hideFilePreviewButton}
                                     />
                                 )}
                             </PrefetchableFile>
@@ -229,6 +227,7 @@ export const StreamingSearchResultsList: React.FunctionComponent<
                                 onSelect={() => logSearchResultClicked?.(index, 'person', resultsNumber)}
                                 containerClassName={resultClassName}
                                 telemetryService={telemetryService}
+                                telemetryRecorder={telemetryRecorder}
                                 queryState={queryState}
                                 buildSearchURLQueryFromQueryState={buildSearchURLQueryFromQueryState}
                             />
@@ -254,6 +253,7 @@ export const StreamingSearchResultsList: React.FunctionComponent<
             prefetchFile,
             resultsNumber,
             telemetryService,
+            telemetryRecorder,
             allExpanded,
             fetchHighlightedFileLineRanges,
             settingsCascade,
@@ -264,6 +264,7 @@ export const StreamingSearchResultsList: React.FunctionComponent<
             enableRepositoryMetadata,
             buildSearchURLQueryFromQueryState,
             logSearchResultClicked,
+            hideFilePreviewButton,
         ]
     )
 
@@ -277,7 +278,7 @@ export const StreamingSearchResultsList: React.FunctionComponent<
             <VirtualList<SearchMatch>
                 as="ol"
                 aria-label="Search results"
-                className={classNames('mt-2 mb-0', styles.list)}
+                className={classNames(styles.list, className)}
                 itemsToShow={itemsToShow}
                 onShowMoreItems={handleBottomHit}
                 items={results?.results || []}
@@ -295,20 +296,17 @@ export const StreamingSearchResultsList: React.FunctionComponent<
             </div>
 
             {itemsToShow >= resultsNumber && (
-                <StreamingSearchResultFooter results={results}>
+                <StreamingSearchResultFooter results={results} className="m-3">
                     <>
                         {results?.state === 'complete' && resultsNumber === 0 && (
                             <NoResultsPage
                                 searchContextsEnabled={searchContextsEnabled}
                                 isSourcegraphDotCom={isSourcegraphDotCom}
                                 telemetryService={telemetryService}
+                                telemetryRecorder={telemetryRecorder}
                                 showSearchContext={searchContextsEnabled}
                                 showQueryExamples={showQueryExamplesOnNoResultsPage}
-                                searchMode={searchMode}
-                                setSearchMode={setSearchMode}
-                                submitSearch={submitSearch}
-                                caseSensitive={caseSensitive}
-                                searchQueryFromURL={searchQueryFromURL}
+                                showQueryExamplesForKeywordSearch={showQueryExamplesForKeywordSearch}
                             />
                         )}
                     </>

@@ -30,6 +30,8 @@ const config = {
     'typedoc.js',
     'client/web/dev/**/*',
     'graphql-schema-linter.config.js',
+    // Generated code
+    'client/web/src/enterprise/site-admin/dotcom/productSubscriptions/enterpriseportalgen/**',
   ],
   extends: ['@sourcegraph/eslint-config', 'plugin:storybook/recommended'],
   env: {
@@ -90,6 +92,9 @@ const config = {
     '@typescript-eslint/no-misused-promises': 'off',
     '@typescript-eslint/no-unnecessary-qualifier': 'off',
     '@typescript-eslint/no-unused-vars': 'off', // also duplicated by tsconfig noUnused{Locals,Parameters}
+    '@typescript-eslint/no-explicit-any': 'off',
+    '@typescript-eslint/no-non-null-assertion': 'off',
+    '@typescript-eslint/ban-ts-comment': 'off',
     'etc/no-deprecated': 'off',
 
     'no-restricted-imports': [
@@ -108,10 +113,6 @@ const config = {
             name: 'react-router-dom',
             importNames: ['Link'],
             message: 'Use the <Link /> component from @sourcegraph/wildcard instead.',
-          },
-          {
-            name: 'chromatic/isChromatic',
-            message: 'Please use `isChromatic` from the `@sourcegraph/storybook` package.',
           },
         ],
         patterns: [
@@ -258,11 +259,6 @@ const config = {
           'Prefer using the <Tooltip> component with an <Input> directly, when possible. Please only use <InputTooltip> when the legacy styling it provides is needed. We will be working to fix style issues with <Input> (especially for checkboxes) in the future.',
       },
       {
-        selector: 'JSXSpreadAttribute[argument.name=/^(props|rest)$/]',
-        message:
-          "Spreading props can be unsafe. Prefer destructuring the props object, or continue only if you're sure.",
-      },
-      {
         selector: 'ImportDeclaration[source.value="react-router"]',
         message:
           'Use `react-router-dom-v5-compat` instead. We are in the process of migrating from react-router v5 to v6. More info https://github.com/sourcegraph/sourcegraph/issues/33834',
@@ -327,7 +323,7 @@ const config = {
       },
     },
     {
-      files: ['client/browser/**', 'client/jetbrains/**'],
+      files: ['client/vscode/**', 'client/browser/**', 'client/jetbrains/**'],
       rules: {
         'no-console': 'off',
       },

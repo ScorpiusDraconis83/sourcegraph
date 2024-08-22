@@ -1,3 +1,4 @@
+load("//dev:go_mockgen.bzl", "go_mockgen")
 load("//dev:go_defs.bzl", "go_test")
 load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
@@ -9,6 +10,7 @@ go_library(
         "queuehandler.go",
     ],
     importpath = "github.com/sourcegraph/sourcegraph/cmd/frontend/internal/executorqueue",
+    tags = [TAG_SEARCHSUITE],
     visibility = ["//cmd/frontend:__subpackages__"],
     deps = [
         "//cmd/frontend/enterprise",
@@ -40,6 +42,7 @@ go_test(
         "queuehandler_test.go",
     ],
     embed = [":executorqueue"],
+    tags = [TAG_SEARCHSUITE],
     deps = [
         "//internal/api",
         "//internal/conf",
@@ -53,4 +56,15 @@ go_test(
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
     ],
+)
+
+go_mockgen(
+    name = "generate_mocks",
+    out = "mocks_test.go",
+    manifests = [
+        "//:mockgen.yaml",
+        "//:mockgen.test.yaml",
+        "//:mockgen.temp.yaml",
+    ],
+    deps = [":executorqueue"],
 )

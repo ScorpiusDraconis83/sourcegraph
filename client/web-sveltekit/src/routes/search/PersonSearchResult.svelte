@@ -1,14 +1,13 @@
 <svelte:options immutable />
 
 <script lang="ts">
+    import Avatar from '$lib/Avatar.svelte'
     import Icon from '$lib/Icon.svelte'
-    import { mdiAccount } from '@mdi/js'
+    import { getOwnerDisplayName, getOwnerMatchURL, buildSearchURLQueryForOwner } from '$lib/search/results'
+    import type { PersonMatch } from '$lib/shared'
 
     import SearchResult from './SearchResult.svelte'
     import { getSearchResultsContext } from './searchResultsContext'
-    import { getOwnerDisplayName, getOwnerMatchURL, buildSearchURLQueryForOwner } from '$lib/search/results'
-    import UserAvatar from '$lib/UserAvatar.svelte'
-    import type { PersonMatch } from '$lib/shared'
 
     export let result: PersonMatch
 
@@ -20,26 +19,34 @@
 </script>
 
 <SearchResult>
-    <UserAvatar slot="icon" user={{ ...result.user, displayName }} />
     <div slot="title">
+        <Avatar
+            avatar={{
+                __typename: 'User',
+                displayName,
+                username: result.user?.username ?? '',
+                avatarURL: result.user?.avatarURL ?? null,
+            }}
+            --avatar-size="1.5rem"
+        />
         &nbsp;
         {#if ownerURL}
-            <a data-sveltekit-reload href={ownerURL}>{displayName}</a>
+            <a href={ownerURL}>{displayName}</a>
         {:else}
             {displayName}
         {/if}
         <span class="info">
-            <Icon aria-label="Forked repository" svgPath={mdiAccount} inline />
+            <Icon aria-hidden="true" icon={ILucideUser} inline />
             <small>Owner (person)</small>
         </span>
     </div>
     {#if fileSearchQueryParams}
-        <p class="p-2 m-0">
+        <p>
             <a data-sveltekit-preload-data="tap" href="/search?{fileSearchQueryParams}">Show files</a>
         </p>
     {/if}
     {#if !result.user}
-        <p class="p-2 m-0">
+        <p>
             <small class="font-italic"> This owner is not associated with any Sourcegraph user </small>
         </p>
     {/if}
@@ -50,5 +57,10 @@
         border-left: 1px solid var(--border-color);
         margin-left: 0.5rem;
         padding-left: 0.5rem;
+    }
+
+    p {
+        padding: 0.5rem;
+        margin: 0;
     }
 </style>

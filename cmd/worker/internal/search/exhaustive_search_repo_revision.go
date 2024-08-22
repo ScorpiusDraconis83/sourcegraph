@@ -13,8 +13,8 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/search/exhaustive/service"
 	"github.com/sourcegraph/sourcegraph/internal/search/exhaustive/store"
 
+	"github.com/sourcegraph/sourcegraph/internal/object"
 	"github.com/sourcegraph/sourcegraph/internal/search/exhaustive/types"
-	"github.com/sourcegraph/sourcegraph/internal/uploadstore"
 	"github.com/sourcegraph/sourcegraph/internal/workerutil"
 	"github.com/sourcegraph/sourcegraph/internal/workerutil/dbworker"
 	dbworkerstore "github.com/sourcegraph/sourcegraph/internal/workerutil/dbworker/store"
@@ -28,7 +28,7 @@ func newExhaustiveSearchRepoRevisionWorker(
 	workerStore dbworkerstore.Store[*types.ExhaustiveSearchRepoRevisionJob],
 	exhaustiveSearchStore *store.Store,
 	newSearcher service.NewSearcher,
-	uploadStore uploadstore.Store,
+	uploadStore object.Storage,
 	config config,
 ) goroutine.BackgroundRoutine {
 	handler := &exhaustiveSearchRepoRevHandler{
@@ -54,7 +54,7 @@ type exhaustiveSearchRepoRevHandler struct {
 	logger      log.Logger
 	store       *store.Store
 	newSearcher service.NewSearcher
-	uploadStore uploadstore.Store
+	uploadStore object.Storage
 }
 
 var _ workerutil.Handler[*types.ExhaustiveSearchRepoRevisionJob] = &exhaustiveSearchRepoRevHandler{}
@@ -72,10 +72,13 @@ func (h *exhaustiveSearchRepoRevHandler) Handle(ctx context.Context, logger log.
 		return err
 	}
 
-	csvWriter := service.NewBlobstoreCSVWriter(ctx, h.uploadStore, fmt.Sprintf("%d-%d", jobID, record.ID))
+	w, err := service.NewJSONWriter(ctx, h.uploadStore, fmt.Sprintf("%d-%d", jobID, record.ID))
+	if err != nil {
+		return err
+	}
 
-	err = q.Search(ctx, repoRev, csvWriter)
-	if closeErr := csvWriter.Close(); closeErr != nil {
+	err = q.Search(ctx, repoRev, w)
+	if closeErr := w.Flush(); closeErr != nil {
 		err = errors.Append(err, closeErr)
 	}
 

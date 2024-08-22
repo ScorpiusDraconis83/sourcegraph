@@ -2,6 +2,7 @@ import type { MockedResponse } from '@apollo/client/testing'
 import type { Meta, StoryFn } from '@storybook/react'
 
 import { getDocumentNode } from '@sourcegraph/http-client'
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 
 import { WebStory } from '../../components/WebStory'
 import type { ListTeamsResult } from '../../graphql-operations'
@@ -11,9 +12,7 @@ import { TeamListPage } from './TeamListPage'
 
 const config: Meta = {
     title: 'web/teams/TeamListPage',
-    parameters: {
-        chromatic: { disableSnapshot: false },
-    },
+    parameters: {},
 }
 export default config
 
@@ -39,7 +38,9 @@ export const EmptyList: StoryFn = function EmptyList() {
         },
     }
 
-    return <WebStory mocks={[mockResponse]}>{() => <TeamListPage />}</WebStory>
+    return (
+        <WebStory mocks={[mockResponse]}>{() => <TeamListPage telemetryRecorder={noOpTelemetryRecorder} />}</WebStory>
+    )
 }
 
 export const ListWithItems: StoryFn = function ListWithItems() {
@@ -103,5 +104,7 @@ export const ListWithItems: StoryFn = function ListWithItems() {
         },
     }
 
-    return <WebStory mocks={[mockResponse]}>{() => <TeamListPage />}</WebStory>
+    return (
+        <WebStory mocks={[mockResponse]}>{() => <TeamListPage telemetryRecorder={noOpTelemetryRecorder} />}</WebStory>
+    )
 }

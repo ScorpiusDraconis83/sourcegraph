@@ -642,15 +642,15 @@ func (c *V3Client) ListTeamMembers(ctx context.Context, owner, team string, page
 // An empty sinceRepoID returns the first page of results.
 // This is only intended to be called for GitHub Enterprise, so no rate limit information is returned.
 // https://developer.github.com/v3/repos/#list-all-public-repositories
-func (c *V3Client) getPublicRepositories(ctx context.Context, sinceRepoID int64) ([]*Repository, bool, error) {
+func (c *V3Client) getPublicRepositories(ctx context.Context, sinceRepoID int64) ([]*PublicRepository, bool, error) {
 	path := "repositories"
 	if sinceRepoID > 0 {
 		path += "?per_page=100&since=" + strconv.FormatInt(sinceRepoID, 10)
 	}
-	return c.listRepositories(ctx, path)
+	return c.listPublicRepositories(ctx, path)
 }
 
-func (c *V3Client) ListPublicRepositories(ctx context.Context, sinceRepoID int64) ([]*Repository, bool, error) {
+func (c *V3Client) ListPublicRepositories(ctx context.Context, sinceRepoID int64) ([]*PublicRepository, bool, error) {
 	return c.getPublicRepositories(ctx, sinceRepoID)
 }
 
@@ -801,6 +801,27 @@ func (c *V3Client) listRepositories(ctx context.Context, requestURI string) ([]*
 	return repos, respState.hasNextPage(), nil
 }
 
+func (c *V3Client) listPublicRepositories(ctx context.Context, requestURI string) ([]*PublicRepository, bool, error) {
+	var restPublicRepos []restPublicRepository
+	respState, err := c.get(ctx, requestURI, &restPublicRepos)
+	if err != nil {
+		return nil, false, err
+	}
+	repos := make([]*PublicRepository, 0, len(restPublicRepos))
+	for _, r := range restPublicRepos {
+		// Sometimes GitHub API returns null JSON objects and JSON decoder unmarshalls
+		// them as a zero-valued `restRepository` objects.
+		//
+		// See https://github.com/sourcegraph/customer/issues/1688 for details.
+		if r.ID == "" {
+			c.log.Warn("GitHub returned a public repository without an ID", log.String("restPublicRepository", fmt.Sprintf("%#v", r)))
+			continue
+		}
+		repos = append(repos, convertRestPublicRepo(r))
+	}
+	return repos, respState.hasNextPage(), nil
+}
+
 func (c *V3Client) GetRepo(ctx context.Context, owner, repo string) (*Repository, error) {
 	var restRepo restRepository
 	if _, err := c.get(ctx, "repos/"+owner+"/"+repo, &restRepo); err != nil {
@@ -894,13 +915,13 @@ func (c *V3Client) GetAppInstallation(ctx context.Context, installationID int64)
 // GetAppInstallations fetches a list of GitHub App instalaltions for the
 // authenticated GitHub App.
 //
-// API docs: https://docs.github.com/en/rest/reference/apps#get-an-installation-for-the-authenticated-app
-func (c *V3Client) GetAppInstallations(ctx context.Context) ([]*github.Installation, error) {
-	var ins []*github.Installation
-	if _, err := c.get(ctx, "app/installations", &ins); err != nil {
-		return nil, err
+// API docs: https://docs.github.com/en/rest/apps/apps#list-installations-for-the-authenticated-app
+func (c *V3Client) GetAppInstallations(ctx context.Context, page int) (ins []*github.Installation, hasNextPage bool, _ error) {
+	respState, err := c.get(ctx, fmt.Sprintf("app/installations?page=%d", page), &ins)
+	if err != nil {
+		return nil, false, err
 	}
-	return ins, nil
+	return ins, respState.hasNextPage(), nil
 }
 
 // CreateAppInstallationAccessToken creates an access token for the installation.

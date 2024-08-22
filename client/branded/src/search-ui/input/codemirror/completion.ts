@@ -1,20 +1,20 @@
 import { basename } from 'path'
 
 import {
-    autocompletion,
-    startCompletion,
-    completionKeymap,
-    type CompletionResult,
-    type Completion,
-    snippet,
-    type CompletionSource,
     acceptCompletion,
-    selectedCompletion,
+    autocompletion,
+    completionKeymap,
     currentCompletions,
+    selectedCompletion,
     setSelectedCompletion,
+    snippet,
+    startCompletion,
+    type Completion,
+    type CompletionResult,
+    type CompletionSource,
 } from '@codemirror/autocomplete'
-import { type Extension, Prec } from '@codemirror/state'
-import { keymap, EditorView } from '@codemirror/view'
+import { Prec, type Extension } from '@codemirror/state'
+import { EditorView, keymap } from '@codemirror/view'
 import {
     mdiCodeArray,
     mdiCodeBraces,
@@ -56,8 +56,8 @@ import {
     regexInsertText,
     repositoryInsertText,
 } from '@sourcegraph/shared/src/search/query/completion-utils'
-import { decorate, type DecoratedToken, toDecoration } from '@sourcegraph/shared/src/search/query/decoratedToken'
-import { FILTERS, type FilterType, filterTypeKeys, resolveFilter } from '@sourcegraph/shared/src/search/query/filters'
+import { decorate, toDecoration, type DecoratedToken } from '@sourcegraph/shared/src/search/query/decoratedToken'
+import { FILTERS, filterTypeKeys, resolveFilter, type FilterType } from '@sourcegraph/shared/src/search/query/filters'
 import { getSuggestionQuery } from '@sourcegraph/shared/src/search/query/providers-utils'
 import { scanSearchQuery } from '@sourcegraph/shared/src/search/query/scanner'
 import type { Filter, Token } from '@sourcegraph/shared/src/search/query/token'
@@ -154,7 +154,11 @@ const theme = EditorView.theme({
  * searchQueryAutocompletion registers extensions for automcompletion, using the
  * provided suggestion sources.
  */
-export function searchQueryAutocompletion(sources: StandardSuggestionSource[], navigate?: NavigateFunction): Extension {
+export function searchQueryAutocompletion(
+    sources: StandardSuggestionSource[],
+    enableJumpToSuggestion: boolean,
+    navigate?: NavigateFunction
+): Extension {
     const override: CompletionSource[] = sources.map(source => context => {
         const position = context.pos
         const query = context.state.facet(queryTokens)
@@ -171,8 +175,8 @@ export function searchQueryAutocompletion(sources: StandardSuggestionSource[], n
         // This renders the completion icon
         {
             render(completion) {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
-                if ((completion as any)?.url) {
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+                if (enableJumpToSuggestion && navigate && (completion as any)?.url) {
                     return createSVGIcon(mdiLightningBoltCircle, '')
                 }
                 const icon = createSVGIcon(
@@ -261,9 +265,9 @@ export function searchQueryAutocompletion(sources: StandardSuggestionSource[], n
                     key: 'Enter',
                     run(view) {
                         const selected = selectedCompletion(view.state)
-                        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any
+                        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
                         const url = (selected as any)?.url
-                        if (navigate && typeof url === 'string') {
+                        if (enableJumpToSuggestion && navigate && typeof url === 'string') {
                             navigate(url)
                             return true
                         }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/http"
 	"testing"
 	"time"
 
@@ -13,8 +14,11 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"github.com/sourcegraph/sourcegraph/lib/errors"
+
 	"github.com/sourcegraph/sourcegraph/internal/database/basestore"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbtest"
+	gh "github.com/sourcegraph/sourcegraph/internal/extsvc/github"
 	ghtypes "github.com/sourcegraph/sourcegraph/internal/github_apps/types"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 )
@@ -22,7 +26,6 @@ import (
 func newTestStore(t *testing.T) *gitHubAppsStore {
 	logger := logtest.Scoped(t)
 	return &gitHubAppsStore{Store: basestore.NewWithHandle(basestore.NewHandleWithDB(logger, dbtest.NewDB(t), sql.TxOptions{}))}
-
 }
 
 func TestCreateGitHubApp(t *testing.T) {
@@ -111,15 +114,17 @@ func TestUpdateGitHubApp(t *testing.T) {
 	ctx := context.Background()
 
 	app := &ghtypes.GitHubApp{
-		AppID:        123,
-		Name:         "Test App",
-		Domain:       "repos",
-		Slug:         "test-app",
-		BaseURL:      "https://example.com/",
-		AppURL:       "https://example.com/apps/testapp",
-		ClientID:     "abc123",
-		ClientSecret: "secret",
-		PrivateKey:   "private-key",
+		AppID:           123,
+		Name:            "Test App",
+		Domain:          "repos",
+		Slug:            "test-app",
+		BaseURL:         "https://example.com/",
+		AppURL:          "https://example.com/apps/testapp",
+		ClientID:        "abc123",
+		ClientSecret:    "secret",
+		PrivateKey:      "private-key",
+		Kind:            ghtypes.RepoSyncGitHubAppKind,
+		CreatedByUserId: 1,
 	}
 
 	id, err := store.Create(ctx, app)
@@ -129,15 +134,17 @@ func TestUpdateGitHubApp(t *testing.T) {
 	require.NoError(t, err)
 
 	updated := &ghtypes.GitHubApp{
-		AppID:        234,
-		Name:         "Updated Name",
-		Domain:       "repos",
-		Slug:         "updated-slug",
-		BaseURL:      "https://updated-example.com/",
-		AppURL:       "https://updated-example.com/apps/updated-app",
-		ClientID:     "def456",
-		ClientSecret: "updated-secret",
-		PrivateKey:   "updated-private-key",
+		AppID:           234,
+		Name:            "Updated Name",
+		Domain:          "repos",
+		Slug:            "updated-slug",
+		BaseURL:         "https://updated-example.com/",
+		AppURL:          "https://updated-example.com/apps/updated-app",
+		ClientID:        "def456",
+		ClientSecret:    "updated-secret",
+		PrivateKey:      "updated-private-key",
+		Kind:            ghtypes.RepoSyncGitHubAppKind,
+		CreatedByUserId: 2,
 	}
 
 	fetched, err := store.Update(ctx, 1, updated)
@@ -154,6 +161,7 @@ func TestUpdateGitHubApp(t *testing.T) {
 	require.Equal(t, updated.ClientSecret, fetched.ClientSecret)
 	require.Equal(t, updated.PrivateKey, fetched.PrivateKey)
 	require.Equal(t, updated.Logo, fetched.Logo)
+	require.Equal(t, updated.CreatedByUserId, fetched.CreatedByUserId)
 
 	// updating non-existent should result in error
 	_, err = store.Update(ctx, 42, updated)
@@ -364,6 +372,7 @@ func TestGetByDomain(t *testing.T) {
 		ClientSecret: "secret",
 		PrivateKey:   "private-key",
 		Logo:         "logo.png",
+		Kind:         ghtypes.RepoSyncGitHubAppKind,
 	}
 
 	batchesApp := &ghtypes.GitHubApp{
@@ -377,6 +386,7 @@ func TestGetByDomain(t *testing.T) {
 		ClientSecret: "secret",
 		PrivateKey:   "private-key",
 		Logo:         "logo.png",
+		Kind:         ghtypes.CommitSigningGitHubAppKind,
 	}
 
 	_, err := store.Create(ctx, repoApp)
@@ -385,7 +395,7 @@ func TestGetByDomain(t *testing.T) {
 	require.NoError(t, err)
 
 	domain := types.ReposGitHubAppDomain
-	fetched, err := store.GetByDomain(ctx, domain, "https://github.com/")
+	fetched, err := store.GetByDomainAndKind(ctx, domain, ghtypes.RepoSyncGitHubAppKind, "https://github.com/")
 	require.NoError(t, err)
 	require.Equal(t, repoApp.AppID, fetched.AppID)
 	require.Equal(t, repoApp.Name, fetched.Name)
@@ -400,15 +410,15 @@ func TestGetByDomain(t *testing.T) {
 	require.NotZero(t, fetched.UpdatedAt)
 
 	// does not exist
-	fetched, err = store.GetByDomain(ctx, domain, "https://myCompany.github.com/")
+	fetched, err = store.GetByDomainAndKind(ctx, domain, ghtypes.RepoSyncGitHubAppKind, "https://myCompany.github.com/")
 	require.Nil(t, fetched)
 	require.Error(t, err)
 	notFoundErr, ok := err.(ErrNoGitHubAppFound)
 	require.Equal(t, ok, true)
-	require.Equal(t, notFoundErr.Error(), "no app exists matching criteria: 'domain = repos AND trim(trailing '/' from base_url) = https://myCompany.github.com'")
+	require.Equal(t, notFoundErr.Error(), "no app exists matching criteria: 'domain = repos AND kind = REPO_SYNC AND trim(trailing '/' from base_url) = https://myCompany.github.com'")
 
 	domain = types.BatchesGitHubAppDomain
-	fetched, err = store.GetByDomain(ctx, domain, "https://github.com/")
+	fetched, err = store.GetByDomainAndKind(ctx, domain, ghtypes.CommitSigningGitHubAppKind, "https://github.com/")
 	require.NoError(t, err)
 	require.Equal(t, batchesApp.AppID, fetched.AppID)
 }
@@ -434,16 +444,18 @@ func TestListGitHubApp(t *testing.T) {
 	}
 
 	batchesApp := &ghtypes.GitHubApp{
-		AppID:        5678,
-		Name:         "Test App 2",
-		Domain:       types.BatchesGitHubAppDomain,
-		Slug:         "test-app-2",
-		BaseURL:      "https://enterprise.github.com/",
-		AppURL:       "https://enterprise.github.com/apps/testapp",
-		ClientID:     "abc123",
-		ClientSecret: "secret",
-		PrivateKey:   "private-key",
-		Logo:         "logo.png",
+		AppID:           5678,
+		Name:            "Test App 2",
+		Domain:          types.BatchesGitHubAppDomain,
+		Slug:            "test-app-2",
+		BaseURL:         "https://enterprise.github.com/",
+		AppURL:          "https://enterprise.github.com/apps/testapp",
+		ClientID:        "abc123",
+		ClientSecret:    "secret",
+		PrivateKey:      "private-key",
+		Logo:            "logo.png",
+		Kind:            ghtypes.RepoSyncGitHubAppKind,
+		CreatedByUserId: 1,
 	}
 
 	_, err := store.Create(ctx, repoApp)
@@ -470,6 +482,7 @@ func TestListGitHubApp(t *testing.T) {
 			require.Equal(t, app.Logo, curr.Logo)
 			require.NotZero(t, curr.CreatedAt)
 			require.NotZero(t, curr.UpdatedAt)
+			require.Equal(t, app.CreatedByUserId, curr.CreatedByUserId)
 		}
 	})
 
@@ -491,6 +504,7 @@ func TestListGitHubApp(t *testing.T) {
 		require.Equal(t, curr.Logo, repoApp.Logo)
 		require.NotZero(t, curr.CreatedAt)
 		require.NotZero(t, curr.UpdatedAt)
+		require.Equal(t, curr.CreatedByUserId, repoApp.CreatedByUserId)
 	})
 }
 
@@ -677,12 +691,12 @@ type mockGitHubClient struct {
 	mock.Mock
 }
 
-func (m *mockGitHubClient) GetAppInstallations(ctx context.Context) ([]*github.Installation, error) {
-	args := m.Called(ctx)
+func (m *mockGitHubClient) GetAppInstallations(ctx context.Context, page int) ([]*github.Installation, bool, error) {
+	args := m.Called(ctx, page)
 	if args.Get(0) != nil {
-		return args.Get(0).([]*github.Installation), args.Error(1)
+		return args.Get(0).([]*github.Installation), args.Get(1).(bool), args.Error(2)
 	}
-	return nil, args.Error(1)
+	return nil, false, args.Error(1)
 }
 
 func TestSyncInstallations(t *testing.T) {
@@ -698,12 +712,13 @@ func TestSyncInstallations(t *testing.T) {
 		githubClient       *mockGitHubClient
 		expectedInstallIDs []int
 		app                ghtypes.GitHubApp
+		expectedErr        error
 	}{
 		{
 			name: "no installations",
 			githubClient: func() *mockGitHubClient {
 				client := &mockGitHubClient{}
-				client.On("GetAppInstallations", ctx).Return([]*github.Installation{}, nil)
+				client.On("GetAppInstallations", ctx, 1).Return([]*github.Installation{}, false, nil)
 				return client
 			}(),
 			expectedInstallIDs: []int{},
@@ -718,9 +733,9 @@ func TestSyncInstallations(t *testing.T) {
 			name: "one installation",
 			githubClient: func() *mockGitHubClient {
 				client := &mockGitHubClient{}
-				client.On("GetAppInstallations", ctx).Return([]*github.Installation{
+				client.On("GetAppInstallations", ctx, 1).Return([]*github.Installation{
 					{ID: github.Int64(1)},
-				}, nil)
+				}, false, nil)
 				return client
 			}(),
 			expectedInstallIDs: []int{1},
@@ -735,17 +750,59 @@ func TestSyncInstallations(t *testing.T) {
 			name: "multiple installations",
 			githubClient: func() *mockGitHubClient {
 				client := &mockGitHubClient{}
-				client.On("GetAppInstallations", ctx).Return([]*github.Installation{
+				client.On("GetAppInstallations", ctx, 1).Return([]*github.Installation{
 					{ID: github.Int64(2)},
 					{ID: github.Int64(3)},
 					{ID: github.Int64(4)},
-				}, nil)
+				}, false, nil)
 				return client
 			}(),
 			expectedInstallIDs: []int{2, 3, 4},
 			app: ghtypes.GitHubApp{
 				AppID:      3,
 				Name:       "Test App With Multiple Installs",
+				BaseURL:    "https://example.com",
+				PrivateKey: "private-key",
+			},
+		},
+		{
+			name: "paged installations",
+			githubClient: func() *mockGitHubClient {
+				client := &mockGitHubClient{}
+				client.On("GetAppInstallations", ctx, 1).Return([]*github.Installation{
+					{ID: github.Int64(1)},
+					{ID: github.Int64(2)},
+				}, true, nil)
+				client.On("GetAppInstallations", ctx, 2).Return([]*github.Installation{
+					{ID: github.Int64(3)},
+					{ID: github.Int64(4)},
+				}, false, nil)
+				return client
+			}(),
+			expectedInstallIDs: []int{1, 2, 3, 4},
+			app: ghtypes.GitHubApp{
+				AppID:      4,
+				Name:       "Test App With Paged Installs",
+				BaseURL:    "https://example.com",
+				PrivateKey: "private-key",
+			},
+		},
+		{
+			name: "deleted github app",
+			githubClient: func() *mockGitHubClient {
+				client := &mockGitHubClient{}
+				client.On("GetAppInstallations", ctx, 1).Return([]*github.Installation{}, false, errors.New("request to https://ghe.sgdev.org/api/v3/app/installations?page=1 returned status 404: Integration not found"))
+				return client
+			}(),
+			expectedInstallIDs: []int{},
+			expectedErr: &gh.APIError{
+				URL:     "https://ghe.sgdev.org/api/v3/app/installations?page=1",
+				Code:    http.StatusNotFound,
+				Message: "request to https://ghe.sgdev.org/api/v3/app/installations?page=1 returned status 404: Integration not found",
+			},
+			app: ghtypes.GitHubApp{
+				AppID:      5,
+				Name:       "Test Deleted GitHub App",
 				BaseURL:    "https://example.com",
 				PrivateKey: "private-key",
 			},
@@ -781,7 +838,13 @@ func TestSyncInstallations(t *testing.T) {
 			}
 
 			errs := store.SyncInstallations(ctx, app, logger, tc.githubClient)
-			require.NoError(t, errs)
+
+			if tc.expectedErr != nil {
+				var e *gh.APIError
+				require.ErrorAs(t, tc.expectedErr, &e)
+			} else {
+				require.NoError(t, errs)
+			}
 
 			installations, err := store.GetInstallations(ctx, tc.app.AppID)
 			require.NoError(t, err)
@@ -811,15 +874,17 @@ func TestTrailingSlashesInBaseURL(t *testing.T) {
 	ctx := context.Background()
 
 	app := &ghtypes.GitHubApp{
-		AppID:        1234,
-		Name:         "Test App 1",
-		Domain:       "repos",
-		Slug:         "test-app-1",
-		BaseURL:      "https://github.com",
-		ClientID:     "abc123",
-		ClientSecret: "secret",
-		PrivateKey:   "private-key",
-		Logo:         "logo.png",
+		AppID:           1234,
+		Name:            "Test App 1",
+		Domain:          "repos",
+		Slug:            "test-app-1",
+		BaseURL:         "https://github.com",
+		ClientID:        "abc123",
+		ClientSecret:    "secret",
+		PrivateKey:      "private-key",
+		Logo:            "logo.png",
+		Kind:            ghtypes.RepoSyncGitHubAppKind,
+		CreatedByUserId: 1,
 	}
 
 	id, err := store.Create(ctx, app)

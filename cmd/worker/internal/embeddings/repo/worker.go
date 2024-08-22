@@ -8,16 +8,16 @@ import (
 	"github.com/sourcegraph/sourcegraph/cmd/worker/shared/init/codeintel"
 	workerdb "github.com/sourcegraph/sourcegraph/cmd/worker/shared/init/db"
 	"github.com/sourcegraph/sourcegraph/internal/actor"
+	"github.com/sourcegraph/sourcegraph/internal/codeintel/ranking"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/embeddings"
 	repoembeddingsbg "github.com/sourcegraph/sourcegraph/internal/embeddings/background/repo"
-	vdb "github.com/sourcegraph/sourcegraph/internal/embeddings/db"
 	"github.com/sourcegraph/sourcegraph/internal/embeddings/embed"
 	"github.com/sourcegraph/sourcegraph/internal/env"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
 	"github.com/sourcegraph/sourcegraph/internal/goroutine"
+	"github.com/sourcegraph/sourcegraph/internal/object"
 	"github.com/sourcegraph/sourcegraph/internal/observation"
-	"github.com/sourcegraph/sourcegraph/internal/uploadstore"
 	"github.com/sourcegraph/sourcegraph/internal/workerutil"
 	"github.com/sourcegraph/sourcegraph/internal/workerutil/dbworker"
 	dbworkerstore "github.com/sourcegraph/sourcegraph/internal/workerutil/dbworker/store"
@@ -34,7 +34,7 @@ func (s *repoEmbeddingJob) Description() string {
 }
 
 func (s *repoEmbeddingJob) Config() []env.Config {
-	return []env.Config{embeddings.EmbeddingsUploadStoreConfigInst}
+	return []env.Config{embeddings.ObjectStorageConfigInst}
 }
 
 func (s *repoEmbeddingJob) Routines(_ context.Context, observationCtx *observation.Context) ([]goroutine.BackgroundRoutine, error) {
@@ -43,7 +43,7 @@ func (s *repoEmbeddingJob) Routines(_ context.Context, observationCtx *observati
 		return nil, err
 	}
 
-	uploadStore, err := embeddings.NewEmbeddingsUploadStore(context.Background(), observationCtx, embeddings.EmbeddingsUploadStoreConfigInst)
+	uploadStore, err := embeddings.NewObjectStorage(context.Background(), observationCtx, embeddings.ObjectStorageConfigInst)
 	if err != nil {
 		return nil, err
 	}
@@ -52,9 +52,6 @@ func (s *repoEmbeddingJob) Routines(_ context.Context, observationCtx *observati
 	if err != nil {
 		return nil, err
 	}
-
-	getQdrantDB := vdb.NewDBFromConfFunc(observationCtx.Logger, vdb.NewNoopDB())
-	getQdrantInserter := func() (vdb.VectorInserter, error) { return getQdrantDB() }
 
 	workCtx := actor.WithInternalActor(context.Background())
 	return []goroutine.BackgroundRoutine{
@@ -65,9 +62,9 @@ func (s *repoEmbeddingJob) Routines(_ context.Context, observationCtx *observati
 			db,
 			uploadStore,
 			gitserver.NewClient("embeddings.worker"),
-			getQdrantInserter,
 			services.ContextService,
 			repoembeddingsbg.NewRepoEmbeddingJobsStore(db),
+			services.RankingService,
 		),
 	}, nil
 }
@@ -77,19 +74,19 @@ func newRepoEmbeddingJobWorker(
 	observationCtx *observation.Context,
 	workerStore dbworkerstore.Store[*repoembeddingsbg.RepoEmbeddingJob],
 	db database.DB,
-	uploadStore uploadstore.Store,
+	uploadStore object.Storage,
 	gitserverClient gitserver.Client,
-	getQdrantInserter func() (vdb.VectorInserter, error),
 	contextService embed.ContextService,
 	repoEmbeddingJobsStore repoembeddingsbg.RepoEmbeddingJobsStore,
+	rankingService *ranking.Service,
 ) *workerutil.Worker[*repoembeddingsbg.RepoEmbeddingJob] {
 	handler := &handler{
 		db:                     db,
 		uploadStore:            uploadStore,
 		gitserverClient:        gitserverClient,
-		getQdrantInserter:      getQdrantInserter,
 		contextService:         contextService,
 		repoEmbeddingJobsStore: repoEmbeddingJobsStore,
+		rankingService:         rankingService,
 	}
 	return dbworker.NewWorker[*repoembeddingsbg.RepoEmbeddingJob](ctx, workerStore, handler, workerutil.WorkerOptions{
 		Name:              "repo_embedding_job_worker",

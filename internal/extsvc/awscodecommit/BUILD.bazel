@@ -9,11 +9,13 @@ go_library(
         "repos.go",
     ],
     importpath = "github.com/sourcegraph/sourcegraph/internal/extsvc/awscodecommit",
+    tags = [TAG_PLATFORM_SOURCE],
     visibility = ["//:__subpackages__"],
     deps = [
         "//internal/api",
         "//internal/extsvc",
         "//internal/rcache",
+        "//internal/redispool",
         "//lib/errors",
         "@com_github_aws_aws_sdk_go_v2//aws",
         "@com_github_aws_aws_sdk_go_v2_service_codecommit//:codecommit",

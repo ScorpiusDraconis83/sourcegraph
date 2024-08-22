@@ -6,6 +6,7 @@ go_library(
     srcs = [
         "aggregated.go",
         "aggregated_codeintel.go",
+        "aggregated_cody.go",
         "aggregated_repo_metadata.go",
         "aggregated_search.go",
         "all_time_stats.go",
@@ -24,6 +25,7 @@ go_library(
         "migrated_extensions.go",
         "notebooks.go",
         "own.go",
+        "prompts.go",
         "repositories.go",
         "retention.go",
         "saved_searches.go",
@@ -34,13 +36,14 @@ go_library(
     ],
     embedsrcs = ["code_monitoring_usage_stats.sql"],
     importpath = "github.com/sourcegraph/sourcegraph/internal/usagestats",
+    tags = [TAG_DATA_ANALYTICS],
     visibility = ["//:__subpackages__"],
     deps = [
-        "//cmd/frontend/envvar",
         "//internal/conf",
         "//internal/conf/conftypes",
         "//internal/database",
         "//internal/database/basestore",
+        "//internal/dotcom",
         "//internal/env",
         "//internal/eventlogger",
         "//internal/featureflag",
@@ -88,6 +91,7 @@ go_test(
     ],
     embed = [":usagestats"],
     tags = [
+        TAG_DATA_ANALYTICS,
         # Test requires localhost database
         "requires-network",
     ],

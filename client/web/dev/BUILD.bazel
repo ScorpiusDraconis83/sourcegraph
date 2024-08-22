@@ -1,7 +1,7 @@
-load("@aspect_rules_esbuild//esbuild:defs.bzl", "esbuild")
 load("@aspect_rules_js//js:defs.bzl", "js_library")
 load("@aspect_rules_ts//ts:defs.bzl", "ts_config")
 load("//dev:defs.bzl", "ts_project", "vitest_test")
+load("//dev:esbuild.bzl", "esbuild")
 
 # dev/ does not contain a src/
 # gazelle:js_files **/*.{ts,tsx}
@@ -20,10 +20,11 @@ ts_project(
     name = "dev",
     srcs = [
         "esbuild/build.ts",
+        "esbuild/chunkCleaner.ts",
         "esbuild/config.ts",
-        "esbuild/manifest.ts",
         "esbuild/manifestPlugin.ts",
         "esbuild/server.ts",
+        "esbuild/webmanifest.ts",
         "server/development.server.ts",
         "server/production.server.ts",
         "utils/constants.ts",
@@ -36,6 +37,7 @@ ts_project(
         "utils/should-compress-response.ts",
         "utils/success-banner.ts",
     ],
+    tags = [TAG_SEARCHSUITE],
     tsconfig = ":tsconfig",
     visibility = ["//client/web:__subpackages__"],
     deps = [
@@ -44,7 +46,6 @@ ts_project(
         "//:node_modules/@types/connect-history-api-fallback",
         "//:node_modules/@types/express",
         "//:node_modules/@types/lodash",
-        "//:node_modules/@types/node",
         "//:node_modules/@types/signale",
         "//:node_modules/chalk",
         "//:node_modules/compression",
@@ -57,6 +58,8 @@ ts_project(
         "//:node_modules/lodash",
         "//:node_modules/signale",
         "//client/web:node_modules/@sourcegraph/build-config",
+        "//client/web:node_modules/@sourcegraph/shared",
+        "//client/web:node_modules/@types/node",
         "//client/web:web_lib",
     ],
 )
@@ -74,6 +77,7 @@ js_library(
 esbuild(
     name = "esbuild-config-production_bundle",
     srcs = [
+        ":dev",
         ":esbuild-config-production",
     ],
     entry_point = "esbuild/bazel/esbuild.bazel.production.js",
@@ -87,10 +91,6 @@ esbuild(
         "path-browserify",
         "monaco-yaml/lib/esm/monaco.contribution",
         "monaco-yaml/lib/esm/yaml.worker",
-        "rxjs/_esm5/internal/OuterSubscriber",
-        "rxjs/_esm5/internal/util/subscribeToResult",
-        "rxjs/_esm5/internal/util/subscribeToArray",
-        "rxjs/_esm5/internal/Observable",
     ],
     format = "cjs",
     platform = "node",
@@ -106,7 +106,8 @@ esbuild(
 ts_project(
     name = "dev_tests",
     testonly = True,
-    srcs = ["esbuild/manifest.test.ts"],
+    srcs = ["esbuild/webmanifest.test.ts"],
+    tags = [TAG_SEARCHSUITE],
     tsconfig = ":tsconfig",
     deps = [
         ":dev",
@@ -119,4 +120,5 @@ vitest_test(
     data = [
         ":dev_tests",
     ],
+    tags = [TAG_SEARCHSUITE],
 )

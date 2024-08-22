@@ -1,25 +1,22 @@
-import React, { type PropsWithChildren, useCallback, useMemo, useState } from 'react'
+import React, { useCallback, useMemo, useState, type PropsWithChildren } from 'react'
 
 import { VisuallyHidden } from '@reach/visually-hidden'
 import classNames from 'classnames'
 
-import { type ErrorLike, isErrorLike } from '@sourcegraph/common'
+import { isErrorLike, type ErrorLike } from '@sourcegraph/common'
 import {
+    SearchContextsOrderBy,
     type ListSearchContextsResult,
     type ListSearchContextsVariables,
-    SearchContextsOrderBy,
     type SearchContextMinimalFields,
 } from '@sourcegraph/shared/src/graphql-operations'
 import type { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
 import type { SearchContextProps } from '@sourcegraph/shared/src/search'
+import { ErrorAlert, LoadingSpinner } from '@sourcegraph/wildcard'
 
 import type { AuthenticatedUser } from '../../auth'
-import {
-    type Connection,
-    FilteredConnection,
-    type FilteredConnectionFilter,
-    type FilteredConnectionFilterValue,
-} from '../../components/FilteredConnection'
+import { FilteredConnection, type Connection, type Filter } from '../../components/FilteredConnection'
+import { useAffiliatedNamespaces } from '../../namespaces/useAffiliatedNamespaces'
 
 import { useDefaultContext } from './hooks/useDefaultContext'
 import { SearchContextNode, type SearchContextNodeProps } from './SearchContextNode'
@@ -27,101 +24,63 @@ import { SearchContextNode, type SearchContextNodeProps } from './SearchContextN
 import styles from './SearchContextsList.module.scss'
 
 export interface SearchContextsListProps
-    extends Pick<SearchContextProps, 'fetchSearchContexts' | 'getUserSearchContextNamespaces'>,
+    extends Pick<SearchContextProps, 'fetchSearchContexts'>,
         PlatformContextProps<'requestGraphQL'> {
     authenticatedUser: AuthenticatedUser | null
     setAlert: (message: string) => void
 }
 
+const GLOBAL_NAMESPACE_KEY = 'global' as const
+
 export const SearchContextsList: React.FunctionComponent<SearchContextsListProps> = ({
     authenticatedUser,
-    getUserSearchContextNamespaces,
     fetchSearchContexts,
     platformContext,
     setAlert,
 }) => {
+    const { namespaces, loading: namespacesLoading, error: namespacesError } = useAffiliatedNamespaces()
+
     const queryConnection = useCallback(
-        (args: Partial<ListSearchContextsVariables>) => {
+        (args: Omit<Partial<ListSearchContextsVariables>, 'first'> & { first?: number | null }) => {
             const { namespace, orderBy, descending } = args as {
                 namespace: string | undefined
                 orderBy: SearchContextsOrderBy
                 descending: boolean
             }
-            const namespaces = namespace
-                ? [namespace === 'global' ? null : namespace]
-                : getUserSearchContextNamespaces(authenticatedUser)
-
             return fetchSearchContexts({
                 first: args.first ?? 10,
                 query: args.query ?? undefined,
                 after: args.after ?? undefined,
-                namespaces,
+                namespaces: namespace
+                    ? [namespace === GLOBAL_NAMESPACE_KEY ? null : namespace]
+                    : [null, ...(namespaces?.map(namespace => namespace.id) ?? [])],
                 orderBy,
                 descending,
                 platformContext,
             })
         },
-        [authenticatedUser, fetchSearchContexts, getUserSearchContextNamespaces, platformContext]
+        [fetchSearchContexts, namespaces, platformContext]
     )
 
-    const ownerNamespaceFilterValues: FilteredConnectionFilterValue[] = useMemo(
-        () =>
-            authenticatedUser
-                ? [
-                      {
-                          value: authenticatedUser.id,
-                          label: authenticatedUser.username,
-                          args: {
-                              namespace: authenticatedUser.id,
-                          },
-                      },
-                      ...authenticatedUser.organizations.nodes.map(org => ({
-                          value: org.id,
-                          label: org.displayName || org.name,
-                          args: {
-                              namespace: org.id,
-                          },
-                      })),
-                  ]
-                : [],
-        [authenticatedUser]
-    )
-
-    const filters: FilteredConnectionFilter[] = useMemo(
+    const filters = useMemo<Filter[]>(
         () => [
             {
                 label: 'Sort',
                 type: 'select',
                 id: 'order',
                 tooltip: 'Order search contexts',
-                values: [
+                options: [
                     {
                         value: 'spec-asc',
-                        label: 'A-Z',
+                        label: 'By name',
                         args: {
                             orderBy: SearchContextsOrderBy.SEARCH_CONTEXT_SPEC,
-                            descending: false,
-                        },
-                    },
-                    {
-                        value: 'spec-desc',
-                        label: 'Z-A',
-                        args: {
-                            orderBy: SearchContextsOrderBy.SEARCH_CONTEXT_SPEC,
-                            descending: true,
-                        },
-                    },
-                    {
-                        value: 'updated-at-asc',
-                        label: 'Oldest updates',
-                        args: {
-                            orderBy: SearchContextsOrderBy.SEARCH_CONTEXT_UPDATED_AT,
                             descending: false,
                         },
                     },
                     {
                         value: 'updated-at-desc',
-                        label: 'Newest updates',
+                        label: 'Recently updated',
                         args: {
                             orderBy: SearchContextsOrderBy.SEARCH_CONTEXT_UPDATED_AT,
                             descending: true,
@@ -134,7 +93,7 @@ export const SearchContextsList: React.FunctionComponent<SearchContextsListProps
                 type: 'select',
                 id: 'owner',
                 tooltip: 'Search context owner',
-                values: [
+                options: [
                     {
                         value: 'all',
                         label: 'All',
@@ -144,14 +103,20 @@ export const SearchContextsList: React.FunctionComponent<SearchContextsListProps
                         value: 'global-owner',
                         label: 'Global',
                         args: {
-                            namespace: 'global',
+                            namespace: GLOBAL_NAMESPACE_KEY,
                         },
                     },
-                    ...ownerNamespaceFilterValues,
+                    ...(namespaces?.map(namespace => ({
+                        value: namespace.id,
+                        label: namespace.namespaceName,
+                        args: {
+                            namespace: namespace.id,
+                        },
+                    })) ?? []),
                 ],
             },
         ],
-        [ownerNamespaceFilterValues]
+        [namespaces]
     )
 
     const [contextsOrError, setContextsOrError] = useState<
@@ -182,7 +147,14 @@ export const SearchContextsList: React.FunctionComponent<SearchContextsListProps
         [setAlert, setAsDefault]
     )
 
-    return (
+    const error = namespacesError
+    const loading = namespacesLoading
+
+    return loading ? (
+        <LoadingSpinner />
+    ) : error ? (
+        <ErrorAlert error={error} className="mb-3" />
+    ) : (
         <FilteredConnection<
             SearchContextMinimalFields,
             Omit<SearchContextNodeProps, 'node'>,
@@ -208,8 +180,8 @@ export const SearchContextsList: React.FunctionComponent<SearchContextsListProps
             pluralNoun="search contexts"
             cursorPaging={true}
             inputClassName={classNames(styles.filterInput)}
-            inputPlaceholder="Find a context"
-            inputAriaLabel="Find a context"
+            inputPlaceholder="Find a context..."
+            inputAriaLabel="Find a context..."
             formClassName={styles.filtersForm}
             onUpdate={onUpdateContexts}
         />

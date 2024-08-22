@@ -6,7 +6,7 @@ import (
 
 	"github.com/sourcegraph/log/logtest"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/backend"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/backend"
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbmocks"
 	"github.com/sourcegraph/sourcegraph/internal/types"
@@ -24,7 +24,7 @@ func TestGetRepo(t *testing.T) {
 		})
 
 		_, err := GetRepo(context.Background(), logger, dbmocks.NewMockDB(), map[string]string{"Repo": "repo1"})
-		if !errors.HasType(err, &URLMovedError{}) {
+		if !errors.HasType[*URLMovedError](err) {
 			t.Fatalf("err: want type *URLMovedError but got %T", err)
 		}
 	})

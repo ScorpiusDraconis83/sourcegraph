@@ -14,7 +14,6 @@ import (
 	policiesgraphql "github.com/sourcegraph/sourcegraph/internal/codeintel/policies/transport/graphql"
 	rankinggraphql "github.com/sourcegraph/sourcegraph/internal/codeintel/ranking/transport/graphql"
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/resolvers"
-	sentinelgraphql "github.com/sourcegraph/sourcegraph/internal/codeintel/sentinel/transport/graphql"
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/shared/lsifuploadstore"
 	sharedresolvers "github.com/sourcegraph/sourcegraph/internal/codeintel/shared/resolvers"
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/shared/resolvers/gitresolvers"
@@ -54,7 +53,7 @@ func Init(
 	siteAdminChecker := sharedresolvers.NewSiteAdminChecker(db)
 	locationResolverFactory := gitresolvers.NewCachedLocationResolverFactory(repoStore, codeIntelServices.GitserverClient)
 	uploadLoaderFactory := uploadgraphql.NewUploadLoaderFactory(codeIntelServices.UploadsService)
-	indexLoaderFactory := uploadgraphql.NewIndexLoaderFactory(codeIntelServices.UploadsService)
+	autoIndexJobLoaderFactory := uploadgraphql.NewAutoIndexJobLoaderFactory(codeIntelServices.UploadsService)
 	preciseIndexResolverFactory := uploadgraphql.NewPreciseIndexResolverFactory(
 		codeIntelServices.UploadsService,
 		codeIntelServices.PoliciesService,
@@ -68,12 +67,12 @@ func Init(
 		codeIntelServices.AutoIndexingService,
 		siteAdminChecker,
 		uploadLoaderFactory,
-		indexLoaderFactory,
+		autoIndexJobLoaderFactory,
 		locationResolverFactory,
 		preciseIndexResolverFactory,
 	)
 
-	codenavRootResolver, err := codenavgraphql.NewRootResolver(
+	codenavRootResolver := codenavgraphql.NewRootResolver(
 		scopedContext("codenav"),
 		codeIntelServices.CodenavService,
 		codeIntelServices.AutoIndexingService,
@@ -81,15 +80,11 @@ func Init(
 		siteAdminChecker,
 		repoStore,
 		uploadLoaderFactory,
-		indexLoaderFactory,
+		autoIndexJobLoaderFactory,
 		preciseIndexResolverFactory,
 		locationResolverFactory,
-		ConfigInst.HunkCacheSize,
 		ConfigInst.MaximumIndexesPerMonikerSearch,
 	)
-	if err != nil {
-		return err
-	}
 
 	policyRootResolver := policiesgraphql.NewRootResolver(
 		scopedContext("policies"),
@@ -104,16 +99,7 @@ func Init(
 		codeIntelServices.AutoIndexingService,
 		siteAdminChecker,
 		uploadLoaderFactory,
-		indexLoaderFactory,
-		locationResolverFactory,
-		preciseIndexResolverFactory,
-	)
-
-	sentinelRootResolver := sentinelgraphql.NewRootResolver(
-		scopedContext("sentinel"),
-		codeIntelServices.SentinelService,
-		uploadLoaderFactory,
-		indexLoaderFactory,
+		autoIndexJobLoaderFactory,
 		locationResolverFactory,
 		preciseIndexResolverFactory,
 	)
@@ -129,7 +115,6 @@ func Init(
 		codenavRootResolver,
 		policyRootResolver,
 		uploadRootResolver,
-		sentinelRootResolver,
 		rankingRootResolver,
 	))
 	enterpriseServices.NewCodeIntelUploadHandler = newUploadHandler

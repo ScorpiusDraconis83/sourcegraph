@@ -10,7 +10,6 @@ import (
 
 	"github.com/sourcegraph/log"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/envvar"
 	"github.com/sourcegraph/sourcegraph/internal/actor"
 	"github.com/sourcegraph/sourcegraph/internal/audit"
 	"github.com/sourcegraph/sourcegraph/internal/auth"
@@ -18,6 +17,7 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/cookie"
 	"github.com/sourcegraph/sourcegraph/internal/database"
+	"github.com/sourcegraph/sourcegraph/internal/dotcom"
 	"github.com/sourcegraph/sourcegraph/internal/errcode"
 	"github.com/sourcegraph/sourcegraph/internal/licensing"
 	"github.com/sourcegraph/sourcegraph/internal/trace"
@@ -37,9 +37,15 @@ func AccessTokenAuthMiddleware(db database.DB, baseLogger log.Logger, next http.
 			return
 		}
 
+		// Temporary(sourcegraph#59625) SSC API uses SAMS auth token.
+		if strings.HasPrefix(r.URL.Path, "/.api/ssc/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		// The license check handler uses a Bearer token and request body which
 		// is checked in `productsubscription/license_check_handler.go`
-		if envvar.SourcegraphDotComMode() && strings.HasPrefix(r.URL.Path, "/.api/license/check") {
+		if dotcom.SourcegraphDotComMode() && strings.HasPrefix(r.URL.Path, "/.api/license/check") {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -59,12 +65,12 @@ func AccessTokenAuthMiddleware(db database.DB, baseLogger log.Logger, next http.
 			}
 		}
 
-		if headerValue := r.Header.Get("Authorization"); headerValue != "" && token == "" {
+		if headerValue := parseAuthorizationHeaderValue(r); headerValue != "" && token == "" {
 			// Handle Authorization header
 			var err error
 			token, sudoUser, err = authz.ParseAuthorizationHeader(headerValue)
 			if err != nil {
-				if !envvar.SourcegraphDotComMode() && authz.IsUnrecognizedScheme(err) {
+				if !dotcom.SourcegraphDotComMode() && authz.IsUnrecognizedScheme(err) {
 					// Ignore Authorization headers that we don't handle.
 					// 🚨 SECURITY: sha256 the authorization header value so we redact it
 					// while still retaining the ability to link it back to a token, assuming
@@ -139,7 +145,7 @@ func AccessTokenAuthMiddleware(db database.DB, baseLogger log.Logger, next http.
 
 			subjectUserID, err := db.AccessTokens().Lookup(r.Context(), token, opts)
 			if err != nil {
-				if err == database.ErrAccessTokenNotFound || errors.HasType(err, database.InvalidTokenError{}) {
+				if err == database.ErrAccessTokenNotFound || errors.HasType[database.InvalidTokenError](err) {
 					anonymousId, anonCookieSet := cookie.AnonymousUID(r)
 					if !anonCookieSet {
 						anonymousId = fmt.Sprintf("unknown user @ %s", time.Now()) // we don't have a reliable user identifier at the time of the failure
@@ -270,4 +276,15 @@ func AccessTokenAuthMiddleware(db database.DB, baseLogger log.Logger, next http.
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+func parseAuthorizationHeaderValue(r *http.Request) string {
+	headerValue := r.Header.Get("Authorization")
+
+	// Special case for `/.api/llm/` endpoints for compatibility with OpenAI clients,
+	// which send `Authorization: Bearer $TOKEN` instead of `Authorization: token $TOKEN`.
+	if strings.HasPrefix(headerValue, "Bearer ") && r.URL.Path == "/.api/llm/chat/completions" {
+		return fmt.Sprintf("token %s", strings.TrimPrefix(headerValue, "Bearer "))
+	}
+	return headerValue
 }

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo } from 'react'
 
 import { mdiClose } from '@mdi/js'
 import classNames from 'classnames'
@@ -9,6 +9,7 @@ import { map } from 'rxjs/operators'
 import type { FetchFileParameters } from '@sourcegraph/shared/src/backend/file'
 import type { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
 import type { SettingsCascadeProps } from '@sourcegraph/shared/src/settings/settings'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import {
     Button,
@@ -30,7 +31,7 @@ import { EmptyPanelView } from './views/EmptyPanelView'
 
 import styles from './TabbedPanelContent.module.scss'
 
-interface TabbedPanelContentProps extends PlatformContextProps, SettingsCascadeProps, TelemetryProps {
+interface TabbedPanelContentProps extends PlatformContextProps, SettingsCascadeProps, TelemetryProps, TelemetryV2Props {
     repoName?: string
     fetchHighlightedFileLineRanges: (parameters: FetchFileParameters, force?: boolean) => Observable<string[][]>
 }
@@ -83,7 +84,6 @@ export function useBuiltinTabbedPanelViews(panels: Panel[]): void {
  * Other components can contribute panel items to the panel with the `useBuildinPanelViews` hook.
  */
 export const TabbedPanelContent = React.memo<TabbedPanelContentProps>(props => {
-    const [tabIndex, setTabIndex] = useState(0)
     const { hash, pathname, search } = useLocation()
     const navigate = useNavigate()
 
@@ -91,8 +91,11 @@ export const TabbedPanelContent = React.memo<TabbedPanelContentProps>(props => {
     const [currentTabLabel, currentTabID] = hash.split('=')
 
     const trackTabClick = useCallback(
-        (title: string) => props.telemetryService.log(`ReferencePanelClicked${title}`),
-        [props.telemetryService]
+        (title: string) => {
+            props.telemetryService.log(`ReferencePanelClicked${title}`)
+            props.telemetryRecorder.recordEvent('blob.referencePanelTab', 'click')
+        },
+        [props.telemetryService, props.telemetryRecorder]
     )
 
     const panels: Panel[] | undefined = useObservable(
@@ -119,15 +122,15 @@ export const TabbedPanelContent = React.memo<TabbedPanelContentProps>(props => {
         [currentTabLabel, navigate, panels, pathname, search]
     )
 
-    useEffect(() => {
-        setTabIndex(
+    const tabIndex = useMemo(
+        (): number =>
             panels
                 ? panels.findIndex(({ id, matchesTabID }) =>
                       matchesTabID ? matchesTabID(currentTabID) : id === currentTabID
                   )
-                : 0
-        )
-    }, [panels, hash, currentTabID])
+                : 0,
+        [panels, currentTabID]
+    )
 
     if (!panels) {
         return <EmptyPanelView className={styles.panel} />
@@ -136,7 +139,7 @@ export const TabbedPanelContent = React.memo<TabbedPanelContentProps>(props => {
     const activeTab: Panel | undefined = panels[tabIndex]
 
     return (
-        <Tabs className={styles.panel} index={tabIndex} onChange={handleActiveTab}>
+        <Tabs lazy={true} behavior="memoize" className={styles.panel} index={tabIndex} onChange={handleActiveTab}>
             <TabList
                 wrapperClassName={classNames(styles.panelHeader, 'sticky-top')}
                 actions={
@@ -185,7 +188,7 @@ export const TabbedPanelContent = React.memo<TabbedPanelContentProps>(props => {
                             className={styles.tabsContent}
                             data-testid="panel-tabs-content"
                         >
-                            {id === activeTab.id ? element : null}
+                            {({ shouldRender }) => shouldRender && element}
                         </TabPanel>
                     ))
                 ) : (

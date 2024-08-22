@@ -2,19 +2,20 @@ package api
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	"github.com/dustin/go-humanize"
 	"go.opentelemetry.io/otel/attribute"
+	"golang.org/x/text/language"
+	"golang.org/x/text/message"
 
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 
 	"github.com/sourcegraph/sourcegraph/cmd/symbols/internal/api/observability"
 	"github.com/sourcegraph/sourcegraph/cmd/symbols/internal/database/store"
 	"github.com/sourcegraph/sourcegraph/cmd/symbols/internal/database/writer"
-	sharedobservability "github.com/sourcegraph/sourcegraph/cmd/symbols/observability"
-	"github.com/sourcegraph/sourcegraph/cmd/symbols/types"
+	sharedobservability "github.com/sourcegraph/sourcegraph/cmd/symbols/internal/observability"
+	"github.com/sourcegraph/sourcegraph/cmd/symbols/internal/types"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/observation"
 	"github.com/sourcegraph/sourcegraph/internal/search"
@@ -22,6 +23,12 @@ import (
 )
 
 const searchTimeout = 60 * time.Second
+
+type limitHitError struct {
+	description string
+}
+
+func (e *limitHitError) Error() string { return e.description }
 
 func MakeSqliteSearchFunc(observationCtx *observation.Context, cachedDatabaseWriter writer.CachedDatabaseWriter, db database.DB) types.SearchFunc {
 	operations := sharedobservability.NewOperations(observationCtx)
@@ -34,8 +41,10 @@ func MakeSqliteSearchFunc(observationCtx *observation.Context, cachedDatabaseWri
 			attribute.Bool("isRegExp", args.IsRegExp),
 			attribute.Bool("isCaseSensitive", args.IsCaseSensitive),
 			attribute.Int("numIncludePatterns", len(args.IncludePatterns)),
-			attribute.String("includePatterns", strings.Join(args.IncludePatterns, ":")),
+			attribute.StringSlice("includePatterns", args.IncludePatterns),
 			attribute.String("excludePattern", args.ExcludePattern),
+			attribute.StringSlice("includeLangs", args.IncludeLangs),
+			attribute.StringSlice("excludeLangs", args.ExcludeLangs),
 			attribute.Int("first", args.First),
 			attribute.Float64("timeoutSeconds", args.Timeout.Seconds()),
 		}})
@@ -62,16 +71,16 @@ func MakeSqliteSearchFunc(observationCtx *observation.Context, cachedDatabaseWri
 			defer cancel()
 			info, err2 := db.GitserverRepos().GetByName(ctx, args.Repo)
 			if err2 != nil {
-				err = errors.New("Processing symbols using the SQLite backend is taking a while. If this repository is ~1GB+, enable [Rockskip](https://docs.sourcegraph.com/code_navigation/explanations/rockskip).")
+				err = errors.New("Processing symbols using the SQLite backend is taking a while. If this repository is ~1GB+, enable [Rockskip](https://sourcegraph.com/docs/code_navigation/explanations/rockskip).")
 				return
 			}
 			size := info.RepoSizeBytes
 
 			help := ""
 			if size > 1_000_000_000 {
-				help = "Enable [Rockskip](https://docs.sourcegraph.com/code_navigation/explanations/rockskip)."
+				help = "Enable [Rockskip](https://sourcegraph.com/docs/code_navigation/explanations/rockskip)."
 			} else if size > 100_000_000 {
-				help = "If this persists, enable [Rockskip](https://docs.sourcegraph.com/code_navigation/explanations/rockskip)."
+				help = "If this persists, enable [Rockskip](https://sourcegraph.com/docs/code_navigation/explanations/rockskip)."
 			} else {
 				help = "If this persists, make sure the symbols service has an SSD, a few GHz of CPU, and a few GB of RAM."
 			}
@@ -87,8 +96,13 @@ func MakeSqliteSearchFunc(observationCtx *observation.Context, cachedDatabaseWri
 
 		var res result.Symbols
 		err = store.WithSQLiteStore(observationCtx, dbFile, func(db store.Store) (err error) {
-			if res, err = db.Search(ctx, args); err != nil {
+			var limitHit bool
+			if res, limitHit, err = db.Search(ctx, args); err != nil {
 				return errors.Wrap(err, "store.Search")
+			}
+			if limitHit {
+				p := message.NewPrinter(language.English)
+				return &limitHitError{description: p.Sprintf("unindexed symbol search out of bounds. Expected args.First to be within [0, %d], got %d", store.MaxSymbolLimit, args.First)}
 			}
 
 			return nil

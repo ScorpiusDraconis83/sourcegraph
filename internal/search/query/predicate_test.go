@@ -3,9 +3,11 @@ package query
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/sourcegraph/sourcegraph/internal/types"
 	"github.com/sourcegraph/sourcegraph/lib/pointers"
 )
 
@@ -53,6 +55,53 @@ func TestRepoContainsFilePredicate(t *testing.T) {
 		for _, tc := range invalid {
 			t.Run(tc.name, func(t *testing.T) {
 				p := &RepoContainsFilePredicate{}
+				err := p.Unmarshal(tc.params, false)
+				if err == nil {
+					t.Fatal("expected error but got none")
+				}
+			})
+		}
+	})
+}
+
+func TestRevAtTimePredicate(t *testing.T) {
+	t.Run("Unmarshal", func(t *testing.T) {
+		type test struct {
+			name     string
+			params   string
+			expected *RevAtTimePredicate
+		}
+
+		valid := []test{
+			{`date only`, `2024-01-01`, &RevAtTimePredicate{RevAtTime{RevSpec: "HEAD", Timestamp: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}}},
+			{`timestamp`, `2024-01-01T00:00:00Z`, &RevAtTimePredicate{RevAtTime{RevSpec: "HEAD", Timestamp: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}}},
+			{`weird spaces`, ` 2024-01-01`, &RevAtTimePredicate{RevAtTime{RevSpec: "HEAD", Timestamp: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}}},
+			{`date and rev`, `2024-01-01, HEAD~12`, &RevAtTimePredicate{RevAtTime{RevSpec: "HEAD~12", Timestamp: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}}},
+			{`date and rev with weird spaces`, ` 2024-01-01 , HEAD~12 `, &RevAtTimePredicate{RevAtTime{RevSpec: "HEAD~12", Timestamp: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}}},
+		}
+
+		for _, tc := range valid {
+			t.Run(tc.name, func(t *testing.T) {
+				p := &RevAtTimePredicate{}
+				err := p.Unmarshal(tc.params, false)
+				if err != nil {
+					t.Fatalf("unexpected error: %s", err)
+				}
+
+				if !reflect.DeepEqual(tc.expected, p) {
+					t.Fatalf("expected %#v, got %#v", tc.expected, p)
+				}
+			})
+		}
+
+		invalid := []test{
+			{`invalid date`, `2024-13-01`, nil},
+			{`too many commas`, `a, b, c`, nil},
+		}
+
+		for _, tc := range invalid {
+			t.Run(tc.name, func(t *testing.T) {
+				p := &RevAtTimePredicate{}
 				err := p.Unmarshal(tc.params, false)
 				if err == nil {
 					t.Fatal("expected error but got none")
@@ -147,7 +196,7 @@ func TestRepoHasTopicPredicate(t *testing.T) {
 	})
 }
 
-func TestRepoHasKVPMetaPredicate(t *testing.T) {
+func TestRepoHasMetaPredicate(t *testing.T) {
 	t.Run("Unmarshal", func(t *testing.T) {
 		type test struct {
 			name     string
@@ -156,13 +205,13 @@ func TestRepoHasKVPMetaPredicate(t *testing.T) {
 		}
 
 		valid := []test{
-			{`key:value`, `key:value`, &RepoHasMetaPredicate{Key: "key", Value: pointers.Ptr("value"), Negated: false, KeyOnly: false}},
-			{`double quoted special characters`, `"key:colon":"value:colon"`, &RepoHasMetaPredicate{Key: "key:colon", Value: pointers.Ptr("value:colon"), Negated: false, KeyOnly: false}},
-			{`single quoted special characters`, `'  key:':'value : '`, &RepoHasMetaPredicate{Key: `  key:`, Value: pointers.Ptr(`value : `), Negated: false, KeyOnly: false}},
-			{`escaped quotes`, `"key\"quote":"value\"quote"`, &RepoHasMetaPredicate{Key: `key"quote`, Value: pointers.Ptr(`value"quote`), Negated: false, KeyOnly: false}},
-			{`space padding`, `  key:value  `, &RepoHasMetaPredicate{Key: `key`, Value: pointers.Ptr(`value`), Negated: false, KeyOnly: false}},
-			{`only key`, `key`, &RepoHasMetaPredicate{Key: `key`, Value: nil, Negated: false, KeyOnly: true}},
-			{`key tag`, `key:`, &RepoHasMetaPredicate{Key: "key", Value: nil, Negated: false, KeyOnly: false}},
+			{`key:value`, `key:value`, &RepoHasMetaPredicate{Key: "^key$", Value: pointers.Ptr(types.RegexpPattern("^value$")), Negated: false, KeyOnly: false}},
+			{`double quoted special characters`, `"key:colon":"value:colon"`, &RepoHasMetaPredicate{Key: "^key:colon$", Value: pointers.Ptr(types.RegexpPattern("^value:colon$")), Negated: false, KeyOnly: false}},
+			{`single quoted special characters`, `'  key:':'value : '`, &RepoHasMetaPredicate{Key: `^  key:$`, Value: pointers.Ptr(types.RegexpPattern(`^value : $`)), Negated: false, KeyOnly: false}},
+			{`escaped quotes`, `"key\"quote":"value\"quote"`, &RepoHasMetaPredicate{Key: `^key"quote$`, Value: pointers.Ptr(types.RegexpPattern(`^value"quote$`)), Negated: false, KeyOnly: false}},
+			{`space padding`, `  key:value  `, &RepoHasMetaPredicate{Key: `^key$`, Value: pointers.Ptr(types.RegexpPattern(`^value$`)), Negated: false, KeyOnly: false}},
+			{`only key`, `key`, &RepoHasMetaPredicate{Key: `^key$`, Value: nil, Negated: false, KeyOnly: true}},
+			{`key tag`, `key:`, &RepoHasMetaPredicate{Key: "^key$", Value: nil, Negated: false, KeyOnly: false}},
 		}
 
 		for _, tc := range valid {

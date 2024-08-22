@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo } from 'react'
 
 import { mdiArrowRight } from '@mdi/js'
+import classNames from 'classnames'
 
 import { SyntaxHighlightedSearchQuery } from '@sourcegraph/branded'
 import { ALL_LANGUAGES } from '@sourcegraph/common'
@@ -9,6 +10,7 @@ import type { CaseSensitivityProps, SearchPatternTypeProps, SearchContextProps }
 import { stringHuman } from '@sourcegraph/shared/src/search/query/printer'
 import { scanSearchQuery } from '@sourcegraph/shared/src/search/query/scanner'
 import { createLiteral, type Pattern, type Token } from '@sourcegraph/shared/src/search/query/token'
+import { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { buildSearchURLQuery } from '@sourcegraph/shared/src/util/url'
 import { Link, createLinkUrl, Icon } from '@sourcegraph/wildcard'
@@ -124,8 +126,10 @@ interface DidYouMeanProps
     extends SearchPatternTypeProps,
         Pick<CaseSensitivityProps, 'caseSensitive'>,
         Pick<SearchContextProps, 'selectedSearchContextSpec'>,
-        TelemetryProps {
+        TelemetryProps,
+        TelemetryV2Props {
     query: string
+    className?: string
 }
 
 export const DidYouMean: React.FunctionComponent<React.PropsWithChildren<DidYouMeanProps>> = ({
@@ -133,19 +137,22 @@ export const DidYouMean: React.FunctionComponent<React.PropsWithChildren<DidYouM
     query,
     patternType,
     caseSensitive,
+    className,
     selectedSearchContextSpec,
+    telemetryRecorder,
 }) => {
     const suggestions = useMemo(() => getQuerySuggestions(query, patternType), [query, patternType])
 
     useEffect(() => {
         if (suggestions.length > 0) {
             telemetryService.log('SearchDidYouMeanDisplayed')
+            telemetryRecorder.recordEvent('search.didYouMean', 'view')
         }
-    }, [suggestions, telemetryService])
+    }, [suggestions, telemetryService, telemetryRecorder])
 
     if (suggestions.length > 0) {
         return (
-            <div className={styles.root}>
+            <div className={classNames(className, styles.root)}>
                 <ul className={styles.container}>
                     {suggestions.map(suggestion => {
                         const builtURLQuery = buildSearchURLQuery(
@@ -157,9 +164,10 @@ export const DidYouMean: React.FunctionComponent<React.PropsWithChildren<DidYouM
                         return (
                             <li key={suggestion.query} className={styles.listItem}>
                                 <Link
-                                    onClick={() =>
+                                    onClick={() => {
                                         telemetryService.log('SearchDidYouMeanClicked', { type: suggestion.type })
-                                    }
+                                        telemetryRecorder.recordEvent('search.didYouMean', 'click')
+                                    }}
                                     to={createLinkUrl({ pathname: '/search', search: builtURLQuery })}
                                     className={styles.link}
                                 >

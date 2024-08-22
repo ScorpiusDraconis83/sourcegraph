@@ -3,9 +3,10 @@ package repoupdater
 import (
 	"context"
 
+	"google.golang.org/grpc"
+
 	"github.com/sourcegraph/sourcegraph/internal/grpc/defaults"
 	proto "github.com/sourcegraph/sourcegraph/internal/repoupdater/v1"
-	"google.golang.org/grpc"
 )
 
 // automaticRetryClient is a convenience wrapper around a base proto.RepoUpdaterServiceClient that automatically retries
@@ -24,11 +25,6 @@ func (a *automaticRetryClient) RepoUpdateSchedulerInfo(ctx context.Context, in *
 	return a.base.RepoUpdateSchedulerInfo(ctx, in, opts...)
 }
 
-func (a *automaticRetryClient) RepoLookup(ctx context.Context, in *proto.RepoLookupRequest, opts ...grpc.CallOption) (*proto.RepoLookupResponse, error) {
-	opts = append(defaults.RetryPolicy, opts...)
-	return a.base.RepoLookup(ctx, in, opts...)
-}
-
 func (a *automaticRetryClient) EnqueueRepoUpdate(ctx context.Context, in *proto.EnqueueRepoUpdateRequest, opts ...grpc.CallOption) (*proto.EnqueueRepoUpdateResponse, error) {
 	opts = append(defaults.RetryPolicy, opts...)
 	return a.base.EnqueueRepoUpdate(ctx, in, opts...)
@@ -37,6 +33,11 @@ func (a *automaticRetryClient) EnqueueRepoUpdate(ctx context.Context, in *proto.
 func (a *automaticRetryClient) EnqueueChangesetSync(ctx context.Context, in *proto.EnqueueChangesetSyncRequest, opts ...grpc.CallOption) (*proto.EnqueueChangesetSyncResponse, error) {
 	opts = append(defaults.RetryPolicy, opts...)
 	return a.base.EnqueueChangesetSync(ctx, in, opts...)
+}
+
+func (a *automaticRetryClient) RecloneRepository(ctx context.Context, in *proto.RecloneRepositoryRequest, opts ...grpc.CallOption) (*proto.RecloneRepositoryResponse, error) {
+	// Don't retry
+	return a.base.RecloneRepository(ctx, in, opts...)
 }
 
 var _ proto.RepoUpdaterServiceClient = &automaticRetryClient{}

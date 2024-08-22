@@ -22,6 +22,7 @@ go_library(
         "user.go",
     ],
     importpath = "github.com/sourcegraph/sourcegraph/internal/batches/testing",
+    tags = [TAG_SEARCHSUITE],
     visibility = ["//:__subpackages__"],
     deps = [
         "//internal/api",
@@ -43,7 +44,6 @@ go_library(
         "//internal/gitserver",
         "//internal/gitserver/gitdomain",
         "//internal/rbac",
-        "//internal/repoupdater",
         "//internal/repoupdater/protocol",
         "//internal/timeutil",
         "//internal/types",

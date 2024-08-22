@@ -1,10 +1,10 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import type { Observable, Unsubscribable } from 'rxjs'
+import { lastValueFrom, type Observable, type Unsubscribable } from 'rxjs'
 
 import type { GraphQLResult } from '@sourcegraph/http-client'
 
 import type { PlatformContext } from '../../platform/context'
 import type { Settings, SettingsCascade } from '../../settings/settings'
+import type { TelemetryV2Props } from '../../telemetry'
 
 /**
  * Represents a location inside a resource, such as a line
@@ -32,7 +32,7 @@ export interface TextDocument {
      * The text contents of the text document.
      *
      * When using the [Sourcegraph browser
-     * extension](https://docs.sourcegraph.com/integration/browser_extension), the value is
+     * extension](https://sourcegraph.com/docs/integration/browser_extension), the value is
      * `undefined` because determining the text contents (in general) is not possible without
      * additional access to the code host API. In the future, this limitation may be removed.
      */
@@ -361,10 +361,9 @@ export function requestGraphQL<T>(query: string, vars?: { [name: string]: unknow
             )
         )
     }
-    return context
-
-        .requestGraphQL<T, any>({ request: query, variables: vars as any, mightContainPrivateInfo: true })
-        .toPromise()
+    return lastValueFrom(
+        context.requestGraphQL<T, any>({ request: query, variables: vars as any, mightContainPrivateInfo: true })
+    )
 }
 
 export function getSetting<T>(key: string): T | undefined {
@@ -378,7 +377,8 @@ export function updateCodeIntelContext(newContext: CodeIntelContext): void {
     context = newContext
 }
 
-export interface CodeIntelContext extends Pick<PlatformContext, 'requestGraphQL' | 'telemetryService'> {
+export interface CodeIntelContext
+    extends Pick<PlatformContext, 'requestGraphQL' | 'telemetryService' | 'telemetryRecorder'> {
     settings: SettingsGetter
 }
 
@@ -419,4 +419,8 @@ export function logTelemetryEvent(
     eventProperties: { durationMs: number; languageId: string; repositoryId: number }
 ): void {
     context?.telemetryService?.log(eventName, eventProperties)
+}
+
+export function getTelemetryRecorder(): TelemetryV2Props['telemetryRecorder'] | undefined {
+    return context?.telemetryRecorder
 }

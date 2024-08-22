@@ -12,9 +12,21 @@ import (
 
 	"github.com/sourcegraph/log"
 
+	// sourcegraph/internal
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/prompts"
+	"github.com/sourcegraph/sourcegraph/internal/codeintel"
+	codeintelshared "github.com/sourcegraph/sourcegraph/internal/codeintel/shared"
+	"github.com/sourcegraph/sourcegraph/internal/conf"
+	"github.com/sourcegraph/sourcegraph/internal/conf/conftypes"
+	"github.com/sourcegraph/sourcegraph/internal/database"
+	connections "github.com/sourcegraph/sourcegraph/internal/database/connections/live"
+	"github.com/sourcegraph/sourcegraph/internal/httpcli"
+	"github.com/sourcegraph/sourcegraph/internal/observation"
+	"github.com/sourcegraph/sourcegraph/schema"
+
+	// sourcegraph/cmd/frontend/internal
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/enterprise"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/auth"
-	githubapp "github.com/sourcegraph/sourcegraph/cmd/frontend/internal/auth/githubappauth"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/authz"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/batches"
 	codeintelinit "github.com/sourcegraph/sourcegraph/cmd/frontend/internal/codeintel"
@@ -26,26 +38,20 @@ import (
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/dotcom"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/embeddings"
 	executor "github.com/sourcegraph/sourcegraph/cmd/frontend/internal/executorqueue"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/githubapp"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/guardrails"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/insights"
 	licensing "github.com/sourcegraph/sourcegraph/cmd/frontend/internal/licensing/init"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/modelconfig"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/notebooks"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/own"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/rbac"
-	_ "github.com/sourcegraph/sourcegraph/cmd/frontend/internal/registry"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/repos/webhooks"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/savedsearches"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/scim"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/search"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/searchcontexts"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/telemetry"
-	"github.com/sourcegraph/sourcegraph/internal/codeintel"
-	codeintelshared "github.com/sourcegraph/sourcegraph/internal/codeintel/shared"
-	"github.com/sourcegraph/sourcegraph/internal/conf"
-	"github.com/sourcegraph/sourcegraph/internal/conf/conftypes"
-	"github.com/sourcegraph/sourcegraph/internal/database"
-	connections "github.com/sourcegraph/sourcegraph/internal/database/connections/live"
-	"github.com/sourcegraph/sourcegraph/internal/observation"
-	"github.com/sourcegraph/sourcegraph/schema"
 )
 
 type EnterpriseInitializer = func(context.Context, *observation.Context, database.DB, codeintel.Services, conftypes.UnifiedWatchable, *enterprise.Services) error
@@ -64,15 +70,18 @@ var initFunctions = map[string]EnterpriseInitializer{
 	"guardrails":     guardrails.Init,
 	"insights":       insights.Init,
 	"licensing":      licensing.Init,
+	"modelconfig":    modelconfig.Init,
 	"notebooks":      notebooks.Init,
 	"own":            own.Init,
 	"rbac":           rbac.Init,
 	"repos.webhooks": webhooks.Init,
 	"scim":           scim.Init,
 	"searchcontexts": searchcontexts.Init,
+	"savedsearches":  savedsearches.Init,
 	"contentLibrary": contentlibrary.Init,
 	"search":         search.Init,
 	"telemetry":      telemetry.Init,
+	"prompts":        prompts.Init,
 }
 
 func EnterpriseSetupHook(db database.DB, conf conftypes.UnifiedWatchable) enterprise.Services {
@@ -126,7 +135,7 @@ func mustInitializeCodeIntelDB(logger log.Logger) codeintelshared.CodeIntelDB {
 	return codeintelshared.NewCodeIntelDB(logger, db)
 }
 
-func SwitchableSiteConfig() conftypes.WatchableSiteConfig {
+func switchableSiteConfig() conftypes.WatchableSiteConfig {
 	confClient := conf.DefaultClient()
 	switchable := &switchingSiteConfig{
 		watchers:            make([]func(), 0),
@@ -136,7 +145,7 @@ func SwitchableSiteConfig() conftypes.WatchableSiteConfig {
 
 	go func() {
 		<-AutoUpgradeDone
-		conf.EnsureHTTPClientIsConfigured()
+		httpcli.Configure(confClient)
 		switchable.WatchableSiteConfig = confClient
 		for _, watcher := range switchable.watchers {
 			confClient.Watch(watcher)

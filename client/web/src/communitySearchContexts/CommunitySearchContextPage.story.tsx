@@ -4,8 +4,8 @@ import { subDays } from 'date-fns'
 import { EMPTY, NEVER, type Observable, of } from 'rxjs'
 
 import { subtypeOf } from '@sourcegraph/common'
-import type { ActionItemComponentProps } from '@sourcegraph/shared/src/actions/ActionItem'
 import type { SearchContextFields } from '@sourcegraph/shared/src/graphql-operations'
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import {
     mockFetchSearchContexts,
     mockGetUserSearchContextNamespaces,
@@ -27,20 +27,16 @@ const config: Meta = {
             type: 'figma',
             url: 'https://www.figma.com/file/Xc4M24VTQq8itU0Lgb1Wwm/RFC-159-Visual-Design?node-id=66%3A611',
         },
-        chromatic: { viewports: [769, 1200] },
     },
 }
 
 export default config
 
-const EXTENSIONS_CONTROLLER: ActionItemComponentProps['extensionsController'] = {
-    executeCommand: () => new Promise(resolve => setTimeout(resolve, 750)),
-}
-
 const PLATFORM_CONTEXT: CommunitySearchContextPageProps['platformContext'] = {
     settings: NEVER,
     sourcegraphURL: '',
     requestGraphQL: () => EMPTY,
+    telemetryRecorder: noOpTelemetryRecorder,
 }
 
 const authUser: AuthenticatedUser = {
@@ -55,13 +51,12 @@ const authUser: AuthenticatedUser = {
     siteAdmin: true,
     organizations: {
         nodes: [
-            { id: '0', settingsURL: '#', displayName: 'Acme Corp' },
-            { id: '1', settingsURL: '#', displayName: 'Beta Inc' },
+            { id: '0', settingsURL: '#' },
+            { id: '1', settingsURL: '#' },
         ] as AuthenticatedUser['organizations']['nodes'],
     },
     viewerCanAdminister: true,
     hasVerifiedEmail: true,
-    completedPostSignup: true,
     databaseID: 0,
     tosAccepted: true,
     emails: [{ email: 'alice@sourcegraph.com', isPrimary: true, verified: true }],
@@ -114,7 +109,6 @@ const commonProps = () =>
         patternType: SearchPatternType.standard,
         setPatternType: action('setPatternType'),
         caseSensitive: false,
-        extensionsController: { ...EXTENSIONS_CONTROLLER },
         platformContext: PLATFORM_CONTEXT,
         setCaseSensitivity: action('setCaseSensitivity'),
         activation: undefined,

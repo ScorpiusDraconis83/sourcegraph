@@ -1,4 +1,4 @@
-import React, { type ReactNode, useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState, type ReactNode } from 'react'
 
 import { mdiChevronDown } from '@mdi/js'
 import { VisuallyHidden } from '@reach/visually-hidden'
@@ -9,6 +9,7 @@ import { delay, map } from 'rxjs/operators'
 
 import { Timestamp } from '@sourcegraph/branded/src/components/Timestamp'
 import { useQuery } from '@sourcegraph/http-client/src'
+import { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import {
     Button,
@@ -29,7 +30,7 @@ import {
 
 import {
     FilteredConnection,
-    type FilteredConnectionFilter,
+    type Filter,
     type FilteredConnectionQueryArguments,
 } from '../components/FilteredConnection'
 import { PageTitle } from '../components/PageTitle'
@@ -40,16 +41,16 @@ import { parseProductReference } from './SiteAdminFeatureFlagsPage'
 
 import styles from './SiteAdminOutboundRequestsPage.module.scss'
 
-export interface SiteAdminOutboundRequestsPageProps extends TelemetryProps {}
+export interface SiteAdminOutboundRequestsPageProps extends TelemetryProps, TelemetryV2Props {}
 
 export type OutboundRequest = OutboundRequestsResult['outboundRequests']['nodes'][0]
 
-const filters: FilteredConnectionFilter[] = [
+const filters: Filter[] = [
     {
         id: 'filters',
         label: 'Filter',
         type: 'select',
-        values: [
+        options: [
             {
                 label: 'All',
                 value: 'all',
@@ -74,12 +75,13 @@ const filters: FilteredConnectionFilter[] = [
 
 export const SiteAdminOutboundRequestsPage: React.FunctionComponent<
     React.PropsWithChildren<SiteAdminOutboundRequestsPageProps>
-> = ({ telemetryService }) => {
+> = ({ telemetryService, telemetryRecorder }) => {
     const [items, setItems] = useState<OutboundRequest[]>([])
 
     useEffect(() => {
         telemetryService.logPageView('SiteAdminOutboundRequests')
-    }, [telemetryService])
+        telemetryRecorder.recordEvent('admin.outboundRequests', 'view')
+    }, [telemetryService, telemetryRecorder])
 
     const lastId = items.at(-1)?.id ?? null
     const { data, loading, error, stopPolling, refetch, startPolling } = useQuery<

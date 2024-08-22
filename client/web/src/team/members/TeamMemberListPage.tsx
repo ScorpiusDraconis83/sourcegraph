@@ -1,18 +1,19 @@
-import React, { useCallback, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 
 import { mdiPlus } from '@mdi/js'
 
+import { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import { Button, Container, Icon, useDebounce } from '@sourcegraph/wildcard'
 
 import {
     ConnectionContainer,
     ConnectionError,
-    ConnectionLoading,
+    ConnectionForm,
     ConnectionList,
-    SummaryContainer,
+    ConnectionLoading,
     ConnectionSummary,
     ShowMoreButton,
-    ConnectionForm,
+    SummaryContainer,
 } from '../../components/FilteredConnection/ui'
 import type { Scalars } from '../../graphql-operations'
 
@@ -20,7 +21,7 @@ import { AddTeamMemberModal } from './AddTeamMemberModal'
 import { useTeamMembers } from './backend'
 import { TeamMemberNode } from './TeamMemberNode'
 
-interface Props {
+interface Props extends TelemetryV2Props {
     teamID: Scalars['ID']
     teamName: string
     viewerCanAdminister: boolean
@@ -35,6 +36,7 @@ export const TeamMemberListPage: React.FunctionComponent<React.PropsWithChildren
     teamID,
     teamName,
     viewerCanAdminister,
+    telemetryRecorder,
 }) => {
     const [openModal, setOpenModal] = useState<OpenModal | undefined>()
     const [searchValue, setSearchValue] = useState('')
@@ -53,6 +55,8 @@ export const TeamMemberListPage: React.FunctionComponent<React.PropsWithChildren
         setOpenModal(undefined)
         refetchAll()
     }, [refetchAll])
+
+    useEffect(() => telemetryRecorder.recordEvent('team.members', 'view'), [telemetryRecorder])
 
     return (
         <>
@@ -80,13 +84,13 @@ export const TeamMemberListPage: React.FunctionComponent<React.PropsWithChildren
                                 teamName={teamName}
                                 refetchAll={refetchAll}
                                 viewerCanAdminister={viewerCanAdminister}
+                                telemetryRecorder={telemetryRecorder}
                             />
                         ))}
                     </ConnectionList>
                     {connection && (
                         <SummaryContainer className="mt-2">
                             <ConnectionSummary
-                                first={15}
                                 centered={true}
                                 connection={connection}
                                 noun="member"
@@ -100,7 +104,13 @@ export const TeamMemberListPage: React.FunctionComponent<React.PropsWithChildren
             </Container>
 
             {openModal === 'add-member' && (
-                <AddTeamMemberModal onCancel={closeModal} afterAdd={afterAction} teamID={teamID} teamName={teamName} />
+                <AddTeamMemberModal
+                    onCancel={closeModal}
+                    afterAdd={afterAction}
+                    teamID={teamID}
+                    teamName={teamName}
+                    telemetryRecorder={telemetryRecorder}
+                />
             )}
         </>
     )

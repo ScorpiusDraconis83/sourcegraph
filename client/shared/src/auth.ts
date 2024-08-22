@@ -31,7 +31,6 @@ export const currentAuthStateQuery = gql`
                     __typename
                     id
                     name
-                    displayName
                     url
                     settingsURL
                 }
@@ -42,7 +41,6 @@ export const currentAuthStateQuery = gql`
             viewerCanAdminister
             tosAccepted
             hasVerifiedEmail
-            completedPostSignup
             emails {
                 email
                 verified

@@ -40,9 +40,9 @@ func TestCreateCodeMonitor(t *testing.T) {
 	want := &database.Monitor{
 		ID:          1,
 		CreatedBy:   user.ID,
-		CreatedAt:   r.Now(),
+		CreatedAt:   r.now(),
 		ChangedBy:   user.ID,
-		ChangedAt:   r.Now(),
+		ChangedAt:   r.now(),
 		Description: "test monitor",
 		Enabled:     true,
 		UserID:      user.ID,
@@ -126,7 +126,7 @@ func TestListCodeMonitors(t *testing.T) {
 	require.False(t, r1.PageInfo().HasNextPage())
 
 	// Create enough monitors to necessitate paging
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		_, err := r.insertTestMonitorWithOpts(ctx, t)
 		require.NoError(t, err)
 	}
@@ -148,6 +148,40 @@ func TestListCodeMonitors(t *testing.T) {
 
 	require.Len(t, r3.Nodes(), 6, "unexpected node count")
 	require.False(t, r3.PageInfo().HasNextPage())
+}
+
+func TestListCodeMonitors_MissingUsers(t *testing.T) {
+	logger := logtest.Scoped(t)
+	ctx := actor.WithInternalActor(context.Background())
+	db := database.NewDB(logger, dbtest.NewDB(t))
+	r := newTestResolver(t, db)
+
+	user := insertTestUser(t, db, "cm-user1", true)
+	ctx = actor.WithActor(ctx, actor.FromUser(user.ID))
+
+	// Create a monitor.
+	_, err := r.insertTestMonitorWithOpts(ctx, t)
+	require.NoError(t, err)
+
+	args := &graphqlbackend.ListMonitorsArgs{
+		First: 5,
+	}
+
+	r1, err := r.Monitors(ctx, &user.ID, args)
+	require.NoError(t, err)
+
+	require.Len(t, r1.Nodes(), 1, "unexpected node count")
+	require.False(t, r1.PageInfo().HasNextPage())
+
+	// Soft-delete user
+	err = db.Users().Delete(ctx, user.ID)
+	require.NoError(t, err)
+
+	r2, err := r.Monitors(ctx, &user.ID, args)
+	require.NoError(t, err)
+
+	require.Len(t, r2.Nodes(), 0, "unexpected node count")
+	require.False(t, r2.PageInfo().HasNextPage())
 }
 
 func TestIsAllowedToEdit(t *testing.T) {
@@ -374,7 +408,7 @@ func TestQueryMonitor(t *testing.T) {
 	_, err = r.insertTestMonitorWithOpts(ctx, t, actionOpt, postHookOpt)
 	require.NoError(t, err)
 
-	gqlSchema, err := graphqlbackend.NewSchemaWithCodeMonitorsResolver(db, r)
+	gqlSchema, err := graphqlbackend.NewSchemaWithCodeMonitorsResolver(db, nil, r)
 	require.NoError(t, err)
 
 	t.Run("query by user", func(t *testing.T) {
@@ -419,7 +453,7 @@ func queryByUser(ctx context.Context, t *testing.T, schema *graphql.Schema, r *R
 					Enabled:     true,
 					Owner:       apitest.UserOrg{Name: user1.Username},
 					CreatedBy:   apitest.UserOrg{Name: user1.Username},
-					CreatedAt:   marshalDateTime(t, r.Now()),
+					CreatedAt:   marshalDateTime(t, r.now()),
 					Trigger: apitest.Trigger{
 						Id:    string(relay.MarshalID(monitorTriggerQueryKind, 1)),
 						Query: "repo:foo",
@@ -428,7 +462,7 @@ func queryByUser(ctx context.Context, t *testing.T, schema *graphql.Schema, r *R
 								{
 									Id:        string(relay.MarshalID(monitorTriggerEventKind, 1)),
 									Status:    "SUCCESS",
-									Timestamp: r.Now().UTC().Format(time.RFC3339),
+									Timestamp: r.now().UTC().Format(time.RFC3339),
 									Message:   nil,
 								},
 							},
@@ -459,13 +493,13 @@ func queryByUser(ctx context.Context, t *testing.T, schema *graphql.Schema, r *R
 										{
 											Id:        string(relay.MarshalID(monitorActionEmailEventKind, 1)),
 											Status:    "SUCCESS",
-											Timestamp: r.Now().UTC().Format(time.RFC3339),
+											Timestamp: r.now().UTC().Format(time.RFC3339),
 											Message:   nil,
 										},
 										{
 											Id:        string(relay.MarshalID(monitorActionEmailEventKind, 4)),
 											Status:    "PENDING",
-											Timestamp: r.Now().UTC().Format(time.RFC3339),
+											Timestamp: r.now().UTC().Format(time.RFC3339),
 											Message:   nil,
 										},
 									},
@@ -486,13 +520,13 @@ func queryByUser(ctx context.Context, t *testing.T, schema *graphql.Schema, r *R
 										{
 											Id:        string(relay.MarshalID(monitorActionEmailEventKind, 2)),
 											Status:    "SUCCESS",
-											Timestamp: r.Now().UTC().Format(time.RFC3339),
+											Timestamp: r.now().UTC().Format(time.RFC3339),
 											Message:   nil,
 										},
 										{
 											Id:        string(relay.MarshalID(monitorActionEmailEventKind, 5)),
 											Status:    "PENDING",
-											Timestamp: r.Now().UTC().Format(time.RFC3339),
+											Timestamp: r.now().UTC().Format(time.RFC3339),
 											Message:   nil,
 										},
 									},
@@ -513,13 +547,13 @@ func queryByUser(ctx context.Context, t *testing.T, schema *graphql.Schema, r *R
 										{
 											Id:        string(relay.MarshalID(monitorActionEmailEventKind, 3)),
 											Status:    "SUCCESS",
-											Timestamp: r.Now().UTC().Format(time.RFC3339),
+											Timestamp: r.now().UTC().Format(time.RFC3339),
 											Message:   nil,
 										},
 										{
 											Id:        string(relay.MarshalID(monitorActionEmailEventKind, 6)),
 											Status:    "PENDING",
-											Timestamp: r.Now().UTC().Format(time.RFC3339),
+											Timestamp: r.now().UTC().Format(time.RFC3339),
 											Message:   nil,
 										},
 									},
@@ -701,7 +735,7 @@ func TestEditCodeMonitor(t *testing.T) {
 
 	// Update the code monitor.
 	// We update all fields, delete one action, and add a new action.
-	gqlSchema, err := graphqlbackend.NewSchemaWithCodeMonitorsResolver(db, r)
+	gqlSchema, err := graphqlbackend.NewSchemaWithCodeMonitorsResolver(db, nil, r)
 	require.NoError(t, err)
 	updateInput := map[string]any{
 		"monitorID": string(relay.MarshalID(MonitorKind, 1)),
@@ -918,7 +952,7 @@ func queryByID(ctx context.Context, t *testing.T, schema *graphql.Schema, r *Res
 			Enabled:     true,
 			Owner:       apitest.UserOrg{Name: user1.Username},
 			CreatedBy:   apitest.UserOrg{Name: user1.Username},
-			CreatedAt:   marshalDateTime(t, r.Now()),
+			CreatedAt:   marshalDateTime(t, r.now()),
 			Trigger: apitest.Trigger{
 				Id:    string(relay.MarshalID(monitorTriggerQueryKind, 1)),
 				Query: "repo:foo",

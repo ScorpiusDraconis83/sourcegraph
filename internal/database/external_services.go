@@ -18,12 +18,11 @@ import (
 
 	"github.com/sourcegraph/log"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/envvar"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/globals"
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/database/basestore"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbutil"
+	"github.com/sourcegraph/sourcegraph/internal/dotcom"
 	"github.com/sourcegraph/sourcegraph/internal/encryption"
 	"github.com/sourcegraph/sourcegraph/internal/encryption/keyring"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
@@ -35,10 +34,6 @@ import (
 	"github.com/sourcegraph/sourcegraph/lib/pointers"
 	"github.com/sourcegraph/sourcegraph/schema"
 )
-
-// BeforeCreateExternalService (if set) is invoked as a hook prior to creating a
-// new external service in the database.
-var BeforeCreateExternalService func(context.Context, ExternalServiceStore, *types.ExternalService) error
 
 type ExternalServiceStore interface {
 	// Count counts all external services that satisfy the options (ignoring limit and offset).
@@ -72,8 +67,7 @@ type ExternalServiceStore interface {
 
 	// GetLatestSyncErrors returns the most recent sync failure message for
 	// each external service. If the latest sync did not have an error, the
-	// string will be empty. We exclude cloud_default external services as they
-	// are never synced.
+	// string will be empty.
 	GetLatestSyncErrors(ctx context.Context) ([]*SyncError, error)
 
 	// GetByID returns the external service for id.
@@ -259,9 +253,6 @@ type ExternalServicesListOptions struct {
 	UpdatedAfter time.Time
 	// Possible values are ASC or DESC. Defaults to DESC.
 	OrderByDirection string
-	// When true, will only return services that have the cloud_default flag set to
-	// true.
-	OnlyCloudDefault bool
 	// When specified, only include external services which contain repository with a given ID.
 	RepoID api.RepoID
 
@@ -290,9 +281,6 @@ func (o ExternalServicesListOptions) sqlConditions() []*sqlf.Query {
 	}
 	if !o.UpdatedAfter.IsZero() {
 		conds = append(conds, sqlf.Sprintf(`updated_at > %s`, o.UpdatedAfter))
-	}
-	if o.OnlyCloudDefault {
-		conds = append(conds, sqlf.Sprintf("cloud_default = true"))
 	}
 	if o.CodeHostID != 0 {
 		conds = append(conds, sqlf.Sprintf("code_host_id = %s", o.CodeHostID))
@@ -451,7 +439,7 @@ func validateOtherExternalServiceConnection(c *schema.OtherExternalServiceConnec
 		parseRepo = baseURL.Parse
 	}
 
-	if !envvar.SourcegraphDotComMode() && c.MakeReposPublicOnDotCom {
+	if !dotcom.SourcegraphDotComMode() && c.MakeReposPublicOnDotCom {
 		return errors.Errorf(`"makeReposPublicOnDotCom" can only be set when running on Sourcegraph.com`)
 	}
 
@@ -540,18 +528,6 @@ func validatePerforceConnection(perforceValidators []PerforceValidatorFunc, _ in
 	return err
 }
 
-// disablePermsSyncingForExternalService removes "authorization" or
-// "enforcePermissions" fields from the external service config
-// when present on the external service config.
-func disablePermsSyncingForExternalService(config string) (string, error) {
-	withoutEnforcePermissions, err := jsonc.Remove(config, "enforcePermissions")
-	// in case removing "enforcePermissions" fails, we try to remove "authorization" anyway
-	if err != nil {
-		withoutEnforcePermissions = config
-	}
-	return jsonc.Remove(withoutEnforcePermissions, "authorization")
-}
-
 func (e *externalServiceStore) Create(ctx context.Context, confGet func() *conf.Unified, es *types.ExternalService) (err error) {
 	rawConfig, err := es.Config.Decrypt(ctx)
 	if err != nil {
@@ -568,27 +544,8 @@ func (e *externalServiceStore) Create(ctx context.Context, confGet func() *conf.
 		return err
 	}
 
-	// 🚨 SECURITY: For all code host connections on Sourcegraph.com,
-	// we always want to disable repository permissions to prevent
-	// permission syncing from trying to sync permissions from public code.
-	if envvar.SourcegraphDotComMode() {
-		rawConfig, err = disablePermsSyncingForExternalService(rawConfig)
-		if err != nil {
-			return err
-		}
-
-		es.Config.Set(rawConfig)
-	}
-
 	es.CreatedAt = timeutil.Now()
 	es.UpdatedAt = es.CreatedAt
-
-	// Prior to saving the record, run a validation hook.
-	if BeforeCreateExternalService != nil {
-		if err = BeforeCreateExternalService(ctx, NewDBWith(e.logger, e.Store).ExternalServices(), es); err != nil {
-			return err
-		}
-	}
 
 	// Ensure the calculated fields in the external service are up to date.
 	e.recalculateFields(es, string(normalized))
@@ -623,7 +580,6 @@ func (e *externalServiceStore) Create(ctx context.Context, confGet func() *conf.
 			es.CreatedAt,
 			es.UpdatedAt,
 			es.Unrestricted,
-			es.CloudDefault,
 			es.HasWebhooks,
 			es.CodeHostID,
 			es.CreatorID,
@@ -634,8 +590,8 @@ func (e *externalServiceStore) Create(ctx context.Context, confGet func() *conf.
 
 const createExternalServiceQueryFmtstr = `
 INSERT INTO external_services
-	(kind, display_name, config, encryption_key_id, created_at, updated_at, unrestricted, cloud_default, has_webhooks, code_host_id, creator_id, last_updater_id)
-	VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+	(kind, display_name, config, encryption_key_id, created_at, updated_at, unrestricted, has_webhooks, code_host_id, creator_id, last_updater_id)
+	VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 RETURNING id
 `
 
@@ -674,18 +630,6 @@ func (e *externalServiceStore) Upsert(ctx context.Context, svcs ...*types.Extern
 		})
 		if err != nil {
 			return errors.Wrapf(err, "validating service of kind %q", s.Kind)
-		}
-
-		// 🚨 SECURITY: For all code host connections on Sourcegraph.com,
-		// we always want to disable repository permissions to prevent
-		// permission syncing from trying to sync permissions from public code.
-		if envvar.SourcegraphDotComMode() {
-			rawConfig, err = disablePermsSyncingForExternalService(rawConfig)
-			if err != nil {
-				return err
-			}
-
-			s.Config.Set(rawConfig)
 		}
 
 		e.recalculateFields(s, string(normalized))
@@ -751,7 +695,6 @@ func (e *externalServiceStore) Upsert(ctx context.Context, svcs ...*types.Extern
 			&dbutil.NullTime{Time: &svcs[i].LastSyncAt},
 			&dbutil.NullTime{Time: &svcs[i].NextSyncAt},
 			&svcs[i].Unrestricted,
-			&svcs[i].CloudDefault,
 			&keyID,
 			&dbutil.NullBool{B: svcs[i].HasWebhooks},
 			&svcs[i].CodeHostID,
@@ -789,7 +732,6 @@ func (e *externalServiceStore) upsertExternalServicesQuery(ctx context.Context, 
 			dbutil.NullTimeColumn(s.LastSyncAt),
 			dbutil.NullTimeColumn(s.NextSyncAt),
 			s.Unrestricted,
-			s.CloudDefault,
 			s.HasWebhooks,
 			s.CodeHostID,
 			s.CreatorID,
@@ -804,7 +746,7 @@ func (e *externalServiceStore) upsertExternalServicesQuery(ctx context.Context, 
 }
 
 const upsertExternalServicesQueryValueFmtstr = `
-  (COALESCE(NULLIF(%s, 0), (SELECT nextval('external_services_id_seq'))), UPPER(%s), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+  (COALESCE(NULLIF(%s, 0), (SELECT nextval('external_services_id_seq'))), UPPER(%s), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 `
 
 const upsertExternalServicesQueryFmtstr = `
@@ -820,7 +762,6 @@ INSERT INTO external_services (
   last_sync_at,
   next_sync_at,
   unrestricted,
-  cloud_default,
   has_webhooks,
   code_host_id,
   creator_id,
@@ -839,7 +780,6 @@ SET
   last_sync_at       = excluded.last_sync_at,
   next_sync_at       = excluded.next_sync_at,
   unrestricted       = excluded.unrestricted,
-  cloud_default      = excluded.cloud_default,
   has_webhooks       = excluded.has_webhooks,
   code_host_id       = excluded.code_host_id,
   last_updater_id    = excluded.last_updater_id
@@ -854,7 +794,6 @@ RETURNING
 	last_sync_at,
 	next_sync_at,
 	unrestricted,
-	cloud_default,
 	encryption_key_id,
 	has_webhooks,
 	code_host_id,
@@ -866,7 +805,6 @@ RETURNING
 type ExternalServiceUpdate struct {
 	DisplayName    *string
 	Config         *string
-	CloudDefault   *bool
 	TokenExpiresAt *time.Time
 	LastSyncAt     *time.Time
 	NextSyncAt     *time.Time
@@ -934,17 +872,6 @@ func (e *externalServiceStore) Update(ctx context.Context, ps []schema.AuthProvi
 			return err
 		}
 
-		// 🚨 SECURITY: For all code host connections on Sourcegraph.com,
-		// we always want to disable repository permissions to prevent
-		// permission syncing from trying to sync permissions from public code.
-		if envvar.SourcegraphDotComMode() {
-			unredactedConfig, err = disablePermsSyncingForExternalService(unredactedConfig)
-			if err != nil {
-				return err
-			}
-			newSvc.Config.Set(unredactedConfig)
-		}
-
 		chID, err := ensureCodeHost(ctx, tx, externalService.Kind, string(normalized))
 		if err != nil {
 			return err
@@ -962,17 +889,13 @@ func (e *externalServiceStore) Update(ctx context.Context, ps []schema.AuthProvi
 	}
 
 	if update.Config != nil {
-		unrestricted := calcUnrestricted(string(normalized))
+		unrestricted := calcUnrestricted(string(normalized), conf.PermissionsUserMapping().Enabled)
 
 		updates = append(updates,
 			sqlf.Sprintf(
 				"config = %s, encryption_key_id = %s, unrestricted = %s, has_webhooks = %s, last_updater_id = %s",
 				encryptedConfig, keyID, unrestricted, hasWebhooks, update.LastUpdaterID,
 			))
-	}
-
-	if update.CloudDefault != nil {
-		updates = append(updates, sqlf.Sprintf("cloud_default = %s", update.CloudDefault))
 	}
 
 	if update.TokenExpiresAt != nil {
@@ -1481,7 +1404,7 @@ FROM external_services es
                    ON es.id = essj.external_service_id
                        AND essj.state IN ('completed', 'errored', 'failed')
                        AND essj.finished_at IS NOT NULL
-WHERE es.deleted_at IS NULL AND NOT es.cloud_default
+WHERE es.deleted_at IS NULL
 ORDER BY es.id, essj.finished_at DESC
 `)
 
@@ -1509,10 +1432,11 @@ func (e *externalServiceStore) List(ctx context.Context, opt ExternalServicesLis
 			last_sync_at,
 			next_sync_at,
 			unrestricted,
-			cloud_default,
 			has_webhooks,
 			token_expires_at,
-			code_host_id
+			code_host_id,
+			creator_id,
+			last_updater_id
 		FROM external_services
 		WHERE (%s)
 		ORDER BY id `+opt.OrderByDirection+`
@@ -1551,10 +1475,11 @@ func (e *externalServiceStore) List(ctx context.Context, opt ExternalServicesLis
 			&lastSyncAt,
 			&nextSyncAt,
 			&h.Unrestricted,
-			&h.CloudDefault,
 			&hasWebhooks,
 			&tokenExpiresAt,
 			&h.CodeHostID,
+			&h.CreatorID,
+			&h.LastUpdaterID,
 		); err != nil {
 			return nil, err
 		}
@@ -1703,8 +1628,14 @@ WHERE EXISTS(
 	return v && exists, nil
 }
 
-func calcUnrestricted(config string) bool {
-	unrestricted := !envvar.SourcegraphDotComMode() && !gjson.Get(config, "authorization").Exists()
+// calcUnrestricted determines whether or not permissions should be enforced
+// on an external service.
+func calcUnrestricted(config string, permissionsUserMappingEnabled bool) bool {
+	// If PermissionsUserMapping is enabled, we return false since permissions
+	// will be managed by the explicit permissions API.
+	if permissionsUserMappingEnabled {
+		return false
+	}
 
 	// Only override the value of es.Unrestricted if `enforcePermissions` is set.
 	//
@@ -1718,22 +1649,18 @@ func calcUnrestricted(config string) bool {
 	// For existing auth providers, this is forwards compatible. While at the same time if they also
 	// wanted to get on the `enforcePermissions` pattern, this change is backwards compatible.
 	enforcePermissions := gjson.Get(config, "enforcePermissions")
-	if !envvar.SourcegraphDotComMode() {
-		if globals.PermissionsUserMapping().Enabled {
-			unrestricted = false
-		} else if enforcePermissions.Exists() {
-			unrestricted = !enforcePermissions.Bool()
-		}
+	if enforcePermissions.Exists() {
+		return !enforcePermissions.Bool()
 	}
 
-	return unrestricted
+	return !gjson.Get(config, "authorization").Exists()
 }
 
 // recalculateFields updates the value of the external service fields that are
 // calculated depending on the external service configuration, namely
 // `Unrestricted` and `HasWebhooks`.
 func (e *externalServiceStore) recalculateFields(es *types.ExternalService, rawConfig string) {
-	es.Unrestricted = calcUnrestricted(rawConfig)
+	es.Unrestricted = calcUnrestricted(rawConfig, conf.PermissionsUserMapping().Enabled)
 
 	hasWebhooks := false
 	cfg, err := extsvc.ParseConfig(es.Kind, rawConfig)
@@ -1756,7 +1683,7 @@ func ensureCodeHost(ctx context.Context, tx *externalServiceStore, kind string, 
 	}
 	// TODO: Use this method for the OOB migrator as well.
 	rateLimit, isDefaultRateLimit, err := extsvc.ExtractRateLimit(config, kind)
-	if err != nil && !errors.HasType(err, extsvc.ErrRateLimitUnsupported{}) {
+	if err != nil && !errors.HasType[extsvc.ErrRateLimitUnsupported](err) {
 		return 0, err
 	}
 	ch := &types.CodeHost{

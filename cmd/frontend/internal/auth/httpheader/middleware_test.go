@@ -10,8 +10,8 @@ import (
 	"github.com/sourcegraph/log/logtest"
 
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/auth"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/auth/providers"
 	sgactor "github.com/sourcegraph/sourcegraph/internal/actor"
-	"github.com/sourcegraph/sourcegraph/internal/auth/providers"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbtest"
 	"github.com/sourcegraph/sourcegraph/internal/licensing"
@@ -28,7 +28,7 @@ func TestMiddleware(t *testing.T) {
 
 	db := database.NewDB(logger, dbtest.NewDB(t))
 
-	handler := middleware(db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := middleware(logtest.Scoped(t), db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		actor := sgactor.FromContext(r.Context())
 		if actor.IsAuthenticated() {
 			fmt.Fprintf(w, "user %v", actor.UID)
@@ -199,7 +199,7 @@ func TestMiddleware_stripPrefix(t *testing.T) {
 
 	db := database.NewDB(logger, dbtest.NewDB(t))
 
-	handler := middleware(db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := middleware(logtest.Scoped(t), db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		actor := sgactor.FromContext(r.Context())
 		if actor.IsAuthenticated() {
 			fmt.Fprintf(w, "user %v", actor.UID)

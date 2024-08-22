@@ -2,6 +2,7 @@ import type { Decorator, Meta, StoryFn } from '@storybook/react'
 import { noop } from 'lodash'
 import { of } from 'rxjs'
 
+import { SearchPatternType } from '@sourcegraph/shared/src/graphql-operations'
 import { HIGHLIGHTED_FILE_LINES_LONG } from '@sourcegraph/shared/src/testing/searchTestHelpers'
 
 import type { FileBlockInput } from '../..'
@@ -44,11 +45,12 @@ export const Default: StoryFn = () => (
                 {...noopBlockCallbacks}
                 id="file-block-1"
                 input={fileBlockInput}
-                output={of(HIGHLIGHTED_FILE_LINES_LONG[0])}
+                output={of(HIGHLIGHTED_FILE_LINES_LONG)}
                 isSelected={true}
                 isReadOnly={false}
                 showMenu={false}
                 isSourcegraphDotCom={false}
+                patternType={SearchPatternType.standard}
             />
         )}
     </WebStory>
@@ -62,11 +64,12 @@ export const EditMode: StoryFn = () => (
                 {...noopBlockCallbacks}
                 id="file-block-1"
                 input={{ repositoryName: '', filePath: '', revision: 'main', lineRange: { startLine: 1, endLine: 10 } }}
-                output={of(HIGHLIGHTED_FILE_LINES_LONG[0])}
+                output={of(HIGHLIGHTED_FILE_LINES_LONG)}
                 isSelected={true}
                 isReadOnly={false}
                 showMenu={false}
                 isSourcegraphDotCom={false}
+                patternType={SearchPatternType.standard}
             />
         )}
     </WebStory>
@@ -87,6 +90,7 @@ export const ErrorFetchingFile: StoryFn = () => (
                 isReadOnly={false}
                 showMenu={false}
                 isSourcegraphDotCom={false}
+                patternType={SearchPatternType.standard}
             />
         )}
     </WebStory>

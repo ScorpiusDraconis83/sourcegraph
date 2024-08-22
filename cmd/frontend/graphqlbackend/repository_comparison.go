@@ -15,12 +15,12 @@ import (
 	"github.com/sourcegraph/conc/pool"
 	"github.com/sourcegraph/go-diff/diff"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/highlight"
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
 	"github.com/sourcegraph/sourcegraph/internal/gosyntect"
-	"github.com/sourcegraph/sourcegraph/internal/highlight"
+	"github.com/sourcegraph/sourcegraph/internal/gqlutil"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 	"github.com/sourcegraph/sourcegraph/lib/pointers"
 )
@@ -48,7 +48,7 @@ type RepositoryComparisonInterface interface {
 type FileDiffConnection interface {
 	Nodes(ctx context.Context) ([]FileDiff, error)
 	TotalCount(ctx context.Context) (*int32, error)
-	PageInfo(ctx context.Context) (*graphqlutil.PageInfo, error)
+	PageInfo(ctx context.Context) (*gqlutil.PageInfo, error)
 	DiffStat(ctx context.Context) (*DiffStat, error)
 	RawDiff(ctx context.Context) (string, error)
 }
@@ -74,7 +74,7 @@ func NewRepositoryComparison(ctx context.Context, db database.DB, client gitserv
 		}
 
 		opt := gitserver.ResolveRevisionOptions{
-			NoEnsureRevision: !args.FetchMissing,
+			EnsureRevision: args.FetchMissing,
 		}
 
 		// Call ResolveRevision to trigger fetches from remote (in case base/head commits don't
@@ -92,23 +92,29 @@ func NewRepositoryComparison(ctx context.Context, db database.DB, client gitserv
 		return nil, err
 	}
 
-	// Find the common merge-base for the diff. That's the revision the diff applies to,
-	// not the baseRevspec.
-	mergeBaseCommit, err := client.MergeBase(ctx, r.RepoName(), api.CommitID(baseRevspec), api.CommitID(headRevspec))
+	var base *GitCommitResolver
+	rangeType := ".."
+	if baseRevspec != gitserver.DevNullSHA {
+		rangeType = "..."
+		// Find the common merge-base for the diff. That's the revision the diff applies to,
+		// not the baseRevspec.
+		mergeBaseCommit, err := client.MergeBase(ctx, r.RepoName(), baseRevspec, headRevspec)
+		if err != nil {
+			return nil, err
+		}
 
-	// If possible, use the merge-base as the base commit, as the diff will only be guaranteed to be
-	// applicable to the file from that revision.
-	commitString := strings.TrimSpace(string(mergeBaseCommit))
-	rangeType := "..."
-	if err != nil {
-		// Fallback option which should work even if there is no merge base.
-		commitString = baseRevspec
-		rangeType = ".."
-	}
-
-	base, err := getCommit(ctx, r.RepoName(), commitString)
-	if err != nil {
-		return nil, err
+		// If possible, use the merge-base as the base commit, as the diff will only be guaranteed to be
+		// applicable to the file from that revision.
+		commitString := string(mergeBaseCommit)
+		if commitString == "" {
+			// Fallback option which should work even if there is no merge base.
+			commitString = baseRevspec
+			rangeType = ".."
+		}
+		base, err = getCommit(ctx, r.RepoName(), commitString)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return &RepositoryComparisonResolver{
@@ -162,7 +168,7 @@ func (r *RepositoryComparisonResolver) Range() *gitRevisionRange {
 
 // RepositoryComparisonCommitsArgs is a set of arguments for listing commits on the RepositoryComparisonResolver
 type RepositoryComparisonCommitsArgs struct {
-	graphqlutil.ConnectionArgs
+	gqlutil.ConnectionArgs
 	Path *string
 }
 
@@ -236,8 +242,7 @@ func computeRepositoryComparisonDiff(cmp *RepositoryComparisonResolver) ComputeD
 			paths := pointers.Deref(args.Paths, nil)
 
 			var iter *gitserver.DiffFileIterator
-			iter, err = cmp.gitserverClient.Diff(ctx, gitserver.DiffOptions{
-				Repo:      cmp.repo.RepoName(),
+			iter, err = cmp.gitserverClient.Diff(ctx, cmp.repo.RepoName(), gitserver.DiffOptions{
 				Base:      base,
 				Head:      string(cmp.head.OID()),
 				RangeType: cmp.rangeType,
@@ -358,19 +363,19 @@ func (r *fileDiffConnectionResolver) TotalCount(ctx context.Context) (*int32, er
 	return nil, nil // total count is not available
 }
 
-func (r *fileDiffConnectionResolver) PageInfo(ctx context.Context) (*graphqlutil.PageInfo, error) {
+func (r *fileDiffConnectionResolver) PageInfo(ctx context.Context) (*gqlutil.PageInfo, error) {
 	_, afterIdx, hasNextPage, err := r.compute(ctx, r.args)
 	if err != nil {
 		return nil, err
 	}
 	if !hasNextPage {
-		return graphqlutil.HasNextPage(hasNextPage), nil
+		return gqlutil.HasNextPage(hasNextPage), nil
 	}
 	next := afterIdx
 	if r.args.First != nil {
 		next += *r.args.First
 	}
-	return graphqlutil.NextPageCursor(strconv.Itoa(int(next))), nil
+	return gqlutil.NextPageCursor(strconv.Itoa(int(next))), nil
 }
 
 func (r *fileDiffConnectionResolver) DiffStat(ctx context.Context) (*DiffStat, error) {

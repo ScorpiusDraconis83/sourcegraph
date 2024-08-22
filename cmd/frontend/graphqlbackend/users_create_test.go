@@ -5,11 +5,11 @@ import (
 	"net/url"
 	"testing"
 
-	mockrequire "github.com/derision-test/go-mockgen/testutil/require"
+	mockrequire "github.com/derision-test/go-mockgen/v2/testutil/require"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/backend"
-	"github.com/sourcegraph/sourcegraph/internal/auth/userpasswd"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/auth/userpasswd"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/backend"
 	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbmocks"
 	"github.com/sourcegraph/sourcegraph/internal/txemail"
@@ -24,7 +24,7 @@ type mockFuncs struct {
 	userEmailStore *dbmocks.MockUserEmailsStore
 }
 
-func makeUsersCreateTestDB(t *testing.T) mockFuncs {
+func makeUsersCreateTestDB() mockFuncs {
 	users := dbmocks.NewMockUserStore()
 	// This is the created user that is returned via the GraphQL API.
 	users.CreateFunc.SetDefaultReturn(&types.User{ID: 1, Username: "alice"}, nil)
@@ -50,7 +50,7 @@ func makeUsersCreateTestDB(t *testing.T) mockFuncs {
 }
 
 func TestCreateUser(t *testing.T) {
-	mocks := makeUsersCreateTestDB(t)
+	mocks := makeUsersCreateTestDB()
 
 	RunTests(t, []*Test{
 		{
@@ -81,7 +81,7 @@ func TestCreateUser(t *testing.T) {
 }
 
 func TestCreateUserResetPasswordURL(t *testing.T) {
-	backend.MockMakePasswordResetURL = func(_ context.Context, _ int32) (*url.URL, error) {
+	backend.MockMakePasswordResetURL = func(_ context.Context, _ int32, _ string) (*url.URL, error) {
 		return url.Parse("/reset-url?code=foobar")
 	}
 	userpasswd.MockResetPasswordEnabled = func() bool { return true }
@@ -91,7 +91,7 @@ func TestCreateUserResetPasswordURL(t *testing.T) {
 	})
 
 	t.Run("with SMTP disabled", func(t *testing.T) {
-		mocks := makeUsersCreateTestDB(t)
+		mocks := makeUsersCreateTestDB()
 
 		conf.Mock(&conf.Unified{
 			SiteConfiguration: schema.SiteConfiguration{
@@ -146,7 +146,7 @@ func TestCreateUserResetPasswordURL(t *testing.T) {
 			txemail.MockSend = nil
 		})
 
-		mocks := makeUsersCreateTestDB(t)
+		mocks := makeUsersCreateTestDB()
 
 		RunTests(t, []*Test{
 			{
@@ -200,7 +200,7 @@ func TestCreateUserResetPasswordURL(t *testing.T) {
 			txemail.MockSend = nil
 		})
 
-		mocks := makeUsersCreateTestDB(t)
+		mocks := makeUsersCreateTestDB()
 
 		RunTests(t, []*Test{
 			{

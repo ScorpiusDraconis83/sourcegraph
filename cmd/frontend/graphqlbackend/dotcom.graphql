@@ -142,6 +142,16 @@ type DotcomQuery {
     FOR INTERNAL USE ONLY.
     """
     codyGatewayDotcomUserByToken(token: String!): CodyGatewayDotcomUser
+
+    """
+    The current rate limit status for a dotcom user stored in Cody Gateway.
+    """
+    codyGatewayRateLimitStatusByUserName(
+        """
+        The username of the user to get the rate limit status for.
+        """
+        username: String!
+    ): [CodyGatewayRateLimitStatus!]
 }
 
 extend type Mutation {
@@ -474,6 +484,7 @@ input UpdateCodyGatewayAccessInput {
     for this subscription.
     """
     chatCompletionsAllowedModels: [String!]
+        @deprecated(reason: "Enterprise no longer have per-subscription model allowlists.")
     """
     Override default requests per time interval.
 
@@ -491,6 +502,7 @@ input UpdateCodyGatewayAccessInput {
     for this subscription.
     """
     codeCompletionsAllowedModels: [String!]
+        @deprecated(reason: "Enterprise no longer have per-subscription model allowlists.")
     """
     Override default requests per time interval for embeddings generation.
 
@@ -507,6 +519,7 @@ input UpdateCodyGatewayAccessInput {
     Override the set of allowed models for embeddings generation for this subscription.
     """
     embeddingsAllowedModels: [String!]
+        @deprecated(reason: "Enterprise no longer have per-subscription model allowlists.")
 }
 
 """

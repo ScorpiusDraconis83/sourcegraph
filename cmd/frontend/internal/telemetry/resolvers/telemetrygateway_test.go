@@ -15,7 +15,7 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/gqlutil"
 )
 
-func TestNewTelemetryGatewayEvents(t *testing.T) {
+func TestConvertToTelemetryGatewayEvent(t *testing.T) {
 	staticTime, err := time.Parse(time.RFC3339, "2023-02-24T14:48:30Z")
 	require.NoError(t, err)
 
@@ -29,12 +29,12 @@ func TestNewTelemetryGatewayEvents(t *testing.T) {
 			name: "basic",
 			ctx:  context.Background(),
 			event: graphqlbackend.TelemetryEventInput{
-				Feature: "Feature",
-				Action:  "Example",
+				Feature: "feature",
+				Action:  "example",
 			},
 			expect: autogold.Expect(`{
-  "action": "Example",
-  "feature": "Feature",
+  "action": "example",
+  "feature": "feature",
   "id": "basic",
   "parameters": {},
   "source": {
@@ -50,12 +50,12 @@ func TestNewTelemetryGatewayEvents(t *testing.T) {
 			name: "with anonymous user",
 			ctx:  actor.WithActor(context.Background(), actor.FromAnonymousUser("1234")),
 			event: graphqlbackend.TelemetryEventInput{
-				Feature: "Feature",
-				Action:  "Example",
+				Feature: "feature",
+				Action:  "example",
 			},
 			expect: autogold.Expect(`{
-  "action": "Example",
-  "feature": "Feature",
+  "action": "example",
+  "feature": "feature",
   "id": "with anonymous user",
   "parameters": {},
   "source": {
@@ -74,12 +74,12 @@ func TestNewTelemetryGatewayEvents(t *testing.T) {
 			name: "with authenticated user",
 			ctx:  actor.WithActor(context.Background(), actor.FromMockUser(1234)),
 			event: graphqlbackend.TelemetryEventInput{
-				Feature: "Feature",
-				Action:  "Example",
+				Feature: "feature",
+				Action:  "example",
 			},
 			expect: autogold.Expect(`{
-  "action": "Example",
-  "feature": "Feature",
+  "action": "example",
+  "feature": "feature",
   "id": "with authenticated user",
   "parameters": {},
   "source": {
@@ -98,8 +98,8 @@ func TestNewTelemetryGatewayEvents(t *testing.T) {
 			name: "with parameters",
 			ctx:  context.Background(),
 			event: graphqlbackend.TelemetryEventInput{
-				Feature: "Feature",
-				Action:  "Example",
+				Feature: "feature",
+				Action:  "example",
 				Parameters: graphqlbackend.TelemetryEventParametersInput{
 					Version: 0,
 					Metadata: &[]graphqlbackend.TelemetryEventMetadataInput{
@@ -118,8 +118,8 @@ func TestNewTelemetryGatewayEvents(t *testing.T) {
 				},
 			},
 			expect: autogold.Expect(`{
-  "action": "Example",
-  "feature": "Feature",
+  "action": "example",
+  "feature": "feature",
   "id": "with parameters",
   "parameters": {
     "billingMetadata": {
@@ -146,8 +146,8 @@ func TestNewTelemetryGatewayEvents(t *testing.T) {
 			name: "with string PrivateMetadata",
 			ctx:  context.Background(),
 			event: graphqlbackend.TelemetryEventInput{
-				Feature: "Feature",
-				Action:  "Example",
+				Feature: "feature",
+				Action:  "example",
 				Parameters: graphqlbackend.TelemetryEventParametersInput{
 					Version: 0,
 					PrivateMetadata: &graphqlbackend.JSONValue{
@@ -156,8 +156,8 @@ func TestNewTelemetryGatewayEvents(t *testing.T) {
 				},
 			},
 			expect: autogold.Expect(`{
-  "action": "Example",
-  "feature": "Feature",
+  "action": "example",
+  "feature": "feature",
   "id": "with string PrivateMetadata",
   "parameters": {
     "privateMetadata": {
@@ -177,8 +177,8 @@ func TestNewTelemetryGatewayEvents(t *testing.T) {
 			name: "with numeric PrivateMetadata",
 			ctx:  context.Background(),
 			event: graphqlbackend.TelemetryEventInput{
-				Feature: "Feature",
-				Action:  "Example",
+				Feature: "feature",
+				Action:  "example",
 				Parameters: graphqlbackend.TelemetryEventParametersInput{
 					Version: 0,
 					PrivateMetadata: &graphqlbackend.JSONValue{
@@ -187,8 +187,8 @@ func TestNewTelemetryGatewayEvents(t *testing.T) {
 				},
 			},
 			expect: autogold.Expect(`{
-  "action": "Example",
-  "feature": "Feature",
+  "action": "example",
+  "feature": "feature",
   "id": "with numeric PrivateMetadata",
   "parameters": {
     "privateMetadata": {
@@ -209,12 +209,12 @@ func TestNewTelemetryGatewayEvents(t *testing.T) {
 			ctx:  context.Background(),
 			event: graphqlbackend.TelemetryEventInput{
 				Timestamp: &gqlutil.DateTime{Time: staticTime.Add(48 * time.Hour)},
-				Feature:   "Feature",
-				Action:    "Example",
+				Feature:   "feature",
+				Action:    "example",
 			},
 			expect: autogold.Expect(`{
-  "action": "Example",
-  "feature": "Feature",
+  "action": "example",
+  "feature": "feature",
   "id": "with custom timestamp",
   "parameters": {},
   "source": {
@@ -228,16 +228,13 @@ func TestNewTelemetryGatewayEvents(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := newTelemetryGatewayEvents(tc.ctx,
+			got, err := convertToTelemetryGatewayEvent(tc.ctx,
 				staticTime,
 				func() string { return tc.name },
-				[]graphqlbackend.TelemetryEventInput{
-					tc.event,
-				})
+				tc.event)
 			require.NoError(t, err)
-			require.Len(t, got, 1)
 
-			protodata, err := protojson.Marshal(got[0])
+			protodata, err := protojson.Marshal(got)
 			require.NoError(t, err)
 
 			// Protojson output isn't stable by injecting randomized whitespace,

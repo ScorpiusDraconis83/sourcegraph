@@ -1,13 +1,15 @@
-import React, { createContext, useContext } from 'react'
+import React, { createContext } from 'react'
 
 import type { StoreApi, UseBoundStore } from 'zustand'
 
 import type { SearchPatternType } from '../graphql-operations'
+import type { TelemetryV2Props } from '../telemetry'
 
 import { type QueryState, type SubmitSearchParameters, toggleSubquery } from './helpers'
 import type { FilterType } from './query/filters'
 import { appendFilter, updateFilter } from './query/transformer'
 import { filterExists } from './query/validate'
+import { SearchMode } from './types'
 
 export type SearchQueryStateStore<T extends SearchQueryState = SearchQueryState> = UseBoundStore<T, StoreApi<T>>
 
@@ -31,14 +33,6 @@ export const SearchQueryStateStoreProvider: React.FunctionComponent<
     </SearchQueryStateStoreContext.Provider>
 )
 
-export const useSearchQueryStateStoreContext = (): SearchQueryStateStore => {
-    const context = useContext(SearchQueryStateStoreContext)
-    if (context === null) {
-        throw new Error('useSearchQueryStateStoreContext must be used within a SearchQueryStateStoreProvider')
-    }
-    return context
-}
-
 /**
  * Describes where settings have been loaded from when the app loads. Higher
  * values have higher precedence, i.e. if settings have been loaded from the
@@ -48,11 +42,6 @@ export enum InitialParametersSource {
     DEFAULT,
     USER_SETTINGS,
     URL,
-}
-
-export enum SearchMode {
-    Precise = 0,
-    SmartSearch = 1 << 0,
 }
 
 // Implemented in /web as navbar query state, /vscode as webview query state.
@@ -76,6 +65,7 @@ export interface SearchQueryState {
     queryState: QueryState
     searchCaseSensitivity: boolean
     searchPatternType: SearchPatternType
+    defaultPatternType: SearchPatternType
     searchQueryFromURL: string
     searchMode: SearchMode
 
@@ -92,7 +82,9 @@ export interface SearchQueryState {
      * Note that this won't update `queryState` directly.
      */
     submitSearch: (
-        parameters: Omit<SubmitSearchParameters, 'query' | 'caseSensitive' | 'patternType'> & { query?: string },
+        parameters: Omit<SubmitSearchParameters, 'query' | 'caseSensitive' | 'patternType'> & {
+            query?: string
+        } & TelemetryV2Props,
         updates?: QueryUpdate[]
     ) => void
 }

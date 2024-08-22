@@ -73,8 +73,6 @@ func (q *QueryDescription) QueryString() string {
 			return q.Query + " patternType:literal"
 		case query.SearchTypeStructural:
 			return q.Query + " patternType:structural"
-		case query.SearchTypeLucky:
-			return q.Query
 		default:
 			panic("unreachable")
 		}
@@ -82,9 +80,9 @@ func (q *QueryDescription) QueryString() string {
 	return q.Query
 }
 
-// AlertForQuery converts errors in the query to search alerts.
-func AlertForQuery(queryString string, err error) *Alert {
-	if errors.HasType(err, &query.UnsupportedError{}) || errors.HasType(err, &query.ExpectedOperand{}) {
+// AlertForQuery converts errors query parsing to search alerts.
+func AlertForQuery(err error) *Alert {
+	if errors.HasType[*query.ExpectedOperand](err) {
 		return &Alert{
 			PrometheusType: "unsupported_and_or_query",
 			Title:          "Unable To Process Query",
@@ -95,6 +93,14 @@ func AlertForQuery(queryString string, err error) *Alert {
 		PrometheusType: "generic_invalid_query",
 		Title:          "Unable To Process Query",
 		Description:    capFirst(err.Error()),
+	}
+}
+
+func AlertForSmartSearch() *Alert {
+	return &Alert{
+		PrometheusType: "smart_search_no_results",
+		Title:          "No results matched your search.",
+		Description:    "To find more results, try your search again using the default `patterntype:keyword`.",
 	}
 }
 
@@ -162,7 +168,7 @@ func AlertForInvalidRevision(revision string) *Alert {
 	revision = strings.TrimSuffix(revision, "^0")
 	return &Alert{
 		Title:       "Invalid revision syntax",
-		Description: fmt.Sprintf("We don't know how to interpret the revision (%s) you specified. Learn more about the revision syntax in our documentation: https://docs.sourcegraph.com/code_search/reference/queries#repository-revisions.", revision),
+		Description: fmt.Sprintf("We don't know how to interpret the revision (%s) you specified. Learn more about the revision syntax in our documentation: https://sourcegraph.com/docs/code-search/queries#repository-revisions.", revision),
 	}
 }
 
@@ -170,7 +176,7 @@ func AlertForUnownedResult() *Alert {
 	return &Alert{
 		Kind:        "unowned-results",
 		Title:       "Some results have no owners",
-		Description: "For some results, no ownership data was found, or no rule applied to the result. [Learn more about configuring code ownership](https://docs.sourcegraph.com/own).",
+		Description: "For some results, no ownership data was found, or no rule applied to the result. [Learn more about configuring code ownership](https://sourcegraph.com/docs/own).",
 		// Explicitly set a low priority, so other alerts take precedence.
 		Priority: 0,
 	}

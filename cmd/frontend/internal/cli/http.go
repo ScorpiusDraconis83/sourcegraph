@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -14,12 +15,12 @@ import (
 
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/auth"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/enterprise"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/envvar"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/hooks"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/app"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/app/assetsutil"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/auth/ipallowlist"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/auth/session"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/authz"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/cli/middleware"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/httpapi"
 	"github.com/sourcegraph/sourcegraph/internal/actor"
@@ -27,11 +28,12 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/deviceid"
+	"github.com/sourcegraph/sourcegraph/internal/dotcom"
 	"github.com/sourcegraph/sourcegraph/internal/featureflag"
 	"github.com/sourcegraph/sourcegraph/internal/instrumentation"
 	"github.com/sourcegraph/sourcegraph/internal/requestclient"
 	"github.com/sourcegraph/sourcegraph/internal/requestinteraction"
-	"github.com/sourcegraph/sourcegraph/internal/session"
+	"github.com/sourcegraph/sourcegraph/internal/tenant"
 	tracepkg "github.com/sourcegraph/sourcegraph/internal/trace"
 	"github.com/sourcegraph/sourcegraph/internal/version"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
@@ -45,7 +47,6 @@ func newExternalHTTPHandler(
 	rateLimitWatcher graphqlbackend.LimitWatcher,
 	handlers *httpapi.Handlers,
 	newExecutorProxyHandler enterprise.NewExecutorProxyHandler,
-	newGitHubAppSetupHandler enterprise.NewGitHubAppSetupHandler,
 ) (http.Handler, error) {
 	logger := log.Scoped("external")
 
@@ -60,10 +61,8 @@ func newExternalHTTPHandler(
 	if err != nil {
 		return nil, errors.Errorf("create external HTTP API handler: %v", err)
 	}
-	if hooks.PostAuthMiddleware != nil {
-		// 🚨 SECURITY: These all run after the auth handler so the client is authenticated.
-		apiHandler = hooks.PostAuthMiddleware(apiHandler)
-	}
+	// 🚨 SECURITY: These all run after the auth handler so the client is authenticated.
+	apiHandler = authz.PostAuthMiddleware(logger, db, apiHandler)
 	apiHandler = featureflag.Middleware(db.FeatureFlags(), apiHandler)
 	apiHandler = actor.AnonymousUIDMiddleware(apiHandler)
 	apiHandler = authMiddlewares.API(apiHandler) // 🚨 SECURITY: auth middleware
@@ -74,21 +73,17 @@ func newExternalHTTPHandler(
 	apiHandler = requestclient.ExternalHTTPMiddleware(apiHandler)
 	apiHandler = requestinteraction.HTTPMiddleware(apiHandler)
 	apiHandler = gziphandler.GzipHandler(apiHandler)
-	if envvar.SourcegraphDotComMode() {
+	if dotcom.SourcegraphDotComMode() {
 		apiHandler = deviceid.Middleware(apiHandler)
 	}
 
 	// 🚨 SECURITY: This handler implements its own token auth inside enterprise
 	executorProxyHandler := newExecutorProxyHandler()
 
-	githubAppSetupHandler := newGitHubAppSetupHandler()
-
 	// App handler (HTML pages), the call order of middleware is LIFO.
-	appHandler := app.NewHandler(db, logger, githubAppSetupHandler)
-	if hooks.PostAuthMiddleware != nil {
-		// 🚨 SECURITY: These all run after the auth handler so the client is authenticated.
-		appHandler = hooks.PostAuthMiddleware(appHandler)
-	}
+	appHandler := app.NewHandler(db, logger)
+	// 🚨 SECURITY: These all run after the auth handler so the client is authenticated.
+	appHandler = authz.PostAuthMiddleware(logger, db, appHandler)
 	appHandler = featureflag.Middleware(db.FeatureFlags(), appHandler)
 	appHandler = actor.AnonymousUIDMiddleware(appHandler)
 	appHandler = authMiddlewares.App(appHandler) // 🚨 SECURITY: auth middleware
@@ -97,11 +92,12 @@ func newExternalHTTPHandler(
 	appHandler = httpapi.AccessTokenAuthMiddleware(db, logger, appHandler) // app accepts access tokens
 	appHandler = requestclient.ExternalHTTPMiddleware(appHandler)
 	appHandler = requestinteraction.HTTPMiddleware(appHandler)
-	if envvar.SourcegraphDotComMode() {
+	if dotcom.SourcegraphDotComMode() {
 		appHandler = deviceid.Middleware(appHandler)
 	}
 	// Mount handlers and assets.
 	sm := http.NewServeMux()
+
 	sm.Handle("/.api/", secureHeadersMiddleware(apiHandler, crossOriginPolicyAPI))
 	sm.Handle("/.executors/", secureHeadersMiddleware(executorProxyHandler, crossOriginPolicyNever))
 	sm.Handle("/", secureHeadersMiddleware(appHandler, crossOriginPolicyNever))
@@ -122,8 +118,14 @@ func newExternalHTTPHandler(
 	h = middleware.BlackHole(h)
 	h = middleware.SourcegraphComGoGetHandler(h)
 	h = internalauth.ForbidAllRequestsMiddleware(h)
-	h = tracepkg.HTTPMiddleware(logger, h, conf.DefaultClient())
+	h = tracepkg.HTTPMiddleware(logger, h)
 	h = instrumentation.HTTPMiddleware("external", h)
+	// 🚨 SECURITY: The tenant middleware must be the second to run to avoid handling
+	// requests in other middlewares without a tenant.
+	h = tenant.ExternalTenantFromHostnameMiddleware(tenant.TenantHostnameMapper(func(ctx context.Context, host string) (int, error) {
+		// TODO: For now, we hard-code all tenants to be tenant 1 to avoid any disruptions.
+		return 1, nil
+	}), h)
 	// 🚨 SECURITY: ip allowlist must be the first middleware to run to avoid doing unnecessary things
 	h = ipAllowlistMiddleware.Handle(h)
 
@@ -168,18 +170,21 @@ func newInternalHTTPHandler(
 	)
 
 	internalMux.Handle("/.internal/", gziphandler.GzipHandler(
-		actor.HTTPMiddleware(
+		tenant.InternalHTTPMiddleware(
 			logger,
-			featureflag.Middleware(
-				db.FeatureFlags(),
-				internalRouter,
+			actor.HTTPMiddleware(
+				logger,
+				featureflag.Middleware(
+					db.FeatureFlags(),
+					internalRouter,
+				),
 			),
 		),
 	))
 
 	h := http.Handler(internalMux)
 	h = gcontext.ClearHandler(h)
-	h = tracepkg.HTTPMiddleware(logger, h, conf.DefaultClient())
+	h = tracepkg.HTTPMiddleware(logger, h)
 	h = instrumentation.HTTPMiddleware("internal", h)
 	return h
 }

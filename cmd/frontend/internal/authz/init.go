@@ -3,7 +3,6 @@ package authz
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
@@ -11,12 +10,8 @@ import (
 
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/enterprise"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/hooks"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/authz/resolvers"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/authz/webhooks"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/licensing/enforcement"
-	"github.com/sourcegraph/sourcegraph/internal/actor"
-	"github.com/sourcegraph/sourcegraph/internal/auth"
 	"github.com/sourcegraph/sourcegraph/internal/authz"
 	"github.com/sourcegraph/sourcegraph/internal/authz/providers"
 	srp "github.com/sourcegraph/sourcegraph/internal/authz/subrepoperms"
@@ -46,27 +41,6 @@ func Init(
 		return database.NewAuthzStore(observationCtx.Logger, db, clock)
 	}
 
-	// TODO(nsc): use c
-	// Report any authz provider problems in external configs.
-	conf.ContributeWarning(func(cfg conftypes.SiteConfigQuerier) (problems conf.Problems) {
-		_, providers, seriousProblems, warnings, _ := providers.ProvidersFromConfig(ctx, cfg, db)
-		problems = append(problems, conf.NewExternalServiceProblems(seriousProblems...)...)
-
-		// Validating the connection may make a cross service call, so we should use an
-		// internal actor.
-		ctx := actor.WithInternalActor(ctx)
-
-		// Add connection validation issue
-		for _, p := range providers {
-			if err := p.ValidateConnection(ctx); err != nil {
-				warnings = append(warnings, fmt.Sprintf("%s provider %q: %s", p.ServiceType(), p.ServiceID(), err))
-			}
-		}
-
-		problems = append(problems, conf.NewExternalServiceProblems(warnings...)...)
-		return problems
-	})
-
 	enterpriseServices.PermissionsGitHubWebhook = webhooks.NewGitHubWebhook(log.Scoped("PermissionsGitHubWebhook"))
 
 	authz.DefaultSubRepoPermsChecker = srp.NewSubRepoPermsClient(db.SubRepoPerms())
@@ -95,10 +69,9 @@ func Init(
 			return nil
 		}
 
-		_, _, _, _, invalidConnections := providers.ProvidersFromConfig(ctx, conf.Get(), db)
+		_, _, _, invalidConnections := providers.ProvidersFromConfig(ctx, conf.Get(), db)
 
-		// We currently support three types of authz providers: GitHub, GitLab and Bitbucket Server.
-		authzTypes := make(map[string]struct{}, 3)
+		authzTypes := map[string]struct{}{}
 		for _, conn := range invalidConnections {
 			authzTypes[conn] = struct{}{}
 		}
@@ -157,65 +130,6 @@ func Init(
 		}
 		return nil
 	})
-
-	// Enforce the use of a valid license key by preventing all HTTP requests if the license is invalid
-	// (due to an error in parsing or verification, or because the license has expired).
-	hooks.PostAuthMiddleware = func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			a := actor.FromContext(ctx)
-			// Ignore not authenticated users, because we need to allow site admins
-			// to sign in to set a license.
-			if !a.IsAuthenticated() {
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			siteadminOrHandler := func(handler func()) {
-				err := auth.CheckCurrentUserIsSiteAdmin(r.Context(), db)
-				if err == nil {
-					// User is site admin, let them proceed.
-					next.ServeHTTP(w, r)
-					return
-				}
-				if err != auth.ErrMustBeSiteAdmin {
-					observationCtx.Logger.Error("Error checking current user is site admin", log.Error(err))
-					http.Error(w, "Error checking current user is site admin. Site admins may check the logs for more information.", http.StatusInternalServerError)
-					return
-				}
-
-				handler()
-			}
-
-			// Check if there are any license issues. If so, don't let the request go through.
-			// Exception: Site admins are exempt from license enforcement screens so that they
-			// can easily update the license key. We only fetch the user if we don't have a license,
-			// to save that DB lookup in most cases.
-			info, err := licensing.GetConfiguredProductLicenseInfo()
-			if err != nil {
-				observationCtx.Logger.Error("Error reading license key for Sourcegraph subscription.", log.Error(err))
-				siteadminOrHandler(func() {
-					enforcement.WriteSubscriptionErrorResponse(w, http.StatusInternalServerError, "Error reading Sourcegraph license key", "Site admins may check the logs for more information. Update the license key in the [**site configuration**](/site-admin/configuration).")
-				})
-				return
-			}
-			if info != nil && info.IsExpired() {
-				siteadminOrHandler(func() {
-					enforcement.WriteSubscriptionErrorResponse(w, http.StatusForbidden, "Sourcegraph license expired", "To continue using Sourcegraph, a site admin must renew the Sourcegraph license (or downgrade to only using Sourcegraph Free features). Update the license key in the [**site configuration**](/site-admin/configuration).")
-				})
-				return
-			}
-
-			next.ServeHTTP(w, r)
-		})
-	}
-
-	go func() {
-		t := time.NewTicker(5 * time.Second)
-		for range t.C {
-			allowAccessByDefault, authzProviders, _, _, _ := providers.ProvidersFromConfig(ctx, conf.Get(), db)
-			authz.SetProviders(allowAccessByDefault, authzProviders)
-		}
-	}()
 
 	enterpriseServices.AuthzResolver = resolvers.NewResolver(observationCtx, db)
 	return nil

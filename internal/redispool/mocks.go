@@ -17,6 +17,9 @@ import (
 // package github.com/sourcegraph/sourcegraph/internal/redispool) used for
 // unit testing.
 type MockKeyValue struct {
+	// DecrByInt64Func is an instance of a mock function object controlling
+	// the behavior of the method DecrByInt64.
+	DecrByInt64Func *KeyValueDecrByInt64Func
 	// DelFunc is an instance of a mock function object controlling the
 	// behavior of the method Del.
 	DelFunc *KeyValueDelFunc
@@ -44,9 +47,15 @@ type MockKeyValue struct {
 	// IncrFunc is an instance of a mock function object controlling the
 	// behavior of the method Incr.
 	IncrFunc *KeyValueIncrFunc
+	// IncrByInt64Func is an instance of a mock function object controlling
+	// the behavior of the method IncrByInt64.
+	IncrByInt64Func *KeyValueIncrByInt64Func
 	// IncrbyFunc is an instance of a mock function object controlling the
 	// behavior of the method Incrby.
 	IncrbyFunc *KeyValueIncrbyFunc
+	// KeysFunc is an instance of a mock function object controlling the
+	// behavior of the method Keys.
+	KeysFunc *KeyValueKeysFunc
 	// LLenFunc is an instance of a mock function object controlling the
 	// behavior of the method LLen.
 	LLenFunc *KeyValueLLenFunc
@@ -59,6 +68,12 @@ type MockKeyValue struct {
 	// LTrimFunc is an instance of a mock function object controlling the
 	// behavior of the method LTrim.
 	LTrimFunc *KeyValueLTrimFunc
+	// MGetFunc is an instance of a mock function object controlling the
+	// behavior of the method MGet.
+	MGetFunc *KeyValueMGetFunc
+	// PingFunc is an instance of a mock function object controlling the
+	// behavior of the method Ping.
+	PingFunc *KeyValuePingFunc
 	// PoolFunc is an instance of a mock function object controlling the
 	// behavior of the method Pool.
 	PoolFunc *KeyValuePoolFunc
@@ -77,12 +92,23 @@ type MockKeyValue struct {
 	// WithContextFunc is an instance of a mock function object controlling
 	// the behavior of the method WithContext.
 	WithContextFunc *KeyValueWithContextFunc
+	// WithLatencyRecorderFunc is an instance of a mock function object
+	// controlling the behavior of the method WithLatencyRecorder.
+	WithLatencyRecorderFunc *KeyValueWithLatencyRecorderFunc
+	// WithPrefixFunc is an instance of a mock function object controlling
+	// the behavior of the method WithPrefix.
+	WithPrefixFunc *KeyValueWithPrefixFunc
 }
 
 // NewMockKeyValue creates a new mock of the KeyValue interface. All methods
 // return zero values for all results, unless overwritten.
 func NewMockKeyValue() *MockKeyValue {
 	return &MockKeyValue{
+		DecrByInt64Func: &KeyValueDecrByInt64Func{
+			defaultHook: func(string, int64) (r0 int64, r1 error) {
+				return
+			},
+		},
 		DelFunc: &KeyValueDelFunc{
 			defaultHook: func(string) (r0 error) {
 				return
@@ -128,8 +154,18 @@ func NewMockKeyValue() *MockKeyValue {
 				return
 			},
 		},
+		IncrByInt64Func: &KeyValueIncrByInt64Func{
+			defaultHook: func(string, int64) (r0 int64, r1 error) {
+				return
+			},
+		},
 		IncrbyFunc: &KeyValueIncrbyFunc{
 			defaultHook: func(string, int) (r0 int, r1 error) {
+				return
+			},
+		},
+		KeysFunc: &KeyValueKeysFunc{
+			defaultHook: func(string) (r0 []string, r1 error) {
 				return
 			},
 		},
@@ -150,6 +186,16 @@ func NewMockKeyValue() *MockKeyValue {
 		},
 		LTrimFunc: &KeyValueLTrimFunc{
 			defaultHook: func(string, int, int) (r0 error) {
+				return
+			},
+		},
+		MGetFunc: &KeyValueMGetFunc{
+			defaultHook: func([]string) (r0 Values) {
+				return
+			},
+		},
+		PingFunc: &KeyValuePingFunc{
+			defaultHook: func() (r0 error) {
 				return
 			},
 		},
@@ -183,6 +229,16 @@ func NewMockKeyValue() *MockKeyValue {
 				return
 			},
 		},
+		WithLatencyRecorderFunc: &KeyValueWithLatencyRecorderFunc{
+			defaultHook: func(LatencyRecorder) (r0 KeyValue) {
+				return
+			},
+		},
+		WithPrefixFunc: &KeyValueWithPrefixFunc{
+			defaultHook: func(string) (r0 KeyValue) {
+				return
+			},
+		},
 	}
 }
 
@@ -190,6 +246,11 @@ func NewMockKeyValue() *MockKeyValue {
 // methods panic on invocation, unless overwritten.
 func NewStrictMockKeyValue() *MockKeyValue {
 	return &MockKeyValue{
+		DecrByInt64Func: &KeyValueDecrByInt64Func{
+			defaultHook: func(string, int64) (int64, error) {
+				panic("unexpected invocation of MockKeyValue.DecrByInt64")
+			},
+		},
 		DelFunc: &KeyValueDelFunc{
 			defaultHook: func(string) error {
 				panic("unexpected invocation of MockKeyValue.Del")
@@ -235,9 +296,19 @@ func NewStrictMockKeyValue() *MockKeyValue {
 				panic("unexpected invocation of MockKeyValue.Incr")
 			},
 		},
+		IncrByInt64Func: &KeyValueIncrByInt64Func{
+			defaultHook: func(string, int64) (int64, error) {
+				panic("unexpected invocation of MockKeyValue.IncrByInt64")
+			},
+		},
 		IncrbyFunc: &KeyValueIncrbyFunc{
 			defaultHook: func(string, int) (int, error) {
 				panic("unexpected invocation of MockKeyValue.Incrby")
+			},
+		},
+		KeysFunc: &KeyValueKeysFunc{
+			defaultHook: func(string) ([]string, error) {
+				panic("unexpected invocation of MockKeyValue.Keys")
 			},
 		},
 		LLenFunc: &KeyValueLLenFunc{
@@ -258,6 +329,16 @@ func NewStrictMockKeyValue() *MockKeyValue {
 		LTrimFunc: &KeyValueLTrimFunc{
 			defaultHook: func(string, int, int) error {
 				panic("unexpected invocation of MockKeyValue.LTrim")
+			},
+		},
+		MGetFunc: &KeyValueMGetFunc{
+			defaultHook: func([]string) Values {
+				panic("unexpected invocation of MockKeyValue.MGet")
+			},
+		},
+		PingFunc: &KeyValuePingFunc{
+			defaultHook: func() error {
+				panic("unexpected invocation of MockKeyValue.Ping")
 			},
 		},
 		PoolFunc: &KeyValuePoolFunc{
@@ -290,6 +371,16 @@ func NewStrictMockKeyValue() *MockKeyValue {
 				panic("unexpected invocation of MockKeyValue.WithContext")
 			},
 		},
+		WithLatencyRecorderFunc: &KeyValueWithLatencyRecorderFunc{
+			defaultHook: func(LatencyRecorder) KeyValue {
+				panic("unexpected invocation of MockKeyValue.WithLatencyRecorder")
+			},
+		},
+		WithPrefixFunc: &KeyValueWithPrefixFunc{
+			defaultHook: func(string) KeyValue {
+				panic("unexpected invocation of MockKeyValue.WithPrefix")
+			},
+		},
 	}
 }
 
@@ -297,6 +388,9 @@ func NewStrictMockKeyValue() *MockKeyValue {
 // methods delegate to the given implementation, unless overwritten.
 func NewMockKeyValueFrom(i KeyValue) *MockKeyValue {
 	return &MockKeyValue{
+		DecrByInt64Func: &KeyValueDecrByInt64Func{
+			defaultHook: i.DecrByInt64,
+		},
 		DelFunc: &KeyValueDelFunc{
 			defaultHook: i.Del,
 		},
@@ -324,8 +418,14 @@ func NewMockKeyValueFrom(i KeyValue) *MockKeyValue {
 		IncrFunc: &KeyValueIncrFunc{
 			defaultHook: i.Incr,
 		},
+		IncrByInt64Func: &KeyValueIncrByInt64Func{
+			defaultHook: i.IncrByInt64,
+		},
 		IncrbyFunc: &KeyValueIncrbyFunc{
 			defaultHook: i.Incrby,
+		},
+		KeysFunc: &KeyValueKeysFunc{
+			defaultHook: i.Keys,
 		},
 		LLenFunc: &KeyValueLLenFunc{
 			defaultHook: i.LLen,
@@ -338,6 +438,12 @@ func NewMockKeyValueFrom(i KeyValue) *MockKeyValue {
 		},
 		LTrimFunc: &KeyValueLTrimFunc{
 			defaultHook: i.LTrim,
+		},
+		MGetFunc: &KeyValueMGetFunc{
+			defaultHook: i.MGet,
+		},
+		PingFunc: &KeyValuePingFunc{
+			defaultHook: i.Ping,
 		},
 		PoolFunc: &KeyValuePoolFunc{
 			defaultHook: i.Pool,
@@ -357,7 +463,121 @@ func NewMockKeyValueFrom(i KeyValue) *MockKeyValue {
 		WithContextFunc: &KeyValueWithContextFunc{
 			defaultHook: i.WithContext,
 		},
+		WithLatencyRecorderFunc: &KeyValueWithLatencyRecorderFunc{
+			defaultHook: i.WithLatencyRecorder,
+		},
+		WithPrefixFunc: &KeyValueWithPrefixFunc{
+			defaultHook: i.WithPrefix,
+		},
 	}
+}
+
+// KeyValueDecrByInt64Func describes the behavior when the DecrByInt64
+// method of the parent MockKeyValue instance is invoked.
+type KeyValueDecrByInt64Func struct {
+	defaultHook func(string, int64) (int64, error)
+	hooks       []func(string, int64) (int64, error)
+	history     []KeyValueDecrByInt64FuncCall
+	mutex       sync.Mutex
+}
+
+// DecrByInt64 delegates to the next hook function in the queue and stores
+// the parameter and result values of this invocation.
+func (m *MockKeyValue) DecrByInt64(v0 string, v1 int64) (int64, error) {
+	r0, r1 := m.DecrByInt64Func.nextHook()(v0, v1)
+	m.DecrByInt64Func.appendCall(KeyValueDecrByInt64FuncCall{v0, v1, r0, r1})
+	return r0, r1
+}
+
+// SetDefaultHook sets function that is called when the DecrByInt64 method
+// of the parent MockKeyValue instance is invoked and the hook queue is
+// empty.
+func (f *KeyValueDecrByInt64Func) SetDefaultHook(hook func(string, int64) (int64, error)) {
+	f.defaultHook = hook
+}
+
+// PushHook adds a function to the end of hook queue. Each invocation of the
+// DecrByInt64 method of the parent MockKeyValue instance invokes the hook
+// at the front of the queue and discards it. After the queue is empty, the
+// default hook function is invoked for any future action.
+func (f *KeyValueDecrByInt64Func) PushHook(hook func(string, int64) (int64, error)) {
+	f.mutex.Lock()
+	f.hooks = append(f.hooks, hook)
+	f.mutex.Unlock()
+}
+
+// SetDefaultReturn calls SetDefaultHook with a function that returns the
+// given values.
+func (f *KeyValueDecrByInt64Func) SetDefaultReturn(r0 int64, r1 error) {
+	f.SetDefaultHook(func(string, int64) (int64, error) {
+		return r0, r1
+	})
+}
+
+// PushReturn calls PushHook with a function that returns the given values.
+func (f *KeyValueDecrByInt64Func) PushReturn(r0 int64, r1 error) {
+	f.PushHook(func(string, int64) (int64, error) {
+		return r0, r1
+	})
+}
+
+func (f *KeyValueDecrByInt64Func) nextHook() func(string, int64) (int64, error) {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	if len(f.hooks) == 0 {
+		return f.defaultHook
+	}
+
+	hook := f.hooks[0]
+	f.hooks = f.hooks[1:]
+	return hook
+}
+
+func (f *KeyValueDecrByInt64Func) appendCall(r0 KeyValueDecrByInt64FuncCall) {
+	f.mutex.Lock()
+	f.history = append(f.history, r0)
+	f.mutex.Unlock()
+}
+
+// History returns a sequence of KeyValueDecrByInt64FuncCall objects
+// describing the invocations of this function.
+func (f *KeyValueDecrByInt64Func) History() []KeyValueDecrByInt64FuncCall {
+	f.mutex.Lock()
+	history := make([]KeyValueDecrByInt64FuncCall, len(f.history))
+	copy(history, f.history)
+	f.mutex.Unlock()
+
+	return history
+}
+
+// KeyValueDecrByInt64FuncCall is an object that describes an invocation of
+// method DecrByInt64 on an instance of MockKeyValue.
+type KeyValueDecrByInt64FuncCall struct {
+	// Arg0 is the value of the 1st argument passed to this method
+	// invocation.
+	Arg0 string
+	// Arg1 is the value of the 2nd argument passed to this method
+	// invocation.
+	Arg1 int64
+	// Result0 is the value of the 1st result returned from this method
+	// invocation.
+	Result0 int64
+	// Result1 is the value of the 2nd result returned from this method
+	// invocation.
+	Result1 error
+}
+
+// Args returns an interface slice containing the arguments of this
+// invocation.
+func (c KeyValueDecrByInt64FuncCall) Args() []interface{} {
+	return []interface{}{c.Arg0, c.Arg1}
+}
+
+// Results returns an interface slice containing the results of this
+// invocation.
+func (c KeyValueDecrByInt64FuncCall) Results() []interface{} {
+	return []interface{}{c.Result0, c.Result1}
 }
 
 // KeyValueDelFunc describes the behavior when the Del method of the parent
@@ -1290,6 +1510,114 @@ func (c KeyValueIncrFuncCall) Results() []interface{} {
 	return []interface{}{c.Result0, c.Result1}
 }
 
+// KeyValueIncrByInt64Func describes the behavior when the IncrByInt64
+// method of the parent MockKeyValue instance is invoked.
+type KeyValueIncrByInt64Func struct {
+	defaultHook func(string, int64) (int64, error)
+	hooks       []func(string, int64) (int64, error)
+	history     []KeyValueIncrByInt64FuncCall
+	mutex       sync.Mutex
+}
+
+// IncrByInt64 delegates to the next hook function in the queue and stores
+// the parameter and result values of this invocation.
+func (m *MockKeyValue) IncrByInt64(v0 string, v1 int64) (int64, error) {
+	r0, r1 := m.IncrByInt64Func.nextHook()(v0, v1)
+	m.IncrByInt64Func.appendCall(KeyValueIncrByInt64FuncCall{v0, v1, r0, r1})
+	return r0, r1
+}
+
+// SetDefaultHook sets function that is called when the IncrByInt64 method
+// of the parent MockKeyValue instance is invoked and the hook queue is
+// empty.
+func (f *KeyValueIncrByInt64Func) SetDefaultHook(hook func(string, int64) (int64, error)) {
+	f.defaultHook = hook
+}
+
+// PushHook adds a function to the end of hook queue. Each invocation of the
+// IncrByInt64 method of the parent MockKeyValue instance invokes the hook
+// at the front of the queue and discards it. After the queue is empty, the
+// default hook function is invoked for any future action.
+func (f *KeyValueIncrByInt64Func) PushHook(hook func(string, int64) (int64, error)) {
+	f.mutex.Lock()
+	f.hooks = append(f.hooks, hook)
+	f.mutex.Unlock()
+}
+
+// SetDefaultReturn calls SetDefaultHook with a function that returns the
+// given values.
+func (f *KeyValueIncrByInt64Func) SetDefaultReturn(r0 int64, r1 error) {
+	f.SetDefaultHook(func(string, int64) (int64, error) {
+		return r0, r1
+	})
+}
+
+// PushReturn calls PushHook with a function that returns the given values.
+func (f *KeyValueIncrByInt64Func) PushReturn(r0 int64, r1 error) {
+	f.PushHook(func(string, int64) (int64, error) {
+		return r0, r1
+	})
+}
+
+func (f *KeyValueIncrByInt64Func) nextHook() func(string, int64) (int64, error) {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	if len(f.hooks) == 0 {
+		return f.defaultHook
+	}
+
+	hook := f.hooks[0]
+	f.hooks = f.hooks[1:]
+	return hook
+}
+
+func (f *KeyValueIncrByInt64Func) appendCall(r0 KeyValueIncrByInt64FuncCall) {
+	f.mutex.Lock()
+	f.history = append(f.history, r0)
+	f.mutex.Unlock()
+}
+
+// History returns a sequence of KeyValueIncrByInt64FuncCall objects
+// describing the invocations of this function.
+func (f *KeyValueIncrByInt64Func) History() []KeyValueIncrByInt64FuncCall {
+	f.mutex.Lock()
+	history := make([]KeyValueIncrByInt64FuncCall, len(f.history))
+	copy(history, f.history)
+	f.mutex.Unlock()
+
+	return history
+}
+
+// KeyValueIncrByInt64FuncCall is an object that describes an invocation of
+// method IncrByInt64 on an instance of MockKeyValue.
+type KeyValueIncrByInt64FuncCall struct {
+	// Arg0 is the value of the 1st argument passed to this method
+	// invocation.
+	Arg0 string
+	// Arg1 is the value of the 2nd argument passed to this method
+	// invocation.
+	Arg1 int64
+	// Result0 is the value of the 1st result returned from this method
+	// invocation.
+	Result0 int64
+	// Result1 is the value of the 2nd result returned from this method
+	// invocation.
+	Result1 error
+}
+
+// Args returns an interface slice containing the arguments of this
+// invocation.
+func (c KeyValueIncrByInt64FuncCall) Args() []interface{} {
+	return []interface{}{c.Arg0, c.Arg1}
+}
+
+// Results returns an interface slice containing the results of this
+// invocation.
+func (c KeyValueIncrByInt64FuncCall) Results() []interface{} {
+	return []interface{}{c.Result0, c.Result1}
+}
+
 // KeyValueIncrbyFunc describes the behavior when the Incrby method of the
 // parent MockKeyValue instance is invoked.
 type KeyValueIncrbyFunc struct {
@@ -1394,6 +1722,110 @@ func (c KeyValueIncrbyFuncCall) Args() []interface{} {
 // Results returns an interface slice containing the results of this
 // invocation.
 func (c KeyValueIncrbyFuncCall) Results() []interface{} {
+	return []interface{}{c.Result0, c.Result1}
+}
+
+// KeyValueKeysFunc describes the behavior when the Keys method of the
+// parent MockKeyValue instance is invoked.
+type KeyValueKeysFunc struct {
+	defaultHook func(string) ([]string, error)
+	hooks       []func(string) ([]string, error)
+	history     []KeyValueKeysFuncCall
+	mutex       sync.Mutex
+}
+
+// Keys delegates to the next hook function in the queue and stores the
+// parameter and result values of this invocation.
+func (m *MockKeyValue) Keys(v0 string) ([]string, error) {
+	r0, r1 := m.KeysFunc.nextHook()(v0)
+	m.KeysFunc.appendCall(KeyValueKeysFuncCall{v0, r0, r1})
+	return r0, r1
+}
+
+// SetDefaultHook sets function that is called when the Keys method of the
+// parent MockKeyValue instance is invoked and the hook queue is empty.
+func (f *KeyValueKeysFunc) SetDefaultHook(hook func(string) ([]string, error)) {
+	f.defaultHook = hook
+}
+
+// PushHook adds a function to the end of hook queue. Each invocation of the
+// Keys method of the parent MockKeyValue instance invokes the hook at the
+// front of the queue and discards it. After the queue is empty, the default
+// hook function is invoked for any future action.
+func (f *KeyValueKeysFunc) PushHook(hook func(string) ([]string, error)) {
+	f.mutex.Lock()
+	f.hooks = append(f.hooks, hook)
+	f.mutex.Unlock()
+}
+
+// SetDefaultReturn calls SetDefaultHook with a function that returns the
+// given values.
+func (f *KeyValueKeysFunc) SetDefaultReturn(r0 []string, r1 error) {
+	f.SetDefaultHook(func(string) ([]string, error) {
+		return r0, r1
+	})
+}
+
+// PushReturn calls PushHook with a function that returns the given values.
+func (f *KeyValueKeysFunc) PushReturn(r0 []string, r1 error) {
+	f.PushHook(func(string) ([]string, error) {
+		return r0, r1
+	})
+}
+
+func (f *KeyValueKeysFunc) nextHook() func(string) ([]string, error) {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	if len(f.hooks) == 0 {
+		return f.defaultHook
+	}
+
+	hook := f.hooks[0]
+	f.hooks = f.hooks[1:]
+	return hook
+}
+
+func (f *KeyValueKeysFunc) appendCall(r0 KeyValueKeysFuncCall) {
+	f.mutex.Lock()
+	f.history = append(f.history, r0)
+	f.mutex.Unlock()
+}
+
+// History returns a sequence of KeyValueKeysFuncCall objects describing the
+// invocations of this function.
+func (f *KeyValueKeysFunc) History() []KeyValueKeysFuncCall {
+	f.mutex.Lock()
+	history := make([]KeyValueKeysFuncCall, len(f.history))
+	copy(history, f.history)
+	f.mutex.Unlock()
+
+	return history
+}
+
+// KeyValueKeysFuncCall is an object that describes an invocation of method
+// Keys on an instance of MockKeyValue.
+type KeyValueKeysFuncCall struct {
+	// Arg0 is the value of the 1st argument passed to this method
+	// invocation.
+	Arg0 string
+	// Result0 is the value of the 1st result returned from this method
+	// invocation.
+	Result0 []string
+	// Result1 is the value of the 2nd result returned from this method
+	// invocation.
+	Result1 error
+}
+
+// Args returns an interface slice containing the arguments of this
+// invocation.
+func (c KeyValueKeysFuncCall) Args() []interface{} {
+	return []interface{}{c.Arg0}
+}
+
+// Results returns an interface slice containing the results of this
+// invocation.
+func (c KeyValueKeysFuncCall) Results() []interface{} {
 	return []interface{}{c.Result0, c.Result1}
 }
 
@@ -1816,6 +2248,205 @@ func (c KeyValueLTrimFuncCall) Args() []interface{} {
 // Results returns an interface slice containing the results of this
 // invocation.
 func (c KeyValueLTrimFuncCall) Results() []interface{} {
+	return []interface{}{c.Result0}
+}
+
+// KeyValueMGetFunc describes the behavior when the MGet method of the
+// parent MockKeyValue instance is invoked.
+type KeyValueMGetFunc struct {
+	defaultHook func([]string) Values
+	hooks       []func([]string) Values
+	history     []KeyValueMGetFuncCall
+	mutex       sync.Mutex
+}
+
+// MGet delegates to the next hook function in the queue and stores the
+// parameter and result values of this invocation.
+func (m *MockKeyValue) MGet(v0 []string) Values {
+	r0 := m.MGetFunc.nextHook()(v0)
+	m.MGetFunc.appendCall(KeyValueMGetFuncCall{v0, r0})
+	return r0
+}
+
+// SetDefaultHook sets function that is called when the MGet method of the
+// parent MockKeyValue instance is invoked and the hook queue is empty.
+func (f *KeyValueMGetFunc) SetDefaultHook(hook func([]string) Values) {
+	f.defaultHook = hook
+}
+
+// PushHook adds a function to the end of hook queue. Each invocation of the
+// MGet method of the parent MockKeyValue instance invokes the hook at the
+// front of the queue and discards it. After the queue is empty, the default
+// hook function is invoked for any future action.
+func (f *KeyValueMGetFunc) PushHook(hook func([]string) Values) {
+	f.mutex.Lock()
+	f.hooks = append(f.hooks, hook)
+	f.mutex.Unlock()
+}
+
+// SetDefaultReturn calls SetDefaultHook with a function that returns the
+// given values.
+func (f *KeyValueMGetFunc) SetDefaultReturn(r0 Values) {
+	f.SetDefaultHook(func([]string) Values {
+		return r0
+	})
+}
+
+// PushReturn calls PushHook with a function that returns the given values.
+func (f *KeyValueMGetFunc) PushReturn(r0 Values) {
+	f.PushHook(func([]string) Values {
+		return r0
+	})
+}
+
+func (f *KeyValueMGetFunc) nextHook() func([]string) Values {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	if len(f.hooks) == 0 {
+		return f.defaultHook
+	}
+
+	hook := f.hooks[0]
+	f.hooks = f.hooks[1:]
+	return hook
+}
+
+func (f *KeyValueMGetFunc) appendCall(r0 KeyValueMGetFuncCall) {
+	f.mutex.Lock()
+	f.history = append(f.history, r0)
+	f.mutex.Unlock()
+}
+
+// History returns a sequence of KeyValueMGetFuncCall objects describing the
+// invocations of this function.
+func (f *KeyValueMGetFunc) History() []KeyValueMGetFuncCall {
+	f.mutex.Lock()
+	history := make([]KeyValueMGetFuncCall, len(f.history))
+	copy(history, f.history)
+	f.mutex.Unlock()
+
+	return history
+}
+
+// KeyValueMGetFuncCall is an object that describes an invocation of method
+// MGet on an instance of MockKeyValue.
+type KeyValueMGetFuncCall struct {
+	// Arg0 is the value of the 1st argument passed to this method
+	// invocation.
+	Arg0 []string
+	// Result0 is the value of the 1st result returned from this method
+	// invocation.
+	Result0 Values
+}
+
+// Args returns an interface slice containing the arguments of this
+// invocation.
+func (c KeyValueMGetFuncCall) Args() []interface{} {
+	return []interface{}{c.Arg0}
+}
+
+// Results returns an interface slice containing the results of this
+// invocation.
+func (c KeyValueMGetFuncCall) Results() []interface{} {
+	return []interface{}{c.Result0}
+}
+
+// KeyValuePingFunc describes the behavior when the Ping method of the
+// parent MockKeyValue instance is invoked.
+type KeyValuePingFunc struct {
+	defaultHook func() error
+	hooks       []func() error
+	history     []KeyValuePingFuncCall
+	mutex       sync.Mutex
+}
+
+// Ping delegates to the next hook function in the queue and stores the
+// parameter and result values of this invocation.
+func (m *MockKeyValue) Ping() error {
+	r0 := m.PingFunc.nextHook()()
+	m.PingFunc.appendCall(KeyValuePingFuncCall{r0})
+	return r0
+}
+
+// SetDefaultHook sets function that is called when the Ping method of the
+// parent MockKeyValue instance is invoked and the hook queue is empty.
+func (f *KeyValuePingFunc) SetDefaultHook(hook func() error) {
+	f.defaultHook = hook
+}
+
+// PushHook adds a function to the end of hook queue. Each invocation of the
+// Ping method of the parent MockKeyValue instance invokes the hook at the
+// front of the queue and discards it. After the queue is empty, the default
+// hook function is invoked for any future action.
+func (f *KeyValuePingFunc) PushHook(hook func() error) {
+	f.mutex.Lock()
+	f.hooks = append(f.hooks, hook)
+	f.mutex.Unlock()
+}
+
+// SetDefaultReturn calls SetDefaultHook with a function that returns the
+// given values.
+func (f *KeyValuePingFunc) SetDefaultReturn(r0 error) {
+	f.SetDefaultHook(func() error {
+		return r0
+	})
+}
+
+// PushReturn calls PushHook with a function that returns the given values.
+func (f *KeyValuePingFunc) PushReturn(r0 error) {
+	f.PushHook(func() error {
+		return r0
+	})
+}
+
+func (f *KeyValuePingFunc) nextHook() func() error {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	if len(f.hooks) == 0 {
+		return f.defaultHook
+	}
+
+	hook := f.hooks[0]
+	f.hooks = f.hooks[1:]
+	return hook
+}
+
+func (f *KeyValuePingFunc) appendCall(r0 KeyValuePingFuncCall) {
+	f.mutex.Lock()
+	f.history = append(f.history, r0)
+	f.mutex.Unlock()
+}
+
+// History returns a sequence of KeyValuePingFuncCall objects describing the
+// invocations of this function.
+func (f *KeyValuePingFunc) History() []KeyValuePingFuncCall {
+	f.mutex.Lock()
+	history := make([]KeyValuePingFuncCall, len(f.history))
+	copy(history, f.history)
+	f.mutex.Unlock()
+
+	return history
+}
+
+// KeyValuePingFuncCall is an object that describes an invocation of method
+// Ping on an instance of MockKeyValue.
+type KeyValuePingFuncCall struct {
+	// Result0 is the value of the 1st result returned from this method
+	// invocation.
+	Result0 error
+}
+
+// Args returns an interface slice containing the arguments of this
+// invocation.
+func (c KeyValuePingFuncCall) Args() []interface{} {
+	return []interface{}{}
+}
+
+// Results returns an interface slice containing the results of this
+// invocation.
+func (c KeyValuePingFuncCall) Results() []interface{} {
 	return []interface{}{c.Result0}
 }
 
@@ -2438,5 +3069,209 @@ func (c KeyValueWithContextFuncCall) Args() []interface{} {
 // Results returns an interface slice containing the results of this
 // invocation.
 func (c KeyValueWithContextFuncCall) Results() []interface{} {
+	return []interface{}{c.Result0}
+}
+
+// KeyValueWithLatencyRecorderFunc describes the behavior when the
+// WithLatencyRecorder method of the parent MockKeyValue instance is
+// invoked.
+type KeyValueWithLatencyRecorderFunc struct {
+	defaultHook func(LatencyRecorder) KeyValue
+	hooks       []func(LatencyRecorder) KeyValue
+	history     []KeyValueWithLatencyRecorderFuncCall
+	mutex       sync.Mutex
+}
+
+// WithLatencyRecorder delegates to the next hook function in the queue and
+// stores the parameter and result values of this invocation.
+func (m *MockKeyValue) WithLatencyRecorder(v0 LatencyRecorder) KeyValue {
+	r0 := m.WithLatencyRecorderFunc.nextHook()(v0)
+	m.WithLatencyRecorderFunc.appendCall(KeyValueWithLatencyRecorderFuncCall{v0, r0})
+	return r0
+}
+
+// SetDefaultHook sets function that is called when the WithLatencyRecorder
+// method of the parent MockKeyValue instance is invoked and the hook queue
+// is empty.
+func (f *KeyValueWithLatencyRecorderFunc) SetDefaultHook(hook func(LatencyRecorder) KeyValue) {
+	f.defaultHook = hook
+}
+
+// PushHook adds a function to the end of hook queue. Each invocation of the
+// WithLatencyRecorder method of the parent MockKeyValue instance invokes
+// the hook at the front of the queue and discards it. After the queue is
+// empty, the default hook function is invoked for any future action.
+func (f *KeyValueWithLatencyRecorderFunc) PushHook(hook func(LatencyRecorder) KeyValue) {
+	f.mutex.Lock()
+	f.hooks = append(f.hooks, hook)
+	f.mutex.Unlock()
+}
+
+// SetDefaultReturn calls SetDefaultHook with a function that returns the
+// given values.
+func (f *KeyValueWithLatencyRecorderFunc) SetDefaultReturn(r0 KeyValue) {
+	f.SetDefaultHook(func(LatencyRecorder) KeyValue {
+		return r0
+	})
+}
+
+// PushReturn calls PushHook with a function that returns the given values.
+func (f *KeyValueWithLatencyRecorderFunc) PushReturn(r0 KeyValue) {
+	f.PushHook(func(LatencyRecorder) KeyValue {
+		return r0
+	})
+}
+
+func (f *KeyValueWithLatencyRecorderFunc) nextHook() func(LatencyRecorder) KeyValue {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	if len(f.hooks) == 0 {
+		return f.defaultHook
+	}
+
+	hook := f.hooks[0]
+	f.hooks = f.hooks[1:]
+	return hook
+}
+
+func (f *KeyValueWithLatencyRecorderFunc) appendCall(r0 KeyValueWithLatencyRecorderFuncCall) {
+	f.mutex.Lock()
+	f.history = append(f.history, r0)
+	f.mutex.Unlock()
+}
+
+// History returns a sequence of KeyValueWithLatencyRecorderFuncCall objects
+// describing the invocations of this function.
+func (f *KeyValueWithLatencyRecorderFunc) History() []KeyValueWithLatencyRecorderFuncCall {
+	f.mutex.Lock()
+	history := make([]KeyValueWithLatencyRecorderFuncCall, len(f.history))
+	copy(history, f.history)
+	f.mutex.Unlock()
+
+	return history
+}
+
+// KeyValueWithLatencyRecorderFuncCall is an object that describes an
+// invocation of method WithLatencyRecorder on an instance of MockKeyValue.
+type KeyValueWithLatencyRecorderFuncCall struct {
+	// Arg0 is the value of the 1st argument passed to this method
+	// invocation.
+	Arg0 LatencyRecorder
+	// Result0 is the value of the 1st result returned from this method
+	// invocation.
+	Result0 KeyValue
+}
+
+// Args returns an interface slice containing the arguments of this
+// invocation.
+func (c KeyValueWithLatencyRecorderFuncCall) Args() []interface{} {
+	return []interface{}{c.Arg0}
+}
+
+// Results returns an interface slice containing the results of this
+// invocation.
+func (c KeyValueWithLatencyRecorderFuncCall) Results() []interface{} {
+	return []interface{}{c.Result0}
+}
+
+// KeyValueWithPrefixFunc describes the behavior when the WithPrefix method
+// of the parent MockKeyValue instance is invoked.
+type KeyValueWithPrefixFunc struct {
+	defaultHook func(string) KeyValue
+	hooks       []func(string) KeyValue
+	history     []KeyValueWithPrefixFuncCall
+	mutex       sync.Mutex
+}
+
+// WithPrefix delegates to the next hook function in the queue and stores
+// the parameter and result values of this invocation.
+func (m *MockKeyValue) WithPrefix(v0 string) KeyValue {
+	r0 := m.WithPrefixFunc.nextHook()(v0)
+	m.WithPrefixFunc.appendCall(KeyValueWithPrefixFuncCall{v0, r0})
+	return r0
+}
+
+// SetDefaultHook sets function that is called when the WithPrefix method of
+// the parent MockKeyValue instance is invoked and the hook queue is empty.
+func (f *KeyValueWithPrefixFunc) SetDefaultHook(hook func(string) KeyValue) {
+	f.defaultHook = hook
+}
+
+// PushHook adds a function to the end of hook queue. Each invocation of the
+// WithPrefix method of the parent MockKeyValue instance invokes the hook at
+// the front of the queue and discards it. After the queue is empty, the
+// default hook function is invoked for any future action.
+func (f *KeyValueWithPrefixFunc) PushHook(hook func(string) KeyValue) {
+	f.mutex.Lock()
+	f.hooks = append(f.hooks, hook)
+	f.mutex.Unlock()
+}
+
+// SetDefaultReturn calls SetDefaultHook with a function that returns the
+// given values.
+func (f *KeyValueWithPrefixFunc) SetDefaultReturn(r0 KeyValue) {
+	f.SetDefaultHook(func(string) KeyValue {
+		return r0
+	})
+}
+
+// PushReturn calls PushHook with a function that returns the given values.
+func (f *KeyValueWithPrefixFunc) PushReturn(r0 KeyValue) {
+	f.PushHook(func(string) KeyValue {
+		return r0
+	})
+}
+
+func (f *KeyValueWithPrefixFunc) nextHook() func(string) KeyValue {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	if len(f.hooks) == 0 {
+		return f.defaultHook
+	}
+
+	hook := f.hooks[0]
+	f.hooks = f.hooks[1:]
+	return hook
+}
+
+func (f *KeyValueWithPrefixFunc) appendCall(r0 KeyValueWithPrefixFuncCall) {
+	f.mutex.Lock()
+	f.history = append(f.history, r0)
+	f.mutex.Unlock()
+}
+
+// History returns a sequence of KeyValueWithPrefixFuncCall objects
+// describing the invocations of this function.
+func (f *KeyValueWithPrefixFunc) History() []KeyValueWithPrefixFuncCall {
+	f.mutex.Lock()
+	history := make([]KeyValueWithPrefixFuncCall, len(f.history))
+	copy(history, f.history)
+	f.mutex.Unlock()
+
+	return history
+}
+
+// KeyValueWithPrefixFuncCall is an object that describes an invocation of
+// method WithPrefix on an instance of MockKeyValue.
+type KeyValueWithPrefixFuncCall struct {
+	// Arg0 is the value of the 1st argument passed to this method
+	// invocation.
+	Arg0 string
+	// Result0 is the value of the 1st result returned from this method
+	// invocation.
+	Result0 KeyValue
+}
+
+// Args returns an interface slice containing the arguments of this
+// invocation.
+func (c KeyValueWithPrefixFuncCall) Args() []interface{} {
+	return []interface{}{c.Arg0}
+}
+
+// Results returns an interface slice containing the results of this
+// invocation.
+func (c KeyValueWithPrefixFuncCall) Results() []interface{} {
 	return []interface{}{c.Result0}
 }

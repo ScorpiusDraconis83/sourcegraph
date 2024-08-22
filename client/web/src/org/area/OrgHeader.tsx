@@ -2,7 +2,7 @@ import React from 'react'
 
 import { NavLink } from 'react-router-dom'
 
-import { PageHeader, Button, Link, Icon } from '@sourcegraph/wildcard'
+import { Button, Icon, Link, PageHeader } from '@sourcegraph/wildcard'
 
 import type { BatchChangesProps } from '../../batches'
 import type { NavItemWithIconDescriptor } from '../../util/contributions'
@@ -11,19 +11,11 @@ import { OrgAvatar } from '../OrgAvatar'
 import type { OrgAreaRouteContext } from './OrgArea'
 
 interface Props extends OrgAreaRouteContext {
-    isSourcegraphDotCom: boolean
     navItems: readonly OrgAreaHeaderNavItem[]
     className?: string
 }
 
-export interface OrgSummary {
-    membersSummary: { membersCount: number; invitesCount: number }
-    extServices: { totalCount: number }
-}
-
-export interface OrgAreaHeaderContext extends BatchChangesProps, Pick<Props, 'org'> {
-    isSourcegraphDotCom: boolean
-}
+export interface OrgAreaHeaderContext extends BatchChangesProps, Pick<Props, 'org'> {}
 
 export interface OrgAreaHeaderNavItem extends NavItemWithIconDescriptor<OrgAreaHeaderContext> {}
 
@@ -37,14 +29,12 @@ export const OrgHeader: React.FunctionComponent<React.PropsWithChildren<Props>> 
     org,
     navItems,
     className = '',
-    isSourcegraphDotCom,
 }) => {
     const context: OrgAreaHeaderContext = {
         batchChangesEnabled,
         batchChangesExecutionEnabled,
         batchChangesWebhookLogsEnabled,
         org,
-        isSourcegraphDotCom,
     }
 
     const url = `/organizations/${org.name}`

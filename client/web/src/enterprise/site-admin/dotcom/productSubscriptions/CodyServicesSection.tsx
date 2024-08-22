@@ -1,15 +1,14 @@
 import React, { useCallback, useState } from 'react'
 
-import { mdiPencil, mdiTrashCan } from '@mdi/js'
-import { parseISO } from 'date-fns'
+import type { ConnectError } from '@connectrpc/connect'
+import { mdiInformationOutline, mdiPencil, mdiTrashCan } from '@mdi/js'
+import type { UseQueryResult } from '@tanstack/react-query'
 
 import { Toggle } from '@sourcegraph/branded/src/components/Toggle'
 import { logger } from '@sourcegraph/common'
-import { useMutation, useQuery } from '@sourcegraph/http-client'
-import { CodyGatewayRateLimitSource } from '@sourcegraph/shared/src/graphql-operations'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import {
     H3,
-    ProductStatusBadge,
     Container,
     Text,
     H4,
@@ -27,53 +26,53 @@ import {
     Alert,
 } from '@sourcegraph/wildcard'
 
+import { Collapsible } from '../../../../components/Collapsible'
 import { CopyableText } from '../../../../components/CopyableText'
-import type {
-    CodyGatewayAccessFields,
-    Scalars,
-    UpdateCodyGatewayConfigResult,
-    UpdateCodyGatewayConfigVariables,
-    CodyGatewayRateLimitUsageDatapoint,
-    CodyGatewayRateLimitFields,
-    DotComProductSubscriptionCodyGatewayCompletionsUsageResult,
-    DotComProductSubscriptionCodyGatewayCompletionsUsageVariables,
-    DotComProductSubscriptionCodyGatewayEmbeddingsUsageVariables,
-    DotComProductSubscriptionCodyGatewayEmbeddingsUsageResult,
-} from '../../../../graphql-operations'
 import { ChartContainer } from '../../../../site-admin/analytics/components/ChartContainer'
 
-import {
-    DOTCOM_PRODUCT_SUBSCRIPTION_CODY_GATEWAY_COMPLETIONS_USAGE,
-    DOTCOM_PRODUCT_SUBSCRIPTION_CODY_GATEWAY_EMBEDDINGS_USAGE,
-    UPDATE_CODY_GATEWAY_CONFIG,
-} from './backend'
 import { CodyGatewayRateLimitModal } from './CodyGatewayRateLimitModal'
-import { ModelBadges } from './ModelBadges'
+import {
+    useGetCodyGatewayAccess,
+    useGetCodyGatewayUsage,
+    useUpdateCodyGatewayAccess,
+    type EnterprisePortalEnvironment,
+} from './enterpriseportal'
+import {
+    type CodyGatewayUsage_UsageDatapoint,
+    type GetCodyGatewayUsageResponse,
+    type CodyGatewayRateLimit,
+    CodyGatewayRateLimitSource,
+} from './enterpriseportalgen/codyaccess_pb'
 import { numberFormatter, prettyInterval } from './utils'
 
 import styles from './CodyServicesSection.module.scss'
 
-interface Props {
+interface Props extends TelemetryV2Props {
+    enterprisePortalEnvironment: EnterprisePortalEnvironment
     productSubscriptionUUID: string
-    productSubscriptionID: Scalars['ID']
-    currentSourcegraphAccessToken: string | null
-    accessTokenError?: Error
     viewerCanAdminister: boolean
-    refetchSubscription: () => Promise<any>
-    codyGatewayAccess: CodyGatewayAccessFields
 }
 
 export const CodyServicesSection: React.FunctionComponent<Props> = ({
+    enterprisePortalEnvironment,
     productSubscriptionUUID,
-    productSubscriptionID,
     viewerCanAdminister,
-    currentSourcegraphAccessToken,
-    accessTokenError,
-    refetchSubscription,
-    codyGatewayAccess,
+    telemetryRecorder,
 }) => {
-    const [updateCodyGatewayConfig, { loading: updateCodyGatewayConfigLoading, error: updateCodyGatewayConfigError }] =
-        useMutation<UpdateCodyGatewayConfigResult, UpdateCodyGatewayConfigVariables>(UPDATE_CODY_GATEWAY_CONFIG)
+    const codyGatewayUsageQuery = useGetCodyGatewayUsage(enterprisePortalEnvironment, productSubscriptionUUID)
+
+    const {
+        data: codyGatewayAccessResponse,
+        isLoading: getCodyGatewayAccessLoading,
+        error: getCodyGatewayAccessError,
+        refetch: refetchCodyGatewayAccess,
+    } = useGetCodyGatewayAccess(enterprisePortalEnvironment, productSubscriptionUUID)
+
+    const {
+        mutateAsync: updateCodyGatewayConfig,
+        isPending: updateCodyGatewayConfigLoading,
+        error: updateCodyGatewayConfigError,
+    } = useUpdateCodyGatewayAccess(enterprisePortalEnvironment)
 
     const [codyServicesStateChange, setCodyServicesStateChange] = useState<boolean | undefined>()
 
@@ -86,137 +85,186 @@ export const CodyServicesSection: React.FunctionComponent<Props> = ({
             return
         }
         try {
+            telemetryRecorder.recordEvent(
+                'admin.productSubscription.codyAccess',
+                codyServicesStateChange ? 'enable' : 'disable'
+            )
             await updateCodyGatewayConfig({
-                variables: {
-                    productSubscriptionID,
-                    access: { enabled: codyServicesStateChange },
+                updateMask: { paths: ['enabled'] },
+                access: {
+                    subscriptionId: productSubscriptionUUID,
+                    enabled: codyServicesStateChange,
                 },
             })
-            await refetchSubscription()
+            await refetchCodyGatewayAccess()
         } catch (error) {
             logger.error(error)
         } finally {
             // Reset the intent to change state.
             setCodyServicesStateChange(undefined)
         }
-    }, [productSubscriptionID, refetchSubscription, updateCodyGatewayConfig, codyServicesStateChange])
+    }, [
+        productSubscriptionUUID,
+        refetchCodyGatewayAccess,
+        updateCodyGatewayConfig,
+        codyServicesStateChange,
+        telemetryRecorder,
+    ])
+
+    const header = <H3>Cody services</H3>
+
+    if (getCodyGatewayAccessLoading && !codyGatewayAccessResponse) {
+        return (
+            <>
+                {header}
+                <LoadingSpinner />
+            </>
+        )
+    }
+
+    if (getCodyGatewayAccessError) {
+        return (
+            <>
+                {header}
+                <ErrorAlert className="my-2" error={getCodyGatewayAccessError} />
+            </>
+        )
+    }
+
+    const { access: codyGatewayAccess } = codyGatewayAccessResponse!
 
     return (
         <>
-            <H3>
-                Cody services <ProductStatusBadge status="beta" />
-            </H3>
+            {header}
             <Container className="mb-3">
-                {currentSourcegraphAccessToken && (
-                    <>
-                        <div className="form-group mb-2">
-                            {updateCodyGatewayConfigError && <ErrorAlert error={updateCodyGatewayConfigError} />}
-                            <Label className="mb-0">
-                                <Toggle
-                                    id="cody-gateway-enabled"
-                                    value={codyGatewayAccess.enabled}
-                                    disabled={updateCodyGatewayConfigLoading || !viewerCanAdminister}
-                                    onToggle={setCodyServicesStateChange}
-                                    className="mr-1 align-text-bottom"
-                                />
-                                Access to hosted Cody services
-                                {updateCodyGatewayConfigLoading && (
-                                    <>
-                                        {' '}
-                                        <LoadingSpinner />
-                                    </>
-                                )}
-                            </Label>
-                        </div>
+                <>
+                    <div className="form-group mb-2">
+                        {updateCodyGatewayConfigError && <ErrorAlert error={updateCodyGatewayConfigError} />}
+                        <Label className="mb-0">
+                            <Toggle
+                                id="cody-gateway-enabled"
+                                value={codyGatewayAccess?.enabled}
+                                disabled={updateCodyGatewayConfigLoading || !viewerCanAdminister}
+                                onToggle={setCodyServicesStateChange}
+                                className="mr-1 align-text-bottom"
+                            />
+                            Access to hosted Cody services
+                            {updateCodyGatewayConfigLoading && (
+                                <>
+                                    {' '}
+                                    <LoadingSpinner />
+                                </>
+                            )}
+                        </Label>
+                    </div>
 
-                        {codyGatewayAccess.enabled && (
-                            <>
-                                <hr className="my-3" />
+                    {codyGatewayAccess?.enabled && (
+                        <>
+                            <hr className="my-3" />
 
-                                <H4>Completions</H4>
-                                <Label className="mb-2">Rate limits</Label>
-                                <table className={styles.limitsTable}>
-                                    <thead>
-                                        <tr>
-                                            <th>Feature</th>
-                                            <th>Source</th>
-                                            <th>Rate limit</th>
-                                            <th>Allowed models</th>
-                                            {viewerCanAdminister && <th>Actions</th>}
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <RateLimitRow
-                                            mode="chat"
-                                            productSubscriptionID={productSubscriptionID}
-                                            rateLimit={codyGatewayAccess.chatCompletionsRateLimit}
-                                            refetchSubscription={refetchSubscription}
-                                            title="Chat and recipes"
-                                            viewerCanAdminister={viewerCanAdminister}
-                                        />
-                                        <RateLimitRow
-                                            mode="code"
-                                            productSubscriptionID={productSubscriptionID}
-                                            rateLimit={codyGatewayAccess.codeCompletionsRateLimit}
-                                            refetchSubscription={refetchSubscription}
-                                            title="Code completions"
-                                            viewerCanAdminister={viewerCanAdminister}
-                                        />
-                                    </tbody>
-                                </table>
-                                <RateLimitUsage mode="completions" productSubscriptionUUID={productSubscriptionUUID} />
+                            <H4>Completions</H4>
+                            <Label className="mb-2">Rate limits</Label>
+                            <table className={styles.limitsTable}>
+                                <thead>
+                                    <tr>
+                                        <th>Feature</th>
+                                        <th>
+                                            Source{' '}
+                                            <Tooltip content="Where the displayed rate limit comes from - hover over each badge to learn more.">
+                                                <Icon aria-label="Show help text" svgPath={mdiInformationOutline} />
+                                            </Tooltip>
+                                        </th>
+                                        <th>Rate limit</th>
+                                        {viewerCanAdminister && <th>Actions</th>}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <RateLimitRow
+                                        mode="chat"
+                                        enterprisePortalEnvironment={enterprisePortalEnvironment}
+                                        productSubscriptionUUID={productSubscriptionUUID}
+                                        rateLimit={codyGatewayAccess?.chatCompletionsRateLimit}
+                                        refetchCodyGatewayAccess={refetchCodyGatewayAccess}
+                                        title="Chat and recipes"
+                                        viewerCanAdminister={viewerCanAdminister}
+                                    />
+                                    <RateLimitRow
+                                        mode="code"
+                                        enterprisePortalEnvironment={enterprisePortalEnvironment}
+                                        productSubscriptionUUID={productSubscriptionUUID}
+                                        rateLimit={codyGatewayAccess?.codeCompletionsRateLimit}
+                                        refetchCodyGatewayAccess={refetchCodyGatewayAccess}
+                                        title="Code completions"
+                                        viewerCanAdminister={viewerCanAdminister}
+                                    />
+                                </tbody>
+                            </table>
+                            <RateLimitUsage mode="completions" usageQuery={codyGatewayUsageQuery} />
 
-                                <hr className="my-3" />
+                            <hr className="my-3" />
 
-                                <H4>Embeddings</H4>
-                                <Label className="mb-2">Rate limits</Label>
-                                <table className={styles.limitsTable}>
-                                    <thead>
-                                        <tr>
-                                            <th>Feature</th>
-                                            <th>Source</th>
-                                            <th>Rate limit</th>
-                                            <th>Allowed models</th>
-                                            {viewerCanAdminister && <th>Actions</th>}
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <RateLimitRow
-                                            mode="embeddings"
-                                            productSubscriptionID={productSubscriptionID}
-                                            rateLimit={codyGatewayAccess.embeddingsRateLimit}
-                                            refetchSubscription={refetchSubscription}
-                                            title="Embeddings tokens"
-                                            viewerCanAdminister={viewerCanAdminister}
-                                        />
-                                    </tbody>
-                                </table>
-                                <EmbeddingsRateLimitUsage
-                                    mode="embeddings"
-                                    productSubscriptionUUID={productSubscriptionUUID}
-                                />
-                            </>
-                        )}
+                            <H4>Embeddings</H4>
+                            <Label className="mb-2">Rate limits</Label>
+                            <table className={styles.limitsTable}>
+                                <thead>
+                                    <tr>
+                                        <th>Feature</th>
+                                        <th>Source</th>
+                                        <th>Rate limit</th>
+                                        {viewerCanAdminister && <th>Actions</th>}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <RateLimitRow
+                                        mode="embeddings"
+                                        enterprisePortalEnvironment={enterprisePortalEnvironment}
+                                        productSubscriptionUUID={productSubscriptionUUID}
+                                        rateLimit={codyGatewayAccess?.embeddingsRateLimit}
+                                        refetchCodyGatewayAccess={refetchCodyGatewayAccess}
+                                        title="Embeddings tokens"
+                                        viewerCanAdminister={viewerCanAdminister}
+                                    />
+                                </tbody>
+                            </table>
+                            <EmbeddingsRateLimitUsage mode="embeddings" usageQuery={codyGatewayUsageQuery} />
+                        </>
+                    )}
 
-                        <hr className="my-3" />
-                    </>
-                )}
-
-                <H4>Access token</H4>
-                <Text className="mb-2">
-                    Access tokens can be used for Cody Gateway access. In most cases this is not needed, since access
-                    tokens are automatically generated from each instance's configured license key.
-                </Text>
-                {currentSourcegraphAccessToken && (
-                    <CopyableText
-                        label="Access token"
-                        secret={true}
-                        flex={true}
-                        text={currentSourcegraphAccessToken}
-                        className="mb-2"
-                    />
-                )}
-                {accessTokenError && <ErrorAlert error={accessTokenError} className="mb-0" />}
+                    <hr className="my-3" />
+                </>
+                <Collapsible titleAtStart={true} title={<H4>Cody Gateway access token</H4>} defaultExpanded={false}>
+                    <Text className="mb-2">
+                        Access tokens are automatically generated from each instance's configured license key. The only
+                        action required for Cody Gateway access is to configure a valid, current license key on the
+                        Sourcegraph instance.
+                        <Alert variant="warning" className="mt-2">
+                            <strong>DO NOT USE the access token here unless you know what you are doing!</strong> The
+                            displayed token is only valid until the current license's expiry or revocation. This should
+                            only be used for debugging purposes.
+                        </Alert>
+                    </Text>
+                    {codyGatewayAccess?.accessTokens && codyGatewayAccess?.accessTokens.length > 0 ? (
+                        <CopyableText
+                            label="Access token"
+                            secret={true}
+                            flex={true}
+                            text={codyGatewayAccess?.accessTokens[0].token}
+                            className="mb-2"
+                        />
+                    ) : (
+                        <Alert variant="info" className="mb-0">
+                            {viewerCanAdminister && (
+                                <>Create a license key to generate an access token automatically.</>
+                            )}
+                            {!viewerCanAdminister && (
+                                <>
+                                    Once an active subscription has been purchased, an access token will be
+                                    automatically generated.
+                                </>
+                            )}
+                        </Alert>
+                    )}
+                </Collapsible>
             </Container>
 
             {typeof codyServicesStateChange === 'boolean' && (
@@ -237,8 +285,8 @@ export const CodyGatewayRateLimitSourceBadge: React.FunctionComponent<{
     switch (source) {
         case CodyGatewayRateLimitSource.OVERRIDE: {
             return (
-                <Tooltip content="The limit has been specified by a custom override">
-                    <Badge variant="primary" className={className}>
+                <Tooltip content="The limit has been specified by a fixed, custom override. Removing this override will revert the limit to the value derived from the active license plan.">
+                    <Badge variant="warning" className={className}>
                         Override
                     </Badge>
                 </Tooltip>
@@ -246,9 +294,18 @@ export const CodyGatewayRateLimitSourceBadge: React.FunctionComponent<{
         }
         case CodyGatewayRateLimitSource.PLAN: {
             return (
-                <Tooltip content="The limit is derived from the current subscription plan">
+                <Tooltip content="The limit is derived from the actve license plan, which scales off of user count on the active license as well.">
                     <Badge variant="primary" className={className}>
                         Plan
+                    </Badge>
+                </Tooltip>
+            )
+        }
+        case CodyGatewayRateLimitSource.UNSPECIFIED: {
+            return (
+                <Tooltip content="The limit has an unknown source">
+                    <Badge variant="danger" className={className}>
+                        Unknown
                     </Badge>
                 </Tooltip>
             )
@@ -256,8 +313,8 @@ export const CodyGatewayRateLimitSourceBadge: React.FunctionComponent<{
     }
 }
 
-function generateSeries(data: CodyGatewayRateLimitUsageDatapoint[]): [string, CodyGatewayRateLimitUsageDatapoint[]][] {
-    const series: Record<string, CodyGatewayRateLimitUsageDatapoint[]> = {}
+function generateSeries(data: CodyGatewayUsage_UsageDatapoint[]): [string, CodyGatewayUsage_UsageDatapoint[]][] {
+    const series: Record<string, CodyGatewayUsage_UsageDatapoint[]> = {}
     for (const entry of data) {
         if (!series[entry.model]) {
             series[entry.model] = []
@@ -268,74 +325,79 @@ function generateSeries(data: CodyGatewayRateLimitUsageDatapoint[]): [string, Co
 }
 
 interface RateLimitRowProps {
-    productSubscriptionID: Scalars['ID']
+    enterprisePortalEnvironment: EnterprisePortalEnvironment
+    productSubscriptionUUID: string
     title: string
     viewerCanAdminister: boolean
-    refetchSubscription: () => Promise<any>
+    refetchCodyGatewayAccess: () => Promise<any>
     mode: 'chat' | 'code' | 'embeddings'
-    rateLimit: CodyGatewayRateLimitFields | null
+    rateLimit: CodyGatewayRateLimit | undefined
 }
 
 const RateLimitRow: React.FunctionComponent<RateLimitRowProps> = ({
-    productSubscriptionID,
+    enterprisePortalEnvironment,
+    productSubscriptionUUID,
     title,
     mode,
     viewerCanAdminister,
-    refetchSubscription,
+    refetchCodyGatewayAccess,
     rateLimit,
 }) => {
     const [showConfigModal, setShowConfigModal] = useState<boolean>(false)
 
-    const [updateCodyGatewayConfig, { loading: updateCodyGatewayConfigLoading, error: updateCodyGatewayConfigError }] =
-        useMutation<UpdateCodyGatewayConfigResult, UpdateCodyGatewayConfigVariables>(UPDATE_CODY_GATEWAY_CONFIG)
+    const {
+        error: updateCodyGatewayAccessError,
+        isPending: updateCodyGatewayAccessLoading,
+        mutateAsync: updateCodyGatewayAccess,
+    } = useUpdateCodyGatewayAccess(enterprisePortalEnvironment)
 
     const onRemoveRateLimitOverride = useCallback(async () => {
         try {
-            await updateCodyGatewayConfig({
-                variables: {
-                    productSubscriptionID,
-                    access:
-                        mode === 'chat'
-                            ? {
-                                  chatCompletionsRateLimit: '0',
-                                  chatCompletionsRateLimitIntervalSeconds: 0,
-                                  chatCompletionsAllowedModels: [],
-                              }
-                            : mode === 'code'
-                            ? {
-                                  codeCompletionsRateLimit: '0',
-                                  codeCompletionsRateLimitIntervalSeconds: 0,
-                                  codeCompletionsAllowedModels: [],
-                              }
-                            : {
-                                  embeddingsRateLimit: '0',
-                                  embeddingsRateLimitIntervalSeconds: 0,
-                                  embeddingsAllowedModels: [],
-                              },
+            // FieldMask dictates fields to update, which allows us to forcibly
+            // set null values to clear out an override.
+            const paths: string[] = []
+            switch (mode) {
+                case 'chat': {
+                    paths.push('chat_completions_rate_limit.limit', 'chat_completions_rate_limit.interval_duration')
+                    break
+                }
+                case 'code': {
+                    paths.push('code_completions_rate_limit.limit', 'code_completions_rate_limit.interval_duration')
+                    break
+                }
+                case 'embeddings': {
+                    paths.push('embeddings_rate_limit.limit', 'embeddings_rate_limit.interval_duration')
+                    break
+                }
+            }
+            await updateCodyGatewayAccess({
+                updateMask: { paths },
+                access: {
+                    subscriptionId: productSubscriptionUUID,
                 },
             })
-            await refetchSubscription()
+            await refetchCodyGatewayAccess()
         } catch (error) {
             logger.error(error)
         }
-    }, [productSubscriptionID, refetchSubscription, updateCodyGatewayConfig, mode])
+    }, [productSubscriptionUUID, refetchCodyGatewayAccess, updateCodyGatewayAccess, mode])
 
     const afterSaveRateLimit = useCallback(async () => {
         try {
-            await refetchSubscription()
+            await refetchCodyGatewayAccess()
         } catch {
             // Ignore, these errors are shown elsewhere.
         }
         setShowConfigModal(false)
-    }, [refetchSubscription])
+    }, [refetchCodyGatewayAccess])
 
     return (
         <>
             <tr>
-                <td colSpan={rateLimit !== null ? 1 : viewerCanAdminister ? 5 : 4}>
+                <td colSpan={rateLimit !== undefined ? 1 : viewerCanAdminister ? 5 : 4}>
                     <strong>{title}</strong>
                 </td>
-                {rateLimit !== null && (
+                {rateLimit !== undefined && (
                     <>
                         <td>
                             <CodyGatewayRateLimitSourceBadge source={rateLimit.source} />
@@ -343,13 +405,7 @@ const RateLimitRow: React.FunctionComponent<RateLimitRowProps> = ({
                         <td>
                             {numberFormatter.format(BigInt(rateLimit.limit))}{' '}
                             {mode === 'embeddings' ? 'tokens' : 'requests'} /{' '}
-                            {prettyInterval(rateLimit.intervalSeconds)}
-                        </td>
-                        <td>
-                            <ModelBadges
-                                models={rateLimit.allowedModels}
-                                mode={mode === 'embeddings' ? 'embeddings' : 'completions'}
-                            />
+                            {prettyInterval(Number(rateLimit.intervalDuration?.seconds || 0))}
                         </td>
                         {viewerCanAdminister && (
                             <td>
@@ -363,20 +419,20 @@ const RateLimitRow: React.FunctionComponent<RateLimitRowProps> = ({
                                     <Icon aria-hidden={true} svgPath={mdiPencil} />
                                 </Button>
                                 {rateLimit.source === CodyGatewayRateLimitSource.OVERRIDE && (
-                                    <Tooltip content="Remove rate limit override">
+                                    <Tooltip content="Remove rate limit override, allowing the active-license-based defaults to take precedence.">
                                         <Button
                                             size="sm"
                                             variant="link"
                                             aria-label="Remove rate limit override"
                                             className="ml-1"
-                                            disabled={updateCodyGatewayConfigLoading}
+                                            disabled={updateCodyGatewayAccessLoading}
                                             onClick={onRemoveRateLimitOverride}
                                         >
                                             <Icon aria-hidden={true} svgPath={mdiTrashCan} className="text-danger" />
                                         </Button>
                                     </Tooltip>
                                 )}
-                                {updateCodyGatewayConfigError && <ErrorAlert error={updateCodyGatewayConfigError} />}
+                                {updateCodyGatewayAccessError && <ErrorAlert error={updateCodyGatewayAccessError} />}
                             </td>
                         )}
                     </>
@@ -384,7 +440,8 @@ const RateLimitRow: React.FunctionComponent<RateLimitRowProps> = ({
             </tr>
             {showConfigModal && (
                 <CodyGatewayRateLimitModal
-                    productSubscriptionID={productSubscriptionID}
+                    enterprisePortalEnvironment={enterprisePortalEnvironment}
+                    productSubscriptionUUID={productSubscriptionUUID}
                     afterSave={afterSaveRateLimit}
                     current={rateLimit}
                     onCancel={() => setShowConfigModal(false)}
@@ -396,17 +453,12 @@ const RateLimitRow: React.FunctionComponent<RateLimitRowProps> = ({
 }
 
 interface RateLimitUsageProps {
-    productSubscriptionUUID: string
+    usageQuery: UseQueryResult<GetCodyGatewayUsageResponse, ConnectError>
     mode: 'completions' | 'embeddings'
 }
 
-const RateLimitUsage: React.FunctionComponent<RateLimitUsageProps> = ({ productSubscriptionUUID }) => {
-    const { data, loading, error } = useQuery<
-        DotComProductSubscriptionCodyGatewayCompletionsUsageResult,
-        DotComProductSubscriptionCodyGatewayCompletionsUsageVariables
-    >(DOTCOM_PRODUCT_SUBSCRIPTION_CODY_GATEWAY_COMPLETIONS_USAGE, { variables: { uuid: productSubscriptionUUID } })
-
-    if (loading && !data) {
+const RateLimitUsage: React.FunctionComponent<RateLimitUsageProps> = ({ usageQuery: { data, isLoading, error } }) => {
+    if (isLoading && !data) {
         return (
             <>
                 <H5 className="mb-2">Usage</H5>
@@ -424,8 +476,7 @@ const RateLimitUsage: React.FunctionComponent<RateLimitUsageProps> = ({ productS
         )
     }
 
-    const { codyGatewayAccess } = data!.dotcom.productSubscription
-
+    const usage = data?.usage
     return (
         <>
             <H5 className="mb-2">Usage</H5>
@@ -435,28 +486,28 @@ const RateLimitUsage: React.FunctionComponent<RateLimitUsageProps> = ({ productS
                         width={width}
                         height={200}
                         series={[
-                            ...generateSeries(codyGatewayAccess.chatCompletionsRateLimit?.usage ?? []).map(
-                                ([model, data]): Series<CodyGatewayRateLimitUsageDatapoint> => ({
+                            ...generateSeries(usage?.chatCompletionsUsage ?? []).map(
+                                ([model, data]): Series<CodyGatewayUsage_UsageDatapoint> => ({
                                     data,
                                     getXValue(datum) {
-                                        return parseISO(datum.date)
+                                        return datum.time?.toDate() || new Date()
                                     },
                                     getYValue(datum) {
-                                        return Number(datum.count)
+                                        return Number(datum.usage)
                                     },
                                     id: 'chat-usage',
                                     name: 'Chat completions: ' + model,
                                     color: 'var(--purple)',
                                 })
                             ),
-                            ...generateSeries(codyGatewayAccess.codeCompletionsRateLimit?.usage ?? []).map(
-                                ([model, data]): Series<CodyGatewayRateLimitUsageDatapoint> => ({
+                            ...generateSeries(data?.usage?.codeCompletionsUsage ?? []).map(
+                                ([model, data]): Series<CodyGatewayUsage_UsageDatapoint> => ({
                                     data,
                                     getXValue(datum) {
-                                        return parseISO(datum.date)
+                                        return datum.time?.toDate() || new Date()
                                     },
                                     getYValue(datum) {
-                                        return Number(datum.count)
+                                        return Number(datum.usage)
                                     },
                                     id: 'code-completions-usage',
                                     name: 'Code completions: ' + model,
@@ -471,13 +522,10 @@ const RateLimitUsage: React.FunctionComponent<RateLimitUsageProps> = ({ productS
     )
 }
 
-const EmbeddingsRateLimitUsage: React.FunctionComponent<RateLimitUsageProps> = ({ productSubscriptionUUID }) => {
-    const { data, loading, error } = useQuery<
-        DotComProductSubscriptionCodyGatewayEmbeddingsUsageResult,
-        DotComProductSubscriptionCodyGatewayEmbeddingsUsageVariables
-    >(DOTCOM_PRODUCT_SUBSCRIPTION_CODY_GATEWAY_EMBEDDINGS_USAGE, { variables: { uuid: productSubscriptionUUID } })
-
-    if (loading && !data) {
+const EmbeddingsRateLimitUsage: React.FunctionComponent<RateLimitUsageProps> = ({
+    usageQuery: { data, isLoading, error },
+}) => {
+    if (isLoading && !data) {
         return (
             <>
                 <H5 className="mb-2">Usage</H5>
@@ -495,8 +543,7 @@ const EmbeddingsRateLimitUsage: React.FunctionComponent<RateLimitUsageProps> = (
         )
     }
 
-    const { codyGatewayAccess } = data!.dotcom.productSubscription
-
+    const usage = data?.usage
     return (
         <>
             <H5 className="mb-2">Usage</H5>
@@ -506,16 +553,16 @@ const EmbeddingsRateLimitUsage: React.FunctionComponent<RateLimitUsageProps> = (
                         width={width}
                         height={200}
                         series={[
-                            ...generateSeries(codyGatewayAccess.embeddingsRateLimit?.usage ?? []).map(
-                                ([model, data]): Series<CodyGatewayRateLimitUsageDatapoint> => ({
+                            ...generateSeries(usage?.embeddingsUsage ?? []).map(
+                                ([model, data]): Series<CodyGatewayUsage_UsageDatapoint> => ({
                                     data,
                                     getXValue(datum) {
-                                        return parseISO(datum.date)
+                                        return datum.time?.toDate() || new Date()
                                     },
                                     getYValue(datum) {
-                                        return Number(datum.count)
+                                        return Number(datum.usage)
                                     },
-                                    id: 'chat-usage',
+                                    id: 'embeddings-usage',
                                     name: 'Embedded tokens: ' + model,
                                     color: 'var(--purple)',
                                 })

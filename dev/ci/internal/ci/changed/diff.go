@@ -3,6 +3,8 @@ package changed
 import (
 	"bytes"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -15,6 +17,7 @@ const (
 	Go Diff = 1 << iota
 	ClientBrowserExtensions
 	Client
+	Pnpm
 	GraphQL
 	DatabaseSchema
 	Docs
@@ -93,10 +96,9 @@ func ParseDiff(files []string) (diff Diff, changedFiles ChangedFiles) {
 		if !strings.HasSuffix(p, ".md") && (isRootClientFile(p) || strings.HasPrefix(p, "client/")) {
 			diff |= Client
 		}
-		// dev/release contains a nodejs script that doesn't have tests but needs to be
-		// linted with Client linters. We skip the release config file to reduce friction editing during releases.
-		if strings.HasPrefix(p, "dev/release/") && !strings.Contains(p, "release-config") {
-			diff |= Client
+
+		if slices.Contains(pnpmFiles, filepath.Base(p)) {
+			diff |= Pnpm
 		}
 
 		// Affects GraphQL
@@ -184,7 +186,7 @@ func ParseDiff(files []string) (diff Diff, changedFiles ChangedFiles) {
 		}
 
 		// Affects Wolfi base images
-		if strings.HasPrefix(p, "wolfi-images/") && strings.HasSuffix(p, ".yaml") {
+		if strings.HasPrefix(p, "wolfi-images/") && (strings.HasSuffix(p, ".yaml") || strings.HasSuffix(p, ".lock.json")) {
 			diff |= WolfiBaseImages
 			changedFiles[WolfiBaseImages] = append(changedFiles[WolfiBaseImages], p)
 		}
@@ -227,6 +229,8 @@ func (d Diff) String() string {
 		return "Go"
 	case Client:
 		return "Client"
+	case Pnpm:
+		return "pnpm"
 	case ClientBrowserExtensions:
 		return "ClientBrowserExtensions"
 	case GraphQL:

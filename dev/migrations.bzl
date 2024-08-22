@@ -5,10 +5,6 @@ CMD_PREAMBLE = """set -e
 export HOME=$(pwd)
 export SG_FORCE_REPO_ROOT=$(pwd)
 
-if [ -n "$PG_UTILS_PATH" ]; then
-    PATH="$PG_UTILS_PATH:$PATH"
-fi
-
 if [ -z "$PGUSER" ]; then
     export PGUSER="sourcegraph"
 fi
@@ -45,8 +41,12 @@ fi
 # Dumping the schema requires running the squash operation first, as it reuses the database, so we do all of those operations
 # in a single step.
 def _generate_schemas_impl(ctx):
+    pgutils_path = ctx.attr._pg_utils[DefaultInfo].files.to_list()[0].path.rpartition("/")[0]
+    runfiles = depset(direct = ctx.attr._sg[DefaultInfo].default_runfiles.files.to_list() + ctx.attr._pg_utils[DefaultInfo].default_runfiles.files.to_list())
+
     ctx.actions.run_shell(
         inputs = ctx.files.srcs,
+        tools = runfiles,
         outputs = [
             ctx.outputs.out_frontend_squash,
             ctx.outputs.out_codeintel_squash,
@@ -61,7 +61,16 @@ def _generate_schemas_impl(ctx):
         progress_message = "Running sg migration ...",
         use_default_shell_env = True,
         execution_requirements = {"requires-network": "1"},
+        env = {
+            # needed because of https://github.com/golang/go/issues/53962
+            "GODEBUG": "execerrdot=0",
+            # blank out PATH so that we don't pick up host binaries if we end up using more than what
+            # //dev:pg_utils filegroup provides.
+            "PATH": "",
+        },
         command = """{cmd_preamble}
+
+        export PATH="{pgutils_path}"
 
         trap "dropdb --if-exists sg-squasher-frontend && echo 'temp db sg-squasher-frontend dropped'" EXIT
         trap "dropdb --if-exists sg-squasher-codeintel && echo 'temp db sg-squasher-codeintel dropped'" EXIT
@@ -82,6 +91,7 @@ def _generate_schemas_impl(ctx):
         """.format(
             cmd_preamble = CMD_PREAMBLE,
             sg = ctx.executable._sg.path,
+            pgutils_path = pgutils_path,
             out_frontend_squash = ctx.outputs.out_frontend_squash.path,
             out_codeintel_squash = ctx.outputs.out_codeintel_squash.path,
             out_codeinsights_squash = ctx.outputs.out_codeinsights_squash.path,
@@ -92,7 +102,6 @@ def _generate_schemas_impl(ctx):
             out_codeintel_schema_md = ctx.outputs.out_codeintel_schema_md.path,
             out_codeinsights_schema_md = ctx.outputs.out_codeinsights_schema_md.path,
         ),
-        tools = ctx.attr._sg[DefaultInfo].default_runfiles.files,
     )
 
     return [
@@ -138,5 +147,6 @@ generate_schemas = rule(
         "out_codeintel_schema_md": attr.output(mandatory = True),
         "out_codeinsights_schema_md": attr.output(mandatory = True),
         "_sg": attr.label(executable = True, default = "//dev/sg:sg", cfg = "exec"),
+        "_pg_utils": attr.label(default = ":pg_utils", cfg = "exec"),
     },
 )

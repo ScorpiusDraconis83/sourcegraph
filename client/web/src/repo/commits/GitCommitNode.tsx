@@ -7,10 +7,12 @@ import { capitalize } from 'lodash'
 
 import { Timestamp } from '@sourcegraph/branded/src/components/Timestamp'
 import { pluralize } from '@sourcegraph/common'
+import { useSettings } from '@sourcegraph/shared/src/settings/settings'
+import { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import { EVENT_LOGGER } from '@sourcegraph/shared/src/telemetry/web/eventLogger'
 import { Button, ButtonGroup, ErrorAlert, Link, Icon, Code, screenReaderAnnounce, Tooltip } from '@sourcegraph/wildcard'
 
 import { type GitCommitFields, RepositoryType } from '../../graphql-operations'
-import { eventLogger } from '../../tracking/eventLogger'
 import { CommitMessageWithLinks } from '../commit/CommitMessageWithLinks'
 import { DiffModeSelector } from '../commit/DiffModeSelector'
 import type { DiffMode } from '../commit/RepositoryCommitPage'
@@ -21,7 +23,7 @@ import { GitCommitNodeByline } from './GitCommitNodeByline'
 
 import styles from './GitCommitNode.module.scss'
 
-export interface GitCommitNodeProps {
+export interface GitCommitNodeProps extends TelemetryV2Props {
     node: GitCommitFields
 
     /** An optional additional CSS class name to apply to this element. */
@@ -42,7 +44,11 @@ export interface GitCommitNodeProps {
     /** Show the full 40-character SHA and parents on their own row. */
     showSHAAndParentsRow?: boolean
 
-    /** Show the absolute timestamp and move relative time to tooltip. */
+    /**
+     * Show the absolute timestamp and move relative time to tooltip.
+     * If not explicitly set, the user's preference from settings
+     * (history.preferAbsoluteTimestamps) is used.
+     */
     preferAbsoluteTimestamps?: boolean
 
     /** Fragment to show at the end to the right of the SHA. */
@@ -81,7 +87,10 @@ export const GitCommitNode: React.FunctionComponent<React.PropsWithChildren<GitC
     diffMode,
     onHandleDiffMode,
     wrapperElement: WrapperElement = 'div',
+    telemetryRecorder,
 }) => {
+    const settings = useSettings()
+
     const [showCommitMessageBody, setShowCommitMessageBody] = useState<boolean>(false)
     const [flashCopiedToClipboardMessage, setFlashCopiedToClipboardMessage] = useState<boolean>(false)
 
@@ -90,15 +99,23 @@ export const GitCommitNode: React.FunctionComponent<React.PropsWithChildren<GitC
     const abbreviatedRefID = node.perforceChangelist?.cid ?? node.abbreviatedOID
     const refID = node.perforceChangelist?.cid ?? node.oid
     const canonicalURL = getCanonicalURL(sourceType, node)
+    // Fall back to user preference if not explicitly set
+    preferAbsoluteTimestamps = preferAbsoluteTimestamps ?? Boolean(settings?.['history.preferAbsoluteTimestamps'])
 
     const toggleShowCommitMessageBody = useCallback((): void => {
-        eventLogger.log('CommitBodyToggled')
+        EVENT_LOGGER.log('CommitBodyToggled')
+        telemetryRecorder.recordEvent('repo.commit.body', 'toggle')
         setShowCommitMessageBody(!showCommitMessageBody)
-    }, [showCommitMessageBody])
+    }, [showCommitMessageBody, telemetryRecorder])
 
     const copyToClipboard = useCallback(
         (oid: string): void => {
-            eventLogger.log(isPerforceDepot ? 'ChangelistIDCopiedToClipboard' : 'CommitSHACopiedToClipboard')
+            EVENT_LOGGER.log(isPerforceDepot ? 'ChangelistIDCopiedToClipboard' : 'CommitSHACopiedToClipboard')
+            if (isPerforceDepot) {
+                telemetryRecorder.recordEvent('repo.commit.changelistID', 'copy')
+            } else {
+                telemetryRecorder.recordEvent('repo.commit.commitSHA', 'copy')
+            }
             copy(oid)
             setFlashCopiedToClipboardMessage(true)
             screenReaderAnnounce('Copied!')
@@ -107,7 +124,7 @@ export const GitCommitNode: React.FunctionComponent<React.PropsWithChildren<GitC
                 setFlashCopiedToClipboardMessage(false)
             }, 1500)
         },
-        [isPerforceDepot]
+        [isPerforceDepot, telemetryRecorder]
     )
 
     if (extraCompact) {
@@ -254,7 +271,7 @@ export const GitCommitNode: React.FunctionComponent<React.PropsWithChildren<GitC
 
     const treeCanonicalURL =
         isPerforceChangelistMappingEnabled() && isPerforceDepot
-            ? node.tree.canonicalURL.replace(node.oid, refID)
+            ? node.tree.canonicalURL.replace(node.oid, `changelist/${refID}`)
             : node.tree.canonicalURL
 
     const viewFilesCommitElement = node.tree && (

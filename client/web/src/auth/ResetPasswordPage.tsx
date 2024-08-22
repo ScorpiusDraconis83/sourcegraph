@@ -1,15 +1,28 @@
 import * as React from 'react'
 
+import { mdiArrowLeftBoldBoxOutline } from '@mdi/js'
 import { useLocation } from 'react-router-dom'
 
 import { asError, type ErrorLike, isErrorLike, logger } from '@sourcegraph/common'
-import { Button, Link, LoadingSpinner, Alert, Text, Input, ErrorAlert, Form, Container } from '@sourcegraph/wildcard'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import { EVENT_LOGGER } from '@sourcegraph/shared/src/telemetry/web/eventLogger'
+import {
+    Button,
+    Link,
+    LoadingSpinner,
+    Alert,
+    Text,
+    Input,
+    ErrorAlert,
+    Form,
+    Container,
+    Icon,
+} from '@sourcegraph/wildcard'
 
 import type { AuthenticatedUser } from '../auth'
 import { LoaderButton } from '../components/LoaderButton'
 import { PageTitle } from '../components/PageTitle'
 import type { SourcegraphContext } from '../jscontext'
-import { eventLogger } from '../tracking/eventLogger'
 
 import { AuthPageWrapper } from './AuthPageWrapper'
 import { PasswordInput } from './SignInSignUpCommon'
@@ -31,7 +44,7 @@ interface ResetPasswordInitFormState {
  * A form where the user can initiate the reset-password flow. This is the 1st step in the
  * reset-password flow; ResetPasswordCodePage is the 2nd step.
  */
-class ResetPasswordInitForm extends React.PureComponent<{}, ResetPasswordInitFormState> {
+class ResetPasswordInitForm extends React.PureComponent<TelemetryV2Props, ResetPasswordInitFormState> {
     public state: ResetPasswordInitFormState = {
         email: '',
         submitOrError: undefined,
@@ -95,6 +108,7 @@ class ResetPasswordInitForm extends React.PureComponent<{}, ResetPasswordInitFor
     private handleSubmitResetPasswordInit = (event: React.FormEvent<HTMLFormElement>): void => {
         event.preventDefault()
         this.setState({ submitOrError: 'loading' })
+        this.props.telemetryRecorder.recordEvent('auth.resetPassword.init', 'submit')
         fetch('/-/reset-password-init', {
             credentials: 'same-origin',
             method: 'POST',
@@ -125,7 +139,7 @@ class ResetPasswordInitForm extends React.PureComponent<{}, ResetPasswordInitFor
     }
 }
 
-interface ResetPasswordCodeFormProps {
+interface ResetPasswordCodeFormProps extends TelemetryV2Props {
     userID: number
     code: string
     email: string | null
@@ -150,10 +164,13 @@ class ResetPasswordCodeForm extends React.PureComponent<ResetPasswordCodeFormPro
     }
 
     public render(): JSX.Element | null {
+        const { email } = this.props
+
         if (this.state.submitOrError === null) {
             return (
                 <Alert variant="success">
-                    Your password was reset. <Link to="/sign-in">Sign in with your new password</Link> to continue.
+                    Your password was reset. <Link to={`/sign-in?email=${email}`}>Sign in with your new password</Link>{' '}
+                    to continue.
                 </Alert>
             )
         }
@@ -162,6 +179,11 @@ class ResetPasswordCodeForm extends React.PureComponent<ResetPasswordCodeFormPro
             <>
                 {isErrorLike(this.state.submitOrError) && <ErrorAlert error={this.state.submitOrError} />}
                 <Container className="w-100">
+                    <Link to="/password-reset">
+                        <Icon className="mr-1" aria-hidden={true} svgPath={mdiArrowLeftBoldBoxOutline} />
+                        Raise request for a different account
+                    </Link>
+                    <Text className="mt-1 text-center text-muted font-weight-bold mb-3">{email}</Text>
                     <Form data-testid="reset-password-page-form" onSubmit={this.handleSubmitResetPassword}>
                         <PasswordInput
                             name="password"
@@ -194,6 +216,7 @@ class ResetPasswordCodeForm extends React.PureComponent<ResetPasswordCodeFormPro
 
     private handleSubmitResetPassword = (event: React.FormEvent<HTMLFormElement>): void => {
         event.preventDefault()
+        this.props.telemetryRecorder.recordEvent('auth.resetPassword', 'submit')
         this.setState({ submitOrError: 'loading' })
         fetch('/-/reset-password-code', {
             credentials: 'same-origin',
@@ -223,7 +246,7 @@ class ResetPasswordCodeForm extends React.PureComponent<ResetPasswordCodeFormPro
     }
 }
 
-interface ResetPasswordPageProps {
+interface ResetPasswordPageProps extends TelemetryV2Props {
     authenticatedUser: AuthenticatedUser | null
     context: Pick<SourcegraphContext, 'xhrHeaders' | 'sourcegraphDotComMode' | 'resetPasswordEnabled'>
 }
@@ -236,8 +259,9 @@ export const ResetPasswordPage: React.FunctionComponent<ResetPasswordPageProps> 
     const location = useLocation()
 
     React.useEffect(() => {
-        eventLogger.logViewEvent('ResetPassword', false)
-    }, [])
+        EVENT_LOGGER.logViewEvent('ResetPassword', false)
+        props.telemetryRecorder.recordEvent('auth.resetPassword', 'view')
+    }, [props.telemetryRecorder])
 
     let body: JSX.Element
     if (props.authenticatedUser) {
@@ -256,13 +280,14 @@ export const ResetPasswordPage: React.FunctionComponent<ResetPasswordPageProps> 
                         userID={userID}
                         email={email}
                         emailVerifyCode={emailVerifyCode}
+                        telemetryRecorder={props.telemetryRecorder}
                     />
                 )
             } else {
                 body = <Alert variant="danger">The password reset link you followed is invalid.</Alert>
             }
         } else {
-            body = <ResetPasswordInitForm />
+            body = <ResetPasswordInitForm telemetryRecorder={props.telemetryRecorder} />
         }
     } else {
         body = (

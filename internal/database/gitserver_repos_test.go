@@ -18,6 +18,7 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/database/basestore"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbtest"
+	"github.com/sourcegraph/sourcegraph/internal/errcode"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 	"github.com/sourcegraph/sourcegraph/internal/types/typestest"
@@ -195,152 +196,6 @@ func TestListPurgeableRepos(t *testing.T) {
 	}
 }
 
-func TestListReposWithLastError(t *testing.T) {
-	if testing.Short() {
-		t.Skip()
-	}
-	type testRepo struct {
-		name         string
-		cloudDefault bool
-		hasLastError bool
-		blocked      bool
-	}
-	type testCase struct {
-		name               string
-		testRepos          []testRepo
-		expectedReposFound []api.RepoName
-	}
-	testCases := []testCase{
-		{
-			name: "get repos with last error",
-			testRepos: []testRepo{
-				{
-					name:         "github.com/sourcegraph/repo1",
-					cloudDefault: true,
-					hasLastError: true,
-				},
-				{
-					name:         "github.com/sourcegraph/repo2",
-					cloudDefault: true,
-				},
-			},
-			expectedReposFound: []api.RepoName{"github.com/sourcegraph/repo1"},
-		},
-		{
-			name: "filter out non cloud_default repos",
-			testRepos: []testRepo{
-				{
-					name:         "github.com/sourcegraph/repo1",
-					cloudDefault: false,
-					hasLastError: true,
-				},
-				{
-					name:         "github.com/sourcegraph/repo2",
-					cloudDefault: true,
-					hasLastError: true,
-				},
-			},
-			expectedReposFound: []api.RepoName{"github.com/sourcegraph/repo2"},
-		},
-		{
-			name: "no cloud_default repos with non-empty last errors",
-			testRepos: []testRepo{
-				{
-					name:         "github.com/sourcegraph/repo1",
-					cloudDefault: false,
-					hasLastError: true,
-				},
-				{
-					name:         "github.com/sourcegraph/repo2",
-					cloudDefault: true,
-					hasLastError: false,
-				},
-			},
-			expectedReposFound: nil,
-		},
-		{
-			name: "filter out blocked repos",
-			testRepos: []testRepo{
-				{
-					name:         "github.com/sourcegraph/repo1",
-					cloudDefault: true,
-					hasLastError: true,
-					blocked:      true,
-				},
-				{
-					name:         "github.com/sourcegraph/repo2",
-					cloudDefault: true,
-					hasLastError: true,
-				},
-			},
-			expectedReposFound: []api.RepoName{"github.com/sourcegraph/repo2"},
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			ctx := context.Background()
-			logger := logtest.Scoped(t)
-			db := NewDB(logger, dbtest.NewDB(t))
-			now := time.Now()
-
-			cloudDefaultService := createTestExternalService(ctx, t, now, db, true)
-			nonCloudDefaultService := createTestExternalService(ctx, t, now, db, false)
-			for i, tr := range tc.testRepos {
-				testRepo := &types.Repo{
-					Name: api.RepoName(tr.name),
-					URI:  tr.name,
-					ExternalRepo: api.ExternalRepoSpec{
-						ID:          fmt.Sprintf("repo%d-external", i),
-						ServiceType: extsvc.TypeGitHub,
-						ServiceID:   "https://github.com",
-					},
-				}
-				if tr.cloudDefault {
-					testRepo = testRepo.With(
-						typestest.Opt.RepoSources(cloudDefaultService.URN()),
-					)
-				} else {
-					testRepo = testRepo.With(
-						typestest.Opt.RepoSources(nonCloudDefaultService.URN()),
-					)
-				}
-				createTestRepos(ctx, t, db, types.Repos{testRepo})
-
-				if tr.hasLastError {
-					if err := db.GitserverRepos().SetLastError(ctx, testRepo.Name, "an error", "test"); err != nil {
-						t.Fatal(err)
-					}
-				}
-
-				if tr.blocked {
-					q := sqlf.Sprintf(`UPDATE repo SET blocked = %s WHERE name = %s`, []byte(`{"reason": "test"}`), testRepo.Name)
-					if _, err := db.ExecContext(ctx, q.Query(sqlf.PostgresBindVar), q.Args()...); err != nil {
-						t.Fatal(err)
-					}
-				}
-			}
-
-			// Iterate and collect repos
-			foundRepos, err := db.GitserverRepos().ListReposWithLastError(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if diff := cmp.Diff(tc.expectedReposFound, foundRepos); diff != "" {
-				t.Fatalf("mismatch in expected repos with last_error, (-want, +got)\n%s", diff)
-			}
-
-			total, err := db.GitserverRepos().TotalErroredCloudDefaultRepos(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if total != len(tc.expectedReposFound) {
-				t.Fatalf("expected %d total errored repos, got %d instead", len(tc.expectedReposFound), total)
-			}
-		})
-	}
-}
-
 func TestReposWithLastOutput(t *testing.T) {
 	if testing.Short() {
 		t.Skip()
@@ -371,7 +226,7 @@ func TestReposWithLastOutput(t *testing.T) {
 	logger := logtest.Scoped(t)
 	db := NewDB(logger, dbtest.NewDB(t))
 	now := time.Now()
-	cloudDefaultService := createTestExternalService(ctx, t, now, db, true)
+	svc := createTestExternalService(ctx, t, now, db)
 	for i, tr := range testRepos {
 		t.Run(tr.title, func(t *testing.T) {
 			testRepo := &types.Repo{
@@ -385,7 +240,7 @@ func TestReposWithLastOutput(t *testing.T) {
 				},
 			}
 			testRepo = testRepo.With(
-				typestest.Opt.RepoSources(cloudDefaultService.URN()),
+				typestest.Opt.RepoSources(svc.URN()),
 			)
 			createTestRepos(ctx, t, db, types.Repos{testRepo})
 			if err := db.GitserverRepos().SetLastOutput(ctx, testRepo.Name, tr.lastOutput); err != nil {
@@ -405,14 +260,13 @@ func TestReposWithLastOutput(t *testing.T) {
 	}
 }
 
-func createTestExternalService(ctx context.Context, t *testing.T, now time.Time, db DB, cloudDefault bool) types.ExternalService {
+func createTestExternalService(ctx context.Context, t *testing.T, now time.Time, db DB) types.ExternalService {
 	service := types.ExternalService{
-		Kind:         extsvc.KindGitHub,
-		DisplayName:  "Github - Test",
-		Config:       extsvc.NewUnencryptedConfig(`{"url": "https://github.com", "repositoryQuery": ["none"], "token": "abc"}`),
-		CreatedAt:    now,
-		UpdatedAt:    now,
-		CloudDefault: cloudDefault,
+		Kind:        extsvc.KindGitHub,
+		DisplayName: "Github - Test",
+		Config:      extsvc.NewUnencryptedConfig(`{"url": "https://github.com", "repositoryQuery": ["none"], "token": "abc"}`),
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 
 	// Create a new external service
@@ -448,6 +302,11 @@ func TestGitserverReposGetByID(t *testing.T) {
 	if diff := cmp.Diff(gitserverRepo, fromDB, cmpopts.IgnoreFields(types.GitserverRepo{}, "UpdatedAt", "CorruptionLogs")); diff != "" {
 		t.Fatal(diff)
 	}
+
+	_, err = db.GitserverRepos().GetByID(ctx, gitserverRepo.RepoID+1)
+	if !errcode.IsNotFound(err) {
+		t.Fatal("expected not found error for non-existant ID", err)
+	}
 }
 
 func TestGitserverReposGetByName(t *testing.T) {
@@ -471,6 +330,11 @@ func TestGitserverReposGetByName(t *testing.T) {
 	if diff := cmp.Diff(gitserverRepo, fromDB, cmpopts.IgnoreFields(types.GitserverRepo{}, "UpdatedAt", "CorruptionLogs")); diff != "" {
 		t.Fatal(diff)
 	}
+
+	_, err = db.GitserverRepos().GetByName(ctx, repo.Name+"404")
+	if !errcode.IsNotFound(err) {
+		t.Fatal("expected not found error for non-existant repo name", err)
+	}
 }
 
 func TestGitserverReposGetByNames(t *testing.T) {
@@ -487,14 +351,14 @@ func TestGitserverReposGetByNames(t *testing.T) {
 	// Creating a few repos
 	repoNames := make([]api.RepoName, 5)
 	gitserverRepos := make([]*types.GitserverRepo, 5)
-	for i := 0; i < len(repoNames); i++ {
+	for i := range len(repoNames) {
 		repoName := fmt.Sprintf("github.com/sourcegraph/repo%d", i)
 		repo, gitserverRepo := createTestRepo(ctx, t, db, api.RepoName(repoName))
 		repoNames[i] = repo.Name
 		gitserverRepos[i] = gitserverRepo
 	}
 
-	for i := 0; i < len(repoNames); i++ {
+	for i := range len(repoNames) {
 		have, err := gitserverRepoStore.GetByNames(ctx, repoNames[:i+1]...)
 		if err != nil {
 			t.Fatal(err)
@@ -576,43 +440,6 @@ func TestSetCloneStatus(t *testing.T) {
 	}
 }
 
-func TestCloningProgress(t *testing.T) {
-	if testing.Short() {
-		t.Skip()
-	}
-
-	logger := logtest.Scoped(t)
-	db := NewDB(logger, dbtest.NewDB(t))
-	ctx := context.Background()
-
-	t.Run("Default", func(t *testing.T) {
-		repo, _ := createTestRepo(ctx, t, db, "github.com/sourcegraph/defaultcloningprogress")
-		gotRepo, err := db.GitserverRepos().GetByName(ctx, repo.Name)
-		if err != nil {
-			t.Fatalf("GetByName: %s", err)
-		}
-		if got := gotRepo.CloningProgress; got != "" {
-			t.Errorf("GetByName.CloningProgress, got %q, want empty string", got)
-		}
-	})
-
-	t.Run("Set", func(t *testing.T) {
-		repo, gitserverRepo := createTestRepo(ctx, t, db, "github.com/sourcegraph/updatedcloningprogress")
-
-		gitserverRepo.CloningProgress = "Receiving objects: 97% (97/100)"
-		if err := db.GitserverRepos().SetCloningProgress(ctx, repo.Name, gitserverRepo.CloningProgress); err != nil {
-			t.Fatalf("SetCloningProgress: %s", err)
-		}
-		gotRepo, err := db.GitserverRepos().GetByName(ctx, repo.Name)
-		if err != nil {
-			t.Fatalf("GetByName: %s", err)
-		}
-		if diff := cmp.Diff(gitserverRepo, gotRepo, cmpopts.IgnoreFields(types.GitserverRepo{}, "UpdatedAt")); diff != "" {
-			t.Errorf("SetCloningProgress->GetByName -want+got: %s", diff)
-		}
-	})
-}
-
 func TestLogCorruption(t *testing.T) {
 	if testing.Short() {
 		t.Skip()
@@ -689,7 +516,7 @@ func TestLogCorruption(t *testing.T) {
 	})
 	t.Run("consecutive corruption logs appends", func(t *testing.T) {
 		repo, gitserverRepo := createTestRepo(ctx, t, db, "github.com/sourcegraph/repo5")
-		for i := 0; i < 12; i++ {
+		for i := range 12 {
 			logRepoCorruption(t, db, repo.Name, fmt.Sprintf("test %d", i))
 			// We set the Clone status so that the 'corrupted_at' time gets cleared
 			// otherwise we cannot log corruption for a repo that is already corrupt
@@ -726,7 +553,7 @@ func TestLogCorruption(t *testing.T) {
 		repo, _ := createTestRepo(ctx, t, db, "github.com/sourcegraph/repo6")
 
 		largeReason := make([]byte, MaxReasonSizeInMB*2)
-		for i := 0; i < len(largeReason); i++ {
+		for i := range len(largeReason) {
 			largeReason[i] = 'a'
 		}
 
@@ -1133,7 +960,7 @@ func BenchmarkGitserverUpdateRepoSizes_LargeAmountOfRepos(b *testing.B) {
 	namesToSize := make(map[api.RepoName]int64, count)
 
 	reposBatch := make([]*types.Repo, 0, 1000)
-	for i := 0; i < count; i++ {
+	for i := range count {
 		name := fmt.Sprintf("github.com/sourcegraph/repo-%d", i)
 		r := &types.Repo{Name: api.RepoName(name)}
 		namesToSize[r.Name] = int64(i + 1)

@@ -6,7 +6,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"sort"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -18,14 +21,14 @@ import (
 
 	"github.com/sourcegraph/sourcegraph/internal/actor"
 	"github.com/sourcegraph/sourcegraph/internal/api"
-	"github.com/sourcegraph/sourcegraph/internal/codeintel/uploads/internal/lsifstore"
+	"github.com/sourcegraph/sourcegraph/internal/codeintel/codegraph"
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/uploads/internal/store"
 	uploadsshared "github.com/sourcegraph/sourcegraph/internal/codeintel/uploads/shared"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver/gitdomain"
+	"github.com/sourcegraph/sourcegraph/internal/object"
 	"github.com/sourcegraph/sourcegraph/internal/observation"
 	"github.com/sourcegraph/sourcegraph/internal/types"
-	"github.com/sourcegraph/sourcegraph/internal/uploadstore"
 	"github.com/sourcegraph/sourcegraph/internal/workerutil"
 	"github.com/sourcegraph/sourcegraph/internal/workerutil/dbworker"
 	dbworkerstore "github.com/sourcegraph/sourcegraph/internal/workerutil/dbworker/store"
@@ -36,11 +39,11 @@ import (
 func NewUploadProcessorWorker(
 	observationCtx *observation.Context,
 	store store.Store,
-	lsifStore lsifstore.Store,
+	codeGraphDataStore codegraph.DataStore,
 	gitserverClient gitserver.Client,
 	repoStore RepoStore,
 	workerStore dbworkerstore.Store[uploadsshared.Upload],
-	uploadStore uploadstore.Store,
+	uploadStore object.Storage,
 	config *Config,
 ) *workerutil.Worker[uploadsshared.Upload] {
 	rootContext := actor.WithInternalActor(context.Background())
@@ -48,7 +51,7 @@ func NewUploadProcessorWorker(
 	handler := NewUploadProcessorHandler(
 		observationCtx,
 		store,
-		lsifStore,
+		codeGraphDataStore,
 		gitserverClient,
 		repoStore,
 		workerStore,
@@ -70,16 +73,16 @@ func NewUploadProcessorWorker(
 }
 
 type handler struct {
-	store           store.Store
-	lsifStore       lsifstore.Store
-	gitserverClient gitserver.Client
-	repoStore       RepoStore
-	workerStore     dbworkerstore.Store[uploadsshared.Upload]
-	uploadStore     uploadstore.Store
-	handleOp        *observation.Operation
-	budgetRemaining int64
-	enableBudget    bool
-	uploadSizeGauge prometheus.Gauge
+	store              store.Store
+	codeGraphDataStore codegraph.DataStore
+	gitserverClient    gitserver.Client
+	repoStore          RepoStore
+	workerStore        dbworkerstore.Store[uploadsshared.Upload]
+	uploadStore        object.Storage
+	handleOp           *observation.Operation
+	budgetRemaining    int64
+	enableBudget       bool
+	uploadSizeGauge    prometheus.Gauge
 }
 
 var (
@@ -91,26 +94,26 @@ var (
 func NewUploadProcessorHandler(
 	observationCtx *observation.Context,
 	store store.Store,
-	lsifStore lsifstore.Store,
+	dataStore codegraph.DataStore,
 	gitserverClient gitserver.Client,
 	repoStore RepoStore,
 	workerStore dbworkerstore.Store[uploadsshared.Upload],
-	uploadStore uploadstore.Store,
+	uploadStore object.Storage,
 	budgetMax int64,
 ) workerutil.Handler[uploadsshared.Upload] {
 	operations := newWorkerOperations(observationCtx)
 
 	return &handler{
-		store:           store,
-		lsifStore:       lsifStore,
-		gitserverClient: gitserverClient,
-		repoStore:       repoStore,
-		workerStore:     workerStore,
-		uploadStore:     uploadStore,
-		handleOp:        operations.uploadProcessor,
-		budgetRemaining: budgetMax,
-		enableBudget:    budgetMax > 0,
-		uploadSizeGauge: operations.uploadSizeGauge,
+		store:              store,
+		codeGraphDataStore: dataStore,
+		gitserverClient:    gitserverClient,
+		repoStore:          repoStore,
+		workerStore:        workerStore,
+		uploadStore:        uploadStore,
+		handleOp:           operations.uploadProcessor,
+		budgetRemaining:    budgetMax,
+		enableBudget:       budgetMax > 0,
+		uploadSizeGauge:    operations.uploadSizeGauge,
 	}
 }
 
@@ -179,27 +182,18 @@ func createLogFields(upload uploadsshared.Upload) []attribute.KeyValue {
 // defaultBranchContains tells if the default branch contains the given commit ID.
 func (c *handler) defaultBranchContains(ctx context.Context, repo api.RepoName, commit string) (bool, error) {
 	// Determine default branch name.
-	descriptions, err := c.gitserverClient.RefDescriptions(ctx, repo)
+	defaultBranchName, _, err := c.gitserverClient.GetDefaultBranch(ctx, repo, false)
 	if err != nil {
 		return false, err
 	}
-	var defaultBranchName string
-	for _, descriptions := range descriptions {
-		for _, ref := range descriptions {
-			if ref.IsDefaultBranch {
-				defaultBranchName = ref.Name
-				break
-			}
-		}
-	}
 
 	// Determine if branch contains commit.
-	branches, err := c.gitserverClient.BranchesContaining(ctx, repo, api.CommitID(commit))
+	branches, err := c.gitserverClient.ListRefs(ctx, repo, gitserver.ListRefsOpts{HeadsOnly: true, Contains: api.CommitID(commit)})
 	if err != nil {
 		return false, err
 	}
 	for _, branch := range branches {
-		if branch == defaultBranchName {
+		if branch.Name == defaultBranchName {
 			return true, nil
 		}
 	}
@@ -208,7 +202,7 @@ func (c *handler) defaultBranchContains(ctx context.Context, repo api.RepoName, 
 
 // HandleRawUpload converts a raw upload into a dump within the given transaction context. Returns true if the
 // upload record was requeued and false otherwise.
-func (h *handler) HandleRawUpload(ctx context.Context, logger log.Logger, upload uploadsshared.Upload, uploadStore uploadstore.Store, trace observation.TraceLogger) (requeued bool, err error) {
+func (h *handler) HandleRawUpload(ctx context.Context, logger log.Logger, upload uploadsshared.Upload, uploadStore object.Storage, trace observation.TraceLogger) (requeued bool, err error) {
 	repo, err := h.repoStore.Get(ctx, api.RepoID(upload.RepositoryID))
 	if err != nil {
 		return false, errors.Wrap(err, "Repos.Get")
@@ -227,11 +221,37 @@ func (h *handler) HandleRawUpload(ctx context.Context, logger log.Logger, upload
 	trace.AddEvent("TODO Domain Owner", attribute.Bool("defaultBranch", isDefaultBranch))
 
 	getChildren := func(ctx context.Context, dirnames []string) (map[string][]string, error) {
-		directoryChildren, err := h.gitserverClient.ListDirectoryChildren(ctx, repo.Name, api.CommitID(upload.Commit), dirnames)
-		if err != nil {
-			return nil, errors.Wrap(err, "gitserverClient.DirectoryChildren")
+		allFDs := make([]fs.FileInfo, 0)
+		seen := make(map[string]struct{})
+		for _, d := range dirnames {
+			it, err := h.gitserverClient.ReadDir(ctx, repo.Name, api.CommitID(upload.Commit), d, false)
+			if err != nil {
+				// Ignore non-existent directories, we request all directories in the
+				// upload and some might not exist in the repo, for example node_modules.
+				if os.IsNotExist(err) {
+					continue
+				}
+				return nil, errors.Wrap(err, "gitserverClient.ReadDir")
+			}
+			defer it.Close()
+
+			for {
+				fd, err := it.Next()
+				if err != nil {
+					if errors.Is(err, io.EOF) {
+						break
+					}
+					return nil, errors.Wrap(err, "gitserverClient.ReadDir.Next")
+				}
+				if _, ok := seen[fd.Name()]; ok {
+					continue
+				}
+				allFDs = append(allFDs, fd)
+				seen[fd.Name()] = struct{}{}
+			}
 		}
-		return directoryChildren, nil
+
+		return parseDirectoryChildren(dirnames, allFDs), nil
 	}
 
 	return false, withUploadData(ctx, logger, uploadStore, upload.SizeStats(), trace, func(indexReader gzipReadSeeker) (err error) {
@@ -249,13 +269,16 @@ func (h *handler) HandleRawUpload(ctx context.Context, logger log.Logger, upload
 		// database (if not already present). We need to have the commit data of every processed upload
 		// for a repository when calculating the commit graph (triggered at the end of this handler).
 
-		_, commitDate, revisionExists, err := h.gitserverClient.CommitDate(ctx, repo.Name, api.CommitID(upload.Commit))
+		commit, err := h.gitserverClient.GetCommit(ctx, repo.Name, api.CommitID(upload.Commit))
 		if err != nil {
-			return errors.Wrap(err, "gitserverClient.CommitDate")
+			if errors.HasType[*gitdomain.RevisionNotFoundError](err) {
+				return errCommitDoesNotExist
+			}
+			return errors.Wrap(err, "failed to determine commit date")
 		}
-		if !revisionExists {
-			return errCommitDoesNotExist
-		}
+
+		commitDate := commit.Committer.Date
+
 		trace.AddEvent("TODO Domain Owner", attribute.String("commitDate", commitDate.String()))
 
 		// We do the update here outside of the transaction started below to reduce the long blocking
@@ -274,7 +297,7 @@ func (h *handler) HandleRawUpload(ctx context.Context, logger log.Logger, upload
 
 		// Note: this is writing to a different database than the block below, so we need to use a
 		// different transaction context (managed by the writeData function).
-		pkgData, err := writeSCIPDocuments(ctx, logger, h.lsifStore, upload, scipDataStream, trace)
+		pkgData, err := writeSCIPDocuments(ctx, logger, h.codeGraphDataStore, upload, scipDataStream, trace)
 		if err != nil {
 			if isUniqueConstraintViolation(err) {
 				// If this is a unique constraint violation, then we've previously processed this same
@@ -296,8 +319,8 @@ func (h *handler) HandleRawUpload(ctx context.Context, logger log.Logger, upload
 			// Before we mark the upload as complete, we need to delete any existing completed uploads
 			// that have the same repository_id, commit, root, and indexer values. Otherwise, the transaction
 			// will fail as these values form a unique constraint.
-			if err := tx.DeleteOverlappingDumps(ctx, upload.RepositoryID, upload.Commit, upload.Root, upload.Indexer); err != nil {
-				return errors.Wrap(err, "store.DeleteOverlappingDumps")
+			if err := tx.DeleteOverlappingCompletedUploads(ctx, upload.RepositoryID, upload.Commit, upload.Root, upload.Indexer); err != nil {
+				return errors.Wrap(err, "store.DeleteOverlappingCompletedUploads")
 			}
 
 			trace.AddEvent("TODO Domain Owner", attribute.Int("packages", len(pkgData.Packages)))
@@ -332,6 +355,45 @@ func (h *handler) HandleRawUpload(ctx context.Context, logger log.Logger, upload
 	})
 }
 
+// parseDirectoryChildren converts the flat list of files from git ls-tree into a map. The keys of the
+// resulting map are the input (unsanitized) dirnames, and the value of that key are the files nested
+// under that directory. If dirnames contains a directory that encloses another, then the paths will
+// be placed into the key sharing the longest path prefix.
+func parseDirectoryChildren(dirnames []string, fis []fs.FileInfo) map[string][]string {
+	childrenMap := map[string][]string{}
+
+	// Ensure each directory has an entry, even if it has no children
+	// listed in the gitserver output.
+	for _, dirname := range dirnames {
+		childrenMap[dirname] = nil
+	}
+
+	// Order directory names by length (biggest first) so that we assign
+	// paths to the most specific enclosing directory in the following loop.
+	sort.Slice(dirnames, func(i, j int) bool {
+		return len(dirnames[i]) > len(dirnames[j])
+	})
+
+	for _, fi := range fis {
+		path := fi.Name()
+		if strings.Contains(path, "/") {
+			for _, dirname := range dirnames {
+				if strings.HasPrefix(path, dirname) {
+					childrenMap[dirname] = append(childrenMap[dirname], path)
+					break
+				}
+			}
+		} else if len(dirnames) > 0 && dirnames[len(dirnames)-1] == "" {
+			// No need to loop here. If we have a root input directory it
+			// will necessarily be the last element due to the previous
+			// sorting step.
+			childrenMap[""] = append(childrenMap[""], path)
+		}
+	}
+
+	return childrenMap
+}
+
 func inTransaction(ctx context.Context, dbStore store.Store, fn func(tx store.Store) error) (err error) {
 	return dbStore.WithTransaction(ctx, fn)
 }
@@ -346,14 +408,14 @@ const requeueDelay = time.Minute
 // valued flag. Otherwise, the repo does not exist or there is an unexpected infrastructure error, which we'll
 // fail on.
 func requeueIfCloningOrCommitUnknown(ctx context.Context, logger log.Logger, gitserverClient gitserver.Client, workerStore dbworkerstore.Store[uploadsshared.Upload], upload uploadsshared.Upload, repo *types.Repo) (requeued bool, _ error) {
-	_, err := gitserverClient.ResolveRevision(ctx, repo.Name, upload.Commit, gitserver.ResolveRevisionOptions{})
+	_, err := gitserverClient.ResolveRevision(ctx, repo.Name, upload.Commit, gitserver.ResolveRevisionOptions{EnsureRevision: true})
 	if err == nil {
 		// commit is resolvable
 		return false, nil
 	}
 
 	var reason string
-	if errors.HasType(err, &gitdomain.RevisionNotFoundError{}) {
+	if errors.HasType[*gitdomain.RevisionNotFoundError](err) {
 		reason = "commit not found"
 	} else if gitdomain.IsCloneInProgress(err) {
 		reason = "repository still cloning"
@@ -410,7 +472,7 @@ func (grs *gzipReadSeeker) seekToStart() (err error) {
 // withUploadData will invoke the given function with a reader of the upload's raw data. The
 // consumer should expect raw newline-delimited JSON content. If the function returns without
 // an error, the upload file will be deleted.
-func withUploadData(ctx context.Context, logger log.Logger, uploadStore uploadstore.Store, uploadStats uploadsshared.UploadSizeStats, trace observation.TraceLogger, fn func(r gzipReadSeeker) error) error {
+func withUploadData(ctx context.Context, logger log.Logger, uploadStore object.Storage, uploadStats uploadsshared.UploadSizeStats, trace observation.TraceLogger, fn func(r gzipReadSeeker) error) error {
 	uploadFilename := fmt.Sprintf("upload-%d.lsif.gz", uploadStats.ID)
 
 	trace.AddEvent("TODO Domain Owner", attribute.String("uploadFilename", uploadFilename))

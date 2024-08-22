@@ -17,14 +17,15 @@ import (
 	"github.com/sourcegraph/log"
 
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/auth"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/auth/providers"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/auth/session"
 	"github.com/sourcegraph/sourcegraph/internal/actor"
-	"github.com/sourcegraph/sourcegraph/internal/auth/providers"
+	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/env"
 	"github.com/sourcegraph/sourcegraph/internal/httpcli"
 	"github.com/sourcegraph/sourcegraph/internal/trace"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
-	"github.com/sourcegraph/sourcegraph/schema"
 )
 
 func NewMiddleware(db database.DB, serviceType, authPrefix string, isAPIHandler bool, next http.Handler) http.Handler {
@@ -56,11 +57,13 @@ func NewMiddleware(db database.DB, serviceType, authPrefix string, isAPIHandler 
 		}
 
 		// If there is only one auth provider configured, the single auth provider is a OAuth
-		// instance, it's an app request, and the sign-out cookie is not present, redirect to sign-in immediately.
+		// instance, it's an app request, the sign-out cookie is not present, and access requests are disabled, redirect to sign-in immediately.
 		//
-		// For sign-out requests (signout cookie is  present), the user will be redirected to the SG login page.
-		pc := getExactlyOneOAuthProvider()
-		if pc != nil && !isAPIHandler && pc.AuthPrefix == authPrefix && !auth.HasSignOutCookie(r) && isHuman(r) {
+		// For sign-out requests (sign-out cookie is  present), the user will be redirected to the SG login page.
+		// Note: For instances that are conf.AuthPublic(), we don't redirect to sign-in automatically, as that would
+		// lock out unauthenticated access.
+		pc := getExactlyOneOAuthProvider(!r.URL.Query().Has("sourcegraph-operator"))
+		if !conf.AuthPublic() && pc != nil && !isAPIHandler && pc.AuthPrefix == authPrefix && !session.HasSignOutCookie(r) && isHuman(r) && !conf.IsAccessRequestEnabled() {
 			span.AddEvent("redirect to signin")
 			v := make(url.Values)
 			v.Set("redirect", auth.SafeRedirectURL(r.URL.String()))
@@ -70,7 +73,6 @@ func NewMiddleware(db database.DB, serviceType, authPrefix string, isAPIHandler 
 
 			return
 		}
-
 		span.AddEvent("proceeding to next")
 		span.End()
 		next.ServeHTTP(w, r)
@@ -83,9 +85,19 @@ func newOAuthFlowHandler(serviceType string) http.Handler {
 		id := r.URL.Query().Get("pc")
 		p := GetProvider(serviceType, id)
 		if p == nil {
-			log15.Error("no OAuth provider found with ID and service type", "id", id, "serviceType", serviceType)
-			msg := fmt.Sprintf("Misconfigured %s auth provider.", serviceType)
-			http.Error(w, msg, http.StatusInternalServerError)
+			// NOTE: Within the Sourcegraph application, we have been using both the
+			// "redirect" and "returnTo" query parameters inconsistently, and some of the
+			// usages are also on the client side (Cody clients). If we ever settle on one
+			// and updated all usages on both server and client side, we need to make sure
+			// to have a grace period (e.g. 3 months) for the client side because we have no
+			// control over when users will actually upgrade their clients.
+			redirect := r.URL.Query().Get("redirect")
+			if redirect == "" {
+				redirect = r.URL.Query().Get("returnTo")
+			}
+
+			log15.Warn("no OAuth provider found with ID and service type", "id", id, "serviceType", serviceType)
+			http.Redirect(w, r, "/sign-in?returnTo="+redirect, http.StatusFound)
 			return
 		}
 		p.Login(p.OAuth2Config()).ServeHTTP(w, r)
@@ -200,8 +212,8 @@ func (l *loggingRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 	}
 }
 
-func getExactlyOneOAuthProvider() *Provider {
-	ps := providers.Providers()
+func getExactlyOneOAuthProvider(skipSoap bool) *Provider {
+	ps := providers.SignInProviders(skipSoap)
 	if len(ps) != 1 {
 		return nil
 	}
@@ -209,25 +221,10 @@ func getExactlyOneOAuthProvider() *Provider {
 	if !ok {
 		return nil
 	}
-	if !isOAuth(p.Config()) {
+	if ps[0].Type() != providers.ProviderTypeOAuth {
 		return nil
 	}
 	return p
-}
-
-var isOAuths []func(p schema.AuthProviders) bool
-
-func AddIsOAuth(f func(p schema.AuthProviders) bool) {
-	isOAuths = append(isOAuths, f)
-}
-
-func isOAuth(p schema.AuthProviders) bool {
-	for _, f := range isOAuths {
-		if f(p) {
-			return true
-		}
-	}
-	return false
 }
 
 // isHuman returns true if the request probably came from a human, rather than a bot. Used to

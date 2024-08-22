@@ -12,6 +12,7 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/debugserver"
 	"github.com/sourcegraph/sourcegraph/internal/env"
 	"github.com/sourcegraph/sourcegraph/internal/hostname"
+	"github.com/sourcegraph/sourcegraph/internal/httpcli"
 	"github.com/sourcegraph/sourcegraph/internal/logging"
 	"github.com/sourcegraph/sourcegraph/internal/observation"
 	"github.com/sourcegraph/sourcegraph/internal/profiler"
@@ -28,19 +29,7 @@ import (
 // If your service cannot access site configuration, use SingleServiceMainWithoutConf
 // instead.
 func SingleServiceMain(svc sgservice.Service) {
-	liblog := log.Init(log.Resource{
-		Name:       env.MyName,
-		Version:    version.Version(),
-		InstanceID: hostname.Get(),
-	},
-		// Experimental: DevX is observing how sampling affects the errors signal.
-		log.NewSentrySinkWith(
-			log.SentrySink{
-				ClientOptions: sentry.ClientOptions{SampleRate: 0.2},
-			},
-		),
-	)
-	logger := log.Scoped("sourcegraph")
+	liblog, logger := newLogger()
 	run(liblog, logger, []sgservice.Service{svc}, nil)
 }
 
@@ -59,7 +48,12 @@ type OutOfBandConfiguration struct {
 // service WITHOUT site configuration enabled by default. This is only useful for services
 // that are not part of the core Sourcegraph deployment, such as executors and managed
 // services. Use with care!
-func SingleServiceMainWithoutConf(svc sgservice.Service, oobConfig OutOfBandConfiguration) {
+func SingleServiceMainWithoutConf(svc sgservice.Service, otherServices []sgservice.Service, oobConfig OutOfBandConfiguration) {
+	liblog, logger := newLogger()
+	run(liblog, logger, append([]sgservice.Service{svc}, otherServices...), &oobConfig)
+}
+
+func newLogger() (*log.PostInitCallbacks, log.Logger) {
 	liblog := log.Init(log.Resource{
 		Name:       env.MyName,
 		Version:    version.Version(),
@@ -73,7 +67,7 @@ func SingleServiceMainWithoutConf(svc sgservice.Service, oobConfig OutOfBandConf
 		),
 	)
 	logger := log.Scoped("sourcegraph")
-	run(liblog, logger, []sgservice.Service{svc}, &oobConfig)
+	return liblog, logger
 }
 
 func run(
@@ -95,6 +89,7 @@ func run(
 			Logging: conf.NewLogsSinksSource(conf.DefaultClient()),
 			Tracing: tracer.ConfConfigurationSource{WatchableSiteConfig: conf.DefaultClient()},
 		}
+		httpcli.Configure(conf.DefaultClient())
 	}
 
 	if oobConfig.Logging != nil {
@@ -104,7 +99,7 @@ func run(
 		tracer.Init(log.Scoped("tracer"), oobConfig.Tracing)
 	}
 
-	profiler.Init()
+	profiler.Init(logger)
 
 	obctx := observation.NewContext(logger)
 	ctx := context.Background()

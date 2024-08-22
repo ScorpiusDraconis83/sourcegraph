@@ -3,10 +3,10 @@ import React, { useCallback } from 'react'
 import { useLocation } from 'react-router-dom'
 import { of } from 'rxjs'
 
-import { Container, Link, H2, H3 } from '@sourcegraph/wildcard'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import { Container, H2, H3 } from '@sourcegraph/wildcard'
 
 import type { AuthenticatedUser } from '../../auth'
-import { CallToActionBanner } from '../../components/CallToActionBanner'
 import { FilteredConnection } from '../../components/FilteredConnection'
 import type {
     CodeMonitorFields,
@@ -15,15 +15,15 @@ import type {
     ListUserCodeMonitorsResult,
     ListUserCodeMonitorsVariables,
 } from '../../graphql-operations'
-import { eventLogger } from '../../tracking/eventLogger'
 
 import { CodeMonitorNode, type CodeMonitorNodeProps } from './CodeMonitoringNode'
 import type { CodeMonitoringPageProps } from './CodeMonitoringPage'
 
 interface CodeMonitorListProps
-    extends Required<
-        Pick<CodeMonitoringPageProps, 'fetchUserCodeMonitors' | 'fetchCodeMonitors' | 'toggleCodeMonitorEnabled'>
-    > {
+    extends TelemetryV2Props,
+        Required<
+            Pick<CodeMonitoringPageProps, 'fetchUserCodeMonitors' | 'fetchCodeMonitors' | 'toggleCodeMonitorEnabled'>
+        > {
     authenticatedUser: AuthenticatedUser | null
 }
 
@@ -40,7 +40,6 @@ export const CodeMonitorList: React.FunctionComponent<React.PropsWithChildren<Co
     toggleCodeMonitorEnabled,
 }) => {
     const location = useLocation()
-    const isSourcegraphDotCom: boolean = window.context?.sourcegraphDotComMode || false
 
     const queryConnection = useCallback(
         (args: Partial<ListUserCodeMonitorsVariables>) => {
@@ -62,7 +61,7 @@ export const CodeMonitorList: React.FunctionComponent<React.PropsWithChildren<Co
     )
 
     const queryAllConnection = useCallback(
-        (args: Partial<ListAllCodeMonitorsVariables>) =>
+        (args: Omit<Partial<ListAllCodeMonitorsVariables>, 'first'> & { first?: number | null }) =>
             fetchCodeMonitors({
                 first: args.first ?? 10,
                 after: args.after ?? null,
@@ -76,20 +75,6 @@ export const CodeMonitorList: React.FunctionComponent<React.PropsWithChildren<Co
                 <div className="d-flex flex-column w-100 col">
                     <div className="d-flex align-items-center justify-content-between">
                         <H3 className="mb-2">Your code monitors</H3>
-                        {isSourcegraphDotCom && (
-                            <CallToActionBanner variant="outlined" small={true}>
-                                To monitor changes across your private repositories,{' '}
-                                <Link
-                                    to="https://sourcegraph.com"
-                                    onClick={() =>
-                                        eventLogger.log('ClickedOnEnterpriseCTA', { location: 'Monitoring' })
-                                    }
-                                >
-                                    get Sourcegraph Enterprise
-                                </Link>
-                                .
-                            </CallToActionBanner>
-                        )}
                     </div>
                     <Container className="py-3">
                         <FilteredConnection<

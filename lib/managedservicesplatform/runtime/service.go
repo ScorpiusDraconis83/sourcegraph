@@ -2,30 +2,31 @@ package runtime
 
 import (
 	"context"
+	"flag"
+	"os"
 
-	"github.com/getsentry/sentry-go"
+	"cloud.google.com/go/profiler"
 	"github.com/sourcegraph/log"
 
 	"github.com/sourcegraph/sourcegraph/lib/background"
+	"github.com/sourcegraph/sourcegraph/lib/managedservicesplatform/runtime/contract"
 	"github.com/sourcegraph/sourcegraph/lib/managedservicesplatform/runtime/internal/opentelemetry"
 )
 
-type ServiceMetadata interface {
-	Name() string
-	Version() string
-}
-
 type Service[ConfigT any] interface {
-	ServiceMetadata
+	contract.ServiceMetadataProvider
 	// Initialize should use given configuration to build a combined background
-	// routine that implements starting and stopping the service.
+	// routine (such as background.CombinedRoutine or background.LIFOStopRoutine)
+	// that implements starting and stopping the service.
 	Initialize(
 		ctx context.Context,
 		logger log.Logger,
-		contract Contract,
+		contract ServiceContract,
 		config ConfigT,
-	) (background.CombinedRoutine, error)
+	) (background.Routine, error)
 }
+
+var showHelp = flag.Bool("help", false, "Show service help text")
 
 // Start handles the entire lifecycle of the program running Service, and should
 // be the only thing called in a MSP program's main package, for example:
@@ -38,6 +39,7 @@ func Start[
 	ConfigT any,
 	LoaderT ConfigLoader[ConfigT],
 ](service Service[ConfigT]) {
+	flag.Parse()
 	passSanityCheck(service)
 
 	// Resource representing the service
@@ -53,12 +55,13 @@ func Start[
 
 	ctx := context.Background()
 
-	// logger should only be used within Start
-	logger := log.Scoped("msp.start")
+	// startLogger should only be used within Start - longer-lived processes should
+	// create a separate top-level startLogger for their usage.
+	startLogger := log.Scoped("msp.start")
 
-	env, err := newEnv()
+	env, err := contract.ParseEnv(os.Environ())
 	if err != nil {
-		logger.Fatal("failed to load environment", log.Error(err))
+		startLogger.Fatal("failed to load environment", log.Error(err))
 	}
 
 	// Initialize LoaderT implementation as non-zero *ConfigT
@@ -66,51 +69,63 @@ func Start[
 
 	// Load configuration variables from environment
 	config.Load(env)
-	contract := newContract(log.Scoped("msp.contract"), env, service)
+	ctr := contract.NewService(log.Scoped("msp.contract"), service, env)
 
-	// Enable Sentry error log reporting
-	var sentryEnabled bool
-	if contract.internal.sentryDSN != nil {
-		liblog.Update(func() log.SinksConfig {
-			sentryEnabled = true
-			return log.SinksConfig{
-				Sentry: &log.SentrySink{
-					ClientOptions: sentry.ClientOptions{
-						Dsn: *contract.internal.sentryDSN,
-					},
-				},
-			}
-		})()
+	// Fast-exit with configuration facts if requested
+	if *showHelp {
+		renderHelp(service, env)
+		os.Exit(0)
 	}
 
+	// Enable Sentry error log reporting
+	sentryEnabled := ctr.Diagnostics.ConfigureSentry(liblog)
+
 	// Check for environment errors
-	if err := env.validate(); err != nil {
-		logger.Fatal("environment configuration error encountered", log.Error(err))
+	if err := env.Validate(); err != nil {
+		startLogger.Fatal("environment configuration error encountered", log.Error(err))
 	}
 
 	// Initialize things dependent on configuration being loaded
-	otelCleanup, err := opentelemetry.Init(ctx, logger, contract.internal.opentelemetry, res)
+	otelCleanup, err := opentelemetry.Init(ctx, log.Scoped("msp.otel"), ctr.Diagnostics.OpenTelemetry, res)
 	if err != nil {
-		logger.Fatal("failed to initialize OpenTelemetry", log.Error(err))
+		startLogger.Fatal("failed to initialize OpenTelemetry", log.Error(err))
 	}
 	defer otelCleanup()
+
+	if ctr.MSP {
+		if err := profiler.Start(profiler.Config{
+			Service:        service.Name(),
+			ServiceVersion: service.Version(),
+			// Options used in sourcegraph/sourcegraph
+			MutexProfiling: true,
+			AllocForceGC:   true,
+		}); err != nil {
+			// For now, keep this optional and don't prevent startup
+			startLogger.Error("failed to initialize profiler", log.Error(err))
+		} else {
+			startLogger.Debug("Cloud Profiler enabled")
+		}
+	}
 
 	// Initialize the service
 	routine, err := service.Initialize(
 		ctx,
 		log.Scoped("service"),
-		contract,
+		ctr,
 		*config,
 	)
 	if err != nil {
-		logger.Fatal("service startup failed", log.Error(err))
+		startLogger.Fatal("service startup failed", log.Error(err))
 	}
 
 	// Start service routine, and block until it stops.
-	logger.Info("starting service",
-		log.Int("port", contract.Port),
-		log.Bool("msp", contract.MSP),
+	startLogger.Info("starting service",
+		log.Int("port", ctr.Port),
+		log.Bool("msp", ctr.MSP),
 		log.Bool("sentry", sentryEnabled))
-	background.Monitor(ctx, routine)
-	logger.Info("service stopped")
+	err = background.Monitor(ctx, routine)
+	if err != nil {
+		startLogger.Error("error stopping service routine", log.Error(err))
+	}
+	startLogger.Info("service stopped")
 }

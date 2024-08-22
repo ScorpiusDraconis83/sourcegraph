@@ -10,7 +10,6 @@ import (
 	"github.com/sourcegraph/log"
 
 	"github.com/sourcegraph/sourcegraph/internal/authz"
-	"github.com/sourcegraph/sourcegraph/internal/authz/providers"
 	srp "github.com/sourcegraph/sourcegraph/internal/authz/subrepoperms"
 	"github.com/sourcegraph/sourcegraph/internal/codeintel"
 	codeintelshared "github.com/sourcegraph/sourcegraph/internal/codeintel/shared"
@@ -24,9 +23,9 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/goroutine"
 	"github.com/sourcegraph/sourcegraph/internal/honey"
 	"github.com/sourcegraph/sourcegraph/internal/httpserver"
+	"github.com/sourcegraph/sourcegraph/internal/object"
 	"github.com/sourcegraph/sourcegraph/internal/observation"
 	"github.com/sourcegraph/sourcegraph/internal/service"
-	"github.com/sourcegraph/sourcegraph/internal/uploadstore"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
 
@@ -94,9 +93,7 @@ func Main(ctx context.Context, observationCtx *observation.Context, ready servic
 	})
 
 	// Go!
-	goroutine.MonitorBackgroundRoutines(ctx, append(worker, server)...)
-
-	return nil
+	return goroutine.MonitorBackgroundRoutines(ctx, append(worker, server)...)
 }
 
 func mustInitializeDB(observationCtx *observation.Context) *sql.DB {
@@ -107,21 +104,6 @@ func mustInitializeDB(observationCtx *observation.Context) *sql.DB {
 	if err != nil {
 		log.Scoped("init db").Fatal("Failed to connect to frontend database", log.Error(err))
 	}
-
-	//
-	// START FLAILING
-
-	ctx := context.Background()
-	db := database.NewDB(observationCtx.Logger, sqlDB)
-	go func() {
-		for range time.NewTicker(providers.RefreshInterval()).C {
-			allowAccessByDefault, authzProviders, _, _, _ := providers.ProvidersFromConfig(ctx, conf.Get(), db)
-			authz.SetProviders(allowAccessByDefault, authzProviders)
-		}
-	}()
-
-	// END FLAILING
-	//
 
 	return sqlDB
 }
@@ -138,7 +120,7 @@ func mustInitializeCodeIntelDB(observationCtx *observation.Context) codeintelsha
 	return codeintelshared.NewCodeIntelDB(observationCtx.Logger, db)
 }
 
-func initializeUploadStore(ctx context.Context, uploadStore uploadstore.Store) error {
+func initializeUploadStore(ctx context.Context, uploadStore object.Storage) error {
 	for {
 		if err := uploadStore.Init(ctx); err == nil || !isRequestError(err) {
 			return err
@@ -153,5 +135,5 @@ func initializeUploadStore(ctx context.Context, uploadStore uploadstore.Store) e
 }
 
 func isRequestError(err error) bool {
-	return errors.HasType(err, &smithyhttp.RequestSendError{})
+	return errors.HasType[*smithyhttp.RequestSendError](err)
 }

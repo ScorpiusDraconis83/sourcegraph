@@ -5,8 +5,9 @@ import classNames from 'classnames'
 import { useLocation } from 'react-router-dom'
 
 import { dataOrThrowErrors, gql } from '@sourcegraph/http-client'
+import { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import type { FileSpec, RevisionSpec } from '@sourcegraph/shared/src/util/url'
-import { Icon, Link, ErrorAlert } from '@sourcegraph/wildcard'
+import { ErrorAlert, Icon, Link } from '@sourcegraph/wildcard'
 
 import { useShowMorePagination } from '../components/FilteredConnection/hooks/useShowMorePagination'
 import {
@@ -23,12 +24,11 @@ import { gitCommitFragment } from './commits/RepositoryCommitsPage'
 
 import styles from './RepoRevisionSidebarCommits.module.scss'
 
-interface CommitNodeProps {
+interface CommitNodeProps extends TelemetryV2Props {
     node: GitCommitFields
-    preferAbsoluteTimestamps: boolean
 }
 
-const CommitNode: FC<CommitNodeProps> = ({ node, preferAbsoluteTimestamps }) => {
+const CommitNode: FC<CommitNodeProps> = ({ node, telemetryRecorder }) => {
     const location = useLocation()
 
     return (
@@ -38,7 +38,6 @@ const CommitNode: FC<CommitNodeProps> = ({ node, preferAbsoluteTimestamps }) => 
                 compact={true}
                 node={node}
                 hideExpandCommitMessageBody={true}
-                preferAbsoluteTimestamps={preferAbsoluteTimestamps}
                 afterElement={
                     <Link
                         to={replaceRevisionInURL(location.pathname + location.search + location.hash, node.oid)}
@@ -48,14 +47,14 @@ const CommitNode: FC<CommitNodeProps> = ({ node, preferAbsoluteTimestamps }) => 
                         <Icon aria-hidden={true} svgPath={mdiFile} />
                     </Link>
                 }
+                telemetryRecorder={telemetryRecorder}
             />
         </li>
     )
 }
 
-interface Props extends Partial<RevisionSpec>, FileSpec {
+interface Props extends Partial<RevisionSpec>, FileSpec, TelemetryV2Props {
     repoID: Scalars['ID']
-    preferAbsoluteTimestamps: boolean
     defaultPageSize?: number
 }
 
@@ -67,8 +66,6 @@ export const RepoRevisionSidebarCommits: FC<Props> = props => {
     >({
         query: FETCH_COMMITS,
         variables: {
-            afterCursor: null,
-            first: props.defaultPageSize || 100,
             query: '',
             repo: props.repoID,
             revision: props.revision || '',
@@ -96,6 +93,7 @@ export const RepoRevisionSidebarCommits: FC<Props> = props => {
             // will ensure that the pagination works correctly.
             useAlternateAfterCursor: true,
             fetchPolicy: 'cache-first',
+            pageSize: props.defaultPageSize,
         },
     })
 
@@ -103,7 +101,7 @@ export const RepoRevisionSidebarCommits: FC<Props> = props => {
         <ConnectionContainer>
             {error && <ErrorAlert error={error} />}
             {connection?.nodes.map(node => (
-                <CommitNode key={node.id} node={node} preferAbsoluteTimestamps={props.preferAbsoluteTimestamps} />
+                <CommitNode key={node.id} node={node} telemetryRecorder={props.telemetryRecorder} />
             ))}
             {loading && <ConnectionLoading />}
             {!loading && connection && (

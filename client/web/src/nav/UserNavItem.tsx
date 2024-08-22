@@ -9,8 +9,11 @@ import { useKeyboardShortcut } from '@sourcegraph/shared/src/keyboardShortcuts/u
 import { Shortcut } from '@sourcegraph/shared/src/react-shortcuts'
 import { useExperimentalFeatures } from '@sourcegraph/shared/src/settings/settings'
 import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
-import { useTheme, ThemeSetting } from '@sourcegraph/shared/src/theme'
+import { ThemeSetting, useTheme } from '@sourcegraph/shared/src/theme'
 import {
+    AnchorLink,
+    Icon,
+    Link,
     Menu,
     MenuButton,
     MenuDivider,
@@ -18,16 +21,16 @@ import {
     MenuItem,
     MenuLink,
     MenuList,
-    Link,
     Position,
-    AnchorLink,
     Select,
-    Icon,
 } from '@sourcegraph/wildcard'
 
 import type { AuthenticatedUser } from '../auth'
-import { useV2QueryInput } from '../search/useV2QueryInput'
+import { CodyProRoutes } from '../cody/codyProRoutes'
+import { PageRoutes } from '../routes.constants'
 import { enableDevSettings, isSourcegraphDev, useDeveloperSettings } from '../stores'
+
+import { useNewSearchNavigation } from './new-global-navigation'
 
 import styles from './UserNavItem.module.scss'
 
@@ -58,7 +61,6 @@ export const UserNavItem: FC<UserNavItemProps> = props => {
         menuButtonRef,
         showFeedbackModal,
         showKeyboardShortcutsHelp,
-        telemetryService,
         className,
     } = props
 
@@ -82,16 +84,15 @@ export const UserNavItem: FC<UserNavItemProps> = props => {
     }, [setThemeSetting, themeSetting])
 
     const organizations = authenticatedUser.organizations.nodes
-    const searchQueryInputFeature = useExperimentalFeatures(features => features.searchQueryInput)
-    const [v2QueryInputEnabled, setV2QueryInputEnabled] = useV2QueryInput()
+    const newSearchNavigationUI = useExperimentalFeatures(features => features.newSearchNavigationUI)
+    const [newNavigationEnabled, setNewNavigationEnabled] = useNewSearchNavigation()
     const developerMode = useDeveloperSettings(settings => settings.enabled)
 
-    const onV2QueryInputChange = useCallback(
+    const onNewSearchNavigationChange = useCallback(
         (enabled: boolean) => {
-            telemetryService.log(`SearchInputToggle${enabled ? 'On' : 'Off'}`)
-            setV2QueryInputEnabled(enabled)
+            setNewNavigationEnabled(enabled)
         },
-        [telemetryService, setV2QueryInputEnabled]
+        [setNewNavigationEnabled]
     )
 
     return (
@@ -135,10 +136,18 @@ export const UserNavItem: FC<UserNavItemProps> = props => {
                             <MenuLink as={Link} to={authenticatedUser.settingsURL!}>
                                 Settings
                             </MenuLink>
-                            <MenuLink as={Link} to={`/users/${props.authenticatedUser.username}/searches`}>
+                            {window.context.codyEnabledForCurrentUser && (
+                                <MenuLink
+                                    as={Link}
+                                    to={isSourcegraphDotCom ? CodyProRoutes.Manage : PageRoutes.CodyDashboard}
+                                >
+                                    Cody dashboard
+                                </MenuLink>
+                            )}
+                            <MenuLink as={Link} to={PageRoutes.SavedSearches}>
                                 Saved searches
                             </MenuLink>
-                            {!isSourcegraphDotCom && (
+                            {!isSourcegraphDotCom && window.context.ownEnabled && (
                                 <MenuLink as={Link} to="/teams">
                                     Teams
                                 </MenuLink>
@@ -176,11 +185,12 @@ export const UserNavItem: FC<UserNavItemProps> = props => {
                                     </div>
                                 )}
                             </div>
-                            {searchQueryInputFeature !== 'v1' && (
+
+                            {!newSearchNavigationUI && (
                                 <div className="px-2 py-1">
                                     <div className="d-flex align-items-center justify-content-between">
-                                        <div className="mr-2">New search input</div>
-                                        <Toggle value={v2QueryInputEnabled} onToggle={onV2QueryInputChange} />
+                                        <div className="mr-2">Minimize navigation</div>
+                                        <Toggle value={newNavigationEnabled} onToggle={onNewSearchNavigationChange} />
                                     </div>
                                 </div>
                             )}
@@ -200,7 +210,7 @@ export const UserNavItem: FC<UserNavItemProps> = props => {
                                     <MenuHeader className={styles.dropdownHeader}>Your organizations</MenuHeader>
                                     {organizations.slice(0, MAX_VISIBLE_ORGS).map(org => (
                                         <MenuLink as={Link} key={org.id} to={org.settingsURL || org.url}>
-                                            {org.displayName || org.name}
+                                            {org.name}
                                         </MenuLink>
                                     ))}
                                     {organizations.length > MAX_VISIBLE_ORGS && (
@@ -215,6 +225,11 @@ export const UserNavItem: FC<UserNavItemProps> = props => {
                             {authenticatedUser.siteAdmin && (
                                 <MenuLink as={Link} to="/site-admin">
                                     Site admin
+                                </MenuLink>
+                            )}
+                            {authenticatedUser.siteAdmin && window.context.applianceMenuTarget !== '' && (
+                                <MenuLink as={Link} to={window.context.applianceMenuTarget}>
+                                    Appliance
                                 </MenuLink>
                             )}
                             <MenuLink as={Link} to="/help" target="_blank" rel="noopener">

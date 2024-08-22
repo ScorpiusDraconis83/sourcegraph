@@ -13,6 +13,7 @@ import (
 	"github.com/keegancsmith/sqlf"
 	"github.com/lib/pq"
 
+	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/uploads/internal/commitgraph"
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/uploads/shared"
 	uploadsshared "github.com/sourcegraph/sourcegraph/internal/codeintel/uploads/shared"
@@ -23,7 +24,7 @@ import (
 )
 
 // insertNearestUploads populates the lsif_nearest_uploads table with the given upload metadata.
-func insertNearestUploads(t testing.TB, db database.DB, repositoryID int, uploads map[string][]commitgraph.UploadMeta) {
+func insertNearestUploads(t testing.TB, db database.DB, repositoryID int, uploads map[api.CommitID][]commitgraph.UploadMeta) {
 	var rows []*sqlf.Query
 	for commit, uploadMetas := range uploads {
 		uploadsByLength := make(map[int]int, len(uploadMetas))
@@ -63,7 +64,7 @@ func insertNearestUploads(t testing.TB, db database.DB, repositoryID int, upload
 // insertPackages populates the lsif_packages table with the given packages.
 func insertPackages(t testing.TB, store Store, packages []shared.Package) {
 	for _, pkg := range packages {
-		if err := store.UpdatePackages(context.Background(), pkg.DumpID, []precise.Package{
+		if err := store.UpdatePackages(context.Background(), pkg.UploadID, []precise.Package{
 			{
 				Scheme:  pkg.Scheme,
 				Manager: pkg.Manager,
@@ -79,7 +80,7 @@ func insertPackages(t testing.TB, store Store, packages []shared.Package) {
 // insertPackageReferences populates the lsif_references table with the given package references.
 func insertPackageReferences(t testing.TB, store Store, packageReferences []shared.PackageReference) {
 	for _, packageReference := range packageReferences {
-		if err := store.UpdatePackageReferences(context.Background(), packageReference.DumpID, []precise.PackageReference{
+		if err := store.UpdatePackageReferences(context.Background(), packageReference.UploadID, []precise.PackageReference{
 			{
 				Package: precise.Package{
 					Scheme:  packageReference.Scheme,
@@ -94,30 +95,30 @@ func insertPackageReferences(t testing.TB, store Store, packageReferences []shar
 	}
 }
 
-// insertIndexes populates the lsif_indexes table with the given index models.
-func insertIndexes(t testing.TB, db database.DB, indexes ...uploadsshared.Index) {
-	for _, index := range indexes {
-		if index.Commit == "" {
-			index.Commit = makeCommit(index.ID)
+// insertAutoIndexJobs populates the lsif_indexes table with the given index models.
+func insertAutoIndexJobs(t testing.TB, db database.DB, jobs ...uploadsshared.AutoIndexJob) {
+	for _, job := range jobs {
+		if job.Commit == "" {
+			job.Commit = makeCommit(job.ID)
 		}
-		if index.State == "" {
-			index.State = "completed"
+		if job.State == "" {
+			job.State = "completed"
 		}
-		if index.RepositoryID == 0 {
-			index.RepositoryID = 50
+		if job.RepositoryID == 0 {
+			job.RepositoryID = 50
 		}
-		if index.DockerSteps == nil {
-			index.DockerSteps = []uploadsshared.DockerStep{}
+		if job.DockerSteps == nil {
+			job.DockerSteps = []uploadsshared.DockerStep{}
 		}
-		if index.IndexerArgs == nil {
-			index.IndexerArgs = []string{}
+		if job.IndexerArgs == nil {
+			job.IndexerArgs = []string{}
 		}
-		if index.LocalSteps == nil {
-			index.LocalSteps = []string{}
+		if job.LocalSteps == nil {
+			job.LocalSteps = []string{}
 		}
 
 		// Ensure we have a repo for the inner join in select queries
-		insertRepo(t, db, index.RepositoryID, index.RepositoryName, true)
+		insertRepo(t, db, job.RepositoryID, job.RepositoryName, true)
 
 		query := sqlf.Sprintf(`
 			INSERT INTO lsif_indexes (
@@ -142,25 +143,25 @@ func insertIndexes(t testing.TB, db database.DB, indexes ...uploadsshared.Index)
 				should_reindex
 			) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 		`,
-			index.ID,
-			index.Commit,
-			index.QueuedAt,
-			index.State,
-			index.FailureMessage,
-			index.StartedAt,
-			index.FinishedAt,
-			index.ProcessAfter,
-			index.NumResets,
-			index.NumFailures,
-			index.RepositoryID,
-			pq.Array(index.DockerSteps),
-			index.Root,
-			index.Indexer,
-			pq.Array(index.IndexerArgs),
-			index.Outfile,
-			pq.Array(index.ExecutionLogs),
-			pq.Array(index.LocalSteps),
-			index.ShouldReindex,
+			job.ID,
+			job.Commit,
+			job.QueuedAt,
+			job.State,
+			job.FailureMessage,
+			job.StartedAt,
+			job.FinishedAt,
+			job.ProcessAfter,
+			job.NumResets,
+			job.NumFailures,
+			job.RepositoryID,
+			pq.Array(job.DockerSteps),
+			job.Root,
+			job.Indexer,
+			pq.Array(job.IndexerArgs),
+			job.Outfile,
+			pq.Array(job.ExecutionLogs),
+			pq.Array(job.LocalSteps),
+			job.ShouldReindex,
 		)
 
 		if _, err := db.ExecContext(context.Background(), query.Query(sqlf.PostgresBindVar), query.Args()...); err != nil {

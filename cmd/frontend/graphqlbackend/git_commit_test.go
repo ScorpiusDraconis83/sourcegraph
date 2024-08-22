@@ -2,7 +2,8 @@ package graphqlbackend
 
 import (
 	"context"
-	"io/ioutil"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -13,11 +14,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/backend"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/backend"
 	"github.com/sourcegraph/sourcegraph/internal/actor"
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbmocks"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
+	"github.com/sourcegraph/sourcegraph/internal/fileutil"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver/gitdomain"
 	"github.com/sourcegraph/sourcegraph/internal/types"
@@ -81,7 +83,7 @@ func TestGitCommitResolver(t *testing.T) {
 		db.ReposFunc.SetDefaultReturn(repos)
 
 		client := gitserver.NewMockClient()
-		client.GetCommitFunc.SetDefaultHook(func(context.Context, api.RepoName, api.CommitID, gitserver.ResolveRevisionOptions) (*gitdomain.Commit, error) {
+		client.GetCommitFunc.SetDefaultHook(func(context.Context, api.RepoName, api.CommitID) (*gitdomain.Commit, error) {
 			return commit, nil
 		})
 
@@ -156,7 +158,7 @@ func TestGitCommitResolver(t *testing.T) {
 				require.NoError(t, err)
 				require.Nil(t, pf)
 
-				f, err := ioutil.TempFile("/tmp", "foo")
+				f, err := os.CreateTemp("/tmp", "foo")
 				require.NoError(t, err)
 
 				fs, err := f.Stat()
@@ -177,7 +179,7 @@ func TestGitCommitResolver(t *testing.T) {
 		}
 	})
 
-	runPerforceTests := func(t *testing.T, commit *gitdomain.Commit) {
+	runPerforceTests := func(t *testing.T, commit *gitdomain.Commit, multiLine bool) {
 		repo := &types.Repo{
 			ID:           1,
 			Name:         "perforce/test-depot",
@@ -208,7 +210,15 @@ func TestGitCommitResolver(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "subject: Changes things", subject)
 
-		f, err := ioutil.TempFile("/tmp", "foo")
+		body, err := commitResolver.Body(ctx)
+		require.NoError(t, err)
+		if multiLine {
+			require.Equal(t, "Multi-line message", *body)
+		} else {
+			require.Empty(t, *body)
+		}
+
+		f, err := os.CreateTemp("/tmp", "foo")
 		require.NoError(t, err)
 
 		fs, err := f.Stat()
@@ -232,7 +242,7 @@ func TestGitCommitResolver(t *testing.T) {
 		)
 	}
 
-	t.Run("perforce depot, git-p4 commit", func(t *testing.T) {
+	t.Run("perforce depot, git-p4 commit, single line", func(t *testing.T) {
 		commit := &gitdomain.Commit{
 			ID: "c1",
 			Message: `subject: Changes things
@@ -248,10 +258,30 @@ func TestGitCommitResolver(t *testing.T) {
 			},
 		}
 
-		runPerforceTests(t, commit)
+		runPerforceTests(t, commit, false)
 	})
 
-	t.Run("perforce depot, p4-fusion commit", func(t *testing.T) {
+	t.Run("perforce depot, git-p4 commit, multi line", func(t *testing.T) {
+		commit := &gitdomain.Commit{
+			ID: "c1",
+			Message: `subject: Changes things
+Multi-line message
+[git-p4: depot-paths = "//test-depot/": change = 123]"`,
+			Parents: []api.CommitID{"p1", "p2"},
+			Author: gitdomain.Signature{
+				Name:  "Bob",
+				Email: "bob@alice.com",
+			},
+			Committer: &gitdomain.Signature{
+				Name:  "Alice",
+				Email: "alice@bob.com",
+			},
+		}
+
+		runPerforceTests(t, commit, true)
+	})
+
+	t.Run("perforce depot, p4-fusion commit, single line", func(t *testing.T) {
 		commit := &gitdomain.Commit{
 			ID: "c1",
 			Message: `123 - subject: Changes things
@@ -267,7 +297,27 @@ func TestGitCommitResolver(t *testing.T) {
 			},
 		}
 
-		runPerforceTests(t, commit)
+		runPerforceTests(t, commit, false)
+	})
+
+	t.Run("perforce depot, p4-fusion commit, multi line", func(t *testing.T) {
+		commit := &gitdomain.Commit{
+			ID: "c1",
+			Message: `123 - subject: Changes things
+Multi-line message
+[p4-fusion: depot-paths = "//test-perms/": change = 123]"`,
+			Parents: []api.CommitID{"p1", "p2"},
+			Author: gitdomain.Signature{
+				Name:  "Bob",
+				Email: "bob@alice.com",
+			},
+			Committer: &gitdomain.Signature{
+				Name:  "Alice",
+				Email: "alice@bob.com",
+			},
+		}
+
+		runPerforceTests(t, commit, true)
 	})
 }
 
@@ -276,20 +326,24 @@ func TestGitCommitFileNames(t *testing.T) {
 	externalServices.ListFunc.SetDefaultReturn(nil, nil)
 
 	repos := dbmocks.NewMockRepoStore()
-	repos.GetFunc.SetDefaultReturn(&types.Repo{ID: 2, Name: "github.com/gorilla/mux"}, nil)
+	repos.GetByNameFunc.SetDefaultReturn(&types.Repo{ID: 2, Name: "github.com/gorilla/mux"}, nil)
 
 	db := dbmocks.NewMockDB()
 	db.ExternalServicesFunc.SetDefaultReturn(externalServices)
 	db.ReposFunc.SetDefaultReturn(repos)
 
-	backend.Mocks.Repos.ResolveRev = func(ctx context.Context, repo *types.Repo, rev string) (api.CommitID, error) {
-		assert.Equal(t, api.RepoID(2), repo.ID)
+	backend.Mocks.Repos.ResolveRev = func(ctx context.Context, repo api.RepoName, rev string) (api.CommitID, error) {
 		assert.Equal(t, exampleCommitSHA1, rev)
 		return exampleCommitSHA1, nil
 	}
 	backend.Mocks.Repos.MockGetCommit_Return_NoCheck(t, &gitdomain.Commit{ID: exampleCommitSHA1})
 	gitserverClient := gitserver.NewMockClient()
-	gitserverClient.LsFilesFunc.SetDefaultReturn([]string{"a", "b"}, nil)
+	gitserverClient.ReadDirFunc.SetDefaultReturn(gitserver.NewReadDirIteratorFromSlice([]fs.FileInfo{
+		&fileutil.FileInfo{Name_: "a"},
+		&fileutil.FileInfo{Name_: "b"},
+		// We also return a dir to check that it's skipped in the output.
+		&fileutil.FileInfo{Name_: "dir", Mode_: os.ModeDir},
+	}), nil)
 	defer func() {
 		backend.Mocks = backend.MockServices{}
 	}()
@@ -326,14 +380,19 @@ func TestGitCommitAncestors(t *testing.T) {
 	db := dbmocks.NewMockDB()
 	db.ReposFunc.SetDefaultReturn(repos)
 
-	backend.Mocks.Repos.ResolveRev = func(ctx context.Context, repo *types.Repo, rev string) (api.CommitID, error) {
+	backend.Mocks.Repos.ResolveRev = func(ctx context.Context, repo api.RepoName, rev string) (api.CommitID, error) {
 		return api.CommitID(rev), nil
 	}
 
 	backend.Mocks.Repos.MockGetCommit_Return_NoCheck(t, &gitdomain.Commit{ID: exampleCommitSHA1})
 
 	client := gitserver.NewMockClient()
-	client.LsFilesFunc.SetDefaultReturn([]string{"a", "b"}, nil)
+	client.ReadDirFunc.SetDefaultReturn(gitserver.NewReadDirIteratorFromSlice([]fs.FileInfo{
+		&fileutil.FileInfo{Name_: "a"},
+		&fileutil.FileInfo{Name_: "b"},
+		// We also return a dir to check that it's skipped in the output.
+		&fileutil.FileInfo{Name_: "dir", Mode_: os.ModeDir},
+	}), nil)
 
 	// A linear commit tree:
 	// * -> c1 -> c2 -> c3 -> c4 -> c5 (HEAD)
@@ -657,7 +716,7 @@ func TestGitCommitPerforceChangelist(t *testing.T) {
 	db := dbmocks.NewMockDB()
 	db.ReposFunc.SetDefaultReturn(repos)
 
-	backend.Mocks.Repos.ResolveRev = func(ctx context.Context, repo *types.Repo, rev string) (api.CommitID, error) {
+	backend.Mocks.Repos.ResolveRev = func(ctx context.Context, repo api.RepoName, rev string) (api.CommitID, error) {
 		return api.CommitID(rev), nil
 	}
 

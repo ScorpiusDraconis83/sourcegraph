@@ -1,12 +1,13 @@
 import * as React from 'react'
 
-import { type Observable, Subject, Subscription } from 'rxjs'
+import { Subject, Subscription, type Observable } from 'rxjs'
 import { map } from 'rxjs/operators'
 
 import { createAggregateError } from '@sourcegraph/common'
 import { gql } from '@sourcegraph/http-client'
 import type { Scalars } from '@sourcegraph/shared/src/graphql-operations'
-import { Button, Link, H2, Text } from '@sourcegraph/wildcard'
+import { EVENT_LOGGER } from '@sourcegraph/shared/src/telemetry/web/eventLogger'
+import { Button, H2, Link, Text } from '@sourcegraph/wildcard'
 
 import { requestGraphQL } from '../../backend/graphql'
 import { FilteredConnection } from '../../components/FilteredConnection'
@@ -17,11 +18,10 @@ import type {
     ExternalAccountsResult,
     ExternalAccountsVariables,
 } from '../../graphql-operations'
-import { eventLogger } from '../../tracking/eventLogger'
 import {
     ExternalAccountNode,
-    type ExternalAccountNodeProps,
     externalAccountsConnectionFragment,
+    type ExternalAccountNodeProps,
 } from '../user/settings/ExternalAccountNode'
 
 interface Props {}
@@ -41,7 +41,7 @@ export class SiteAdminExternalAccountsPage extends React.Component<Props> {
     private externalAccountUpdates = new Subject<void>()
 
     public componentDidMount(): void {
-        eventLogger.logViewEvent('SiteAdminExternalAccounts')
+        EVENT_LOGGER.logViewEvent('SiteAdminExternalAccounts')
     }
 
     public componentWillUnmount(): void {
@@ -83,7 +83,7 @@ export class SiteAdminExternalAccountsPage extends React.Component<Props> {
 
     private queryExternalAccounts = (
         args: {
-            first?: number
+            first?: number | null
         } & FilterParameters
     ): Observable<ExternalAccountsConnectionFields> =>
         requestGraphQL<ExternalAccountsResult, ExternalAccountsVariables>(

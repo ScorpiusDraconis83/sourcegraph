@@ -3,43 +3,42 @@ import 'focus-visible'
 import * as React from 'react'
 
 import { ApolloProvider } from '@apollo/client'
-import { RouterProvider, createBrowserRouter, createRoutesFromElements, Route } from 'react-router-dom'
-import { combineLatest, from, Subscription, fromEvent, type Observable } from 'rxjs'
+import { createBrowserRouter, createRoutesFromElements, Route, RouterProvider } from 'react-router-dom'
+import { combineLatest, from, fromEvent, Subscription, type Observable } from 'rxjs'
 
 import { logger } from '@sourcegraph/common'
-import { type GraphQLClient, HTTPStatusError } from '@sourcegraph/http-client'
+import { HTTPStatusError, type GraphQLClient } from '@sourcegraph/http-client'
 import { SharedSpanName, TraceSpanProvider } from '@sourcegraph/observability-client'
-import { type FetchFileParameters, fetchHighlightedFileLineRanges } from '@sourcegraph/shared/src/backend/file'
-import type { Controller as ExtensionsController } from '@sourcegraph/shared/src/extensions/controller'
-import { createNoopController } from '@sourcegraph/shared/src/extensions/createNoopLoadedController'
+import { fetchHighlightedFileLineRanges, type FetchFileParameters } from '@sourcegraph/shared/src/backend/file'
 import type { PlatformContext } from '@sourcegraph/shared/src/platform/context'
 import { ShortcutProvider } from '@sourcegraph/shared/src/react-shortcuts'
 import {
-    getUserSearchContextNamespaces,
-    fetchSearchContexts,
+    createSearchContext,
+    deleteSearchContext,
     fetchSearchContext,
     fetchSearchContextBySpec,
-    createSearchContext,
-    updateSearchContext,
-    deleteSearchContext,
+    fetchSearchContexts,
+    getDefaultSearchContextSpec,
+    getUserSearchContextNamespaces,
     isSearchContextSpecAvailable,
     SearchQueryStateStoreProvider,
-    getDefaultSearchContextSpec,
+    updateSearchContext,
 } from '@sourcegraph/shared/src/search'
 import { FilterType } from '@sourcegraph/shared/src/search/query/filters'
 import { filterExists } from '@sourcegraph/shared/src/search/query/validate'
 import { aggregateStreamingSearch } from '@sourcegraph/shared/src/search/stream'
 import {
     EMPTY_SETTINGS_CASCADE,
-    type SettingsCascadeProps,
     SettingsProvider,
+    type SettingsCascadeProps,
 } from '@sourcegraph/shared/src/settings/settings'
 import { TemporarySettingsProvider } from '@sourcegraph/shared/src/settings/temporary/TemporarySettingsProvider'
 import { TemporarySettingsStorage } from '@sourcegraph/shared/src/settings/temporary/TemporarySettingsStorage'
 import { NoOpTelemetryRecorderProvider } from '@sourcegraph/shared/src/telemetry'
+import { EVENT_LOGGER } from '@sourcegraph/shared/src/telemetry/web/eventLogger'
 import { WildcardThemeContext, type WildcardTheme } from '@sourcegraph/wildcard'
 
-import { authenticatedUser as authenticatedUserSubject, type AuthenticatedUser, authenticatedUserValue } from './auth'
+import { authenticatedUser as authenticatedUserSubject, authenticatedUserValue, type AuthenticatedUser } from './auth'
 import { getWebGraphQLClient } from './backend/graphql'
 import { isBatchChangesExecutionEnabled } from './batches'
 import { ComponentsComposer } from './components/ComponentsComposer'
@@ -55,7 +54,6 @@ import { GLOBAL_SEARCH_CONTEXT_SPEC } from './SearchQueryStateObserver'
 import type { StaticAppConfig } from './staticAppConfig'
 import { setQueryStateFromSettings, useDeveloperSettings, useNavbarQueryState } from './stores'
 import { TelemetryRecorderProvider } from './telemetry'
-import { eventLogger } from './tracking/eventLogger'
 import { UserSessionStores } from './UserSessionStores'
 import { siteSubjectNoAdmin, viewerSubjectFromSettings } from './util/settings'
 
@@ -90,7 +88,6 @@ const WILDCARD_THEME: WildcardTheme = {
  */
 export class LegacySourcegraphWebApp extends React.Component<StaticAppConfig, LegacySourcegraphWebAppState> {
     private readonly subscriptions = new Subscription()
-    private readonly extensionsController: ExtensionsController | null
 
     constructor(props: StaticAppConfig) {
         super(props)
@@ -100,11 +97,6 @@ export class LegacySourcegraphWebApp extends React.Component<StaticAppConfig, Le
                 errorOnRecord: true, // this will be replaced on render()
             }),
         })
-
-        this.extensionsController = createNoopController(basePlatformContext)
-        if (this.extensionsController !== null) {
-            this.subscriptions.add(this.extensionsController)
-        }
 
         this.state = {
             authenticatedUser: authenticatedUserValue,
@@ -188,10 +180,6 @@ export class LegacySourcegraphWebApp extends React.Component<StaticAppConfig, Le
             // select the user's default search context.
             this.setSelectedSearchContextSpecToDefault()
         }
-
-        this.setWorkspaceSearchContext(this.state.selectedSearchContextSpec).catch(error => {
-            logger.error('Error sending search context to extensions!', error)
-        })
     }
 
     public componentWillUnmount(): void {
@@ -214,7 +202,7 @@ export class LegacySourcegraphWebApp extends React.Component<StaticAppConfig, Le
             ...this.props,
             selectedSearchContextSpec: this.state.selectedSearchContextSpec,
             setSelectedSearchContextSpec: this.setSelectedSearchContextSpec,
-            codeIntelligenceEnabled: !!this.props.codeInsightsEnabled,
+            codeIntelligenceEnabled: !!this.props.codeIntelligenceEnabled,
             notebooksEnabled: this.props.notebooksEnabled,
             codeMonitoringEnabled: this.props.codeMonitoringEnabled,
             searchAggregationEnabled: this.props.searchAggregationEnabled,
@@ -222,7 +210,6 @@ export class LegacySourcegraphWebApp extends React.Component<StaticAppConfig, Le
             authenticatedUser,
             viewerSubject: this.state.viewerSubject,
             settingsCascade: this.state.settingsCascade,
-            extensionsController: this.extensionsController,
         }
 
         const router = createBrowserRouter(
@@ -236,7 +223,8 @@ export class LegacySourcegraphWebApp extends React.Component<StaticAppConfig, Le
                             batchChangesExecutionEnabled={isBatchChangesExecutionEnabled(this.state.settingsCascade)}
                             batchChangesWebhookLogsEnabled={window.context.batchChangesWebhookLogsEnabled}
                             fetchHighlightedFileLineRanges={this.fetchHighlightedFileLineRanges}
-                            telemetryService={eventLogger}
+                            telemetryService={EVENT_LOGGER}
+                            telemetryRecorder={window.context.telemetryRecorder}
                             isSourcegraphDotCom={window.context.sourcegraphDotComMode}
                             isSearchContextSpecAvailable={isSearchContextSpecAvailable}
                             searchContextsEnabled={this.props.searchContextsEnabled}
@@ -281,9 +269,6 @@ export class LegacySourcegraphWebApp extends React.Component<StaticAppConfig, Le
 
     private setSelectedSearchContextSpecWithNoChecks = (spec: string): void => {
         this.setState({ selectedSearchContextSpec: spec })
-        this.setWorkspaceSearchContext(spec).catch(error => {
-            logger.error('Error sending search context to extensions', error)
-        })
     }
 
     private setSelectedSearchContextSpec = (spec: string): void => {
@@ -326,14 +311,6 @@ export class LegacySourcegraphWebApp extends React.Component<StaticAppConfig, Le
                 this.setSelectedSearchContextSpecWithNoChecks(spec || GLOBAL_SEARCH_CONTEXT_SPEC)
             })
         )
-    }
-
-    private async setWorkspaceSearchContext(spec: string | undefined): Promise<void> {
-        if (this.extensionsController === null) {
-            return
-        }
-        const extensionHostAPI = await this.extensionsController.extHostAPI
-        await extensionHostAPI.setSearchContext(spec)
     }
 
     private fetchHighlightedFileLineRanges = (

@@ -8,7 +8,7 @@ import { encodeURIPathComponent } from '@sourcegraph/common'
 import {
     RepositoryType,
     type SharedGraphQlOperations,
-    TreeEntriesResult,
+    type TreeEntriesResult,
 } from '@sourcegraph/shared/src/graphql-operations'
 import { accessibilityAudit } from '@sourcegraph/shared/src/testing/accessibility'
 import { createDriverForTest, type Driver } from '@sourcegraph/shared/src/testing/driver'
@@ -16,26 +16,27 @@ import { afterEachSaveScreenshotIfFailed } from '@sourcegraph/shared/src/testing
 
 import {
     DiffHunkLineType,
+    ExternalServiceKind,
     type RepositoryContributorsResult,
     type WebGraphQlOperations,
-    ExternalServiceKind,
 } from '../graphql-operations'
 
 import { createWebIntegrationTestContext, type WebIntegrationTestContext } from './context'
 import {
-    createResolveRepoRevisionResult,
-    createFileExternalLinksResult,
-    createTreeEntriesResult,
     createBlobContentResult,
-    createRepoChangesetsStatsResult,
+    createCodyContextFiltersResult,
+    createFileExternalLinksResult,
     createFileNamesResult,
-    createResolveCloningRepoRevisionResult,
     createFileTreeEntriesResult,
+    createRepoChangesetsStatsResult,
+    createResolveCloningRepoRevisionResult,
+    createResolveRepoRevisionResult,
+    createTreeEntriesResult,
 } from './graphQlResponseHelpers'
 import { commonWebGraphQlResults } from './graphQlResults'
-import { createEditorAPI, percySnapshotWithVariants, removeContextFromQuery } from './utils'
+import { createEditorAPI, removeContextFromQuery } from './utils'
 
-export const getCommonRepositoryGraphQlResults = (
+const getCommonRepositoryGraphQlResults = (
     repositoryName: string,
     repositoryUrl: string,
     fileEntries: string[] = []
@@ -48,6 +49,7 @@ export const getCommonRepositoryGraphQlResults = (
     TreeEntries: () => createTreeEntriesResult(repositoryUrl, fileEntries),
     FileTreeEntries: () => createFileTreeEntriesResult(repositoryUrl, fileEntries),
     Blob: ({ filePath }) => createBlobContentResult(`content for: ${filePath}\nsecond line\nthird line`),
+    ContextFilters: () => createCodyContextFiltersResult(),
 })
 
 const now = new Date()
@@ -83,7 +85,7 @@ describe('Repository', () => {
             const shortRepositoryName = 'sourcegraph/jsonrpc2'
             const repositoryName = `github.com/${shortRepositoryName}`
             const repositorySourcegraphUrl = `/${repositoryName}`
-            const commitUrl = `${repositorySourcegraphUrl}/-/commit/15c2290dcb37731cc4ee5a2a1c1e5a25b4c28f81?visible=1`
+            const commitUrl = `${repositorySourcegraphUrl}/-/commit/15c2290dcb37731cc4ee5a2a1c1e5a25b4c28f81?first=1`
             const clickedFileName = 'async.go'
             const clickedCommit = ''
             const fileEntries = ['jsonrpc2.go', clickedFileName]
@@ -286,8 +288,6 @@ describe('Repository', () => {
             // Assert that the directory listing displays properly
             await driver.page.waitForSelector('.test-tree-entries')
 
-            // TODO: Reenable later, percy is erroring out on remote images not loading.
-            // await percySnapshotWithVariants(driver.page, 'Repository index page')
             await accessibilityAudit(driver.page)
 
             const numberOfFileEntries = await driver.page.evaluate(
@@ -486,12 +486,10 @@ describe('Repository', () => {
 
             await driver.page.goto(driver.sourcegraphBaseUrl + repositorySourcegraphUrl)
 
-            // Wait for clone in progress message before Percy snapshot.
+            // Wait for clone in progress message.
             await driver.page.waitForSelector('[data-testid="hero-page-subtitle"]')
             // Verify that we show the respective message in the UI.
             await assertSelectorHasText('[data-testid="hero-page-subtitle"]', 'Cloning in progress')
-
-            await percySnapshotWithVariants(driver.page, 'Repository cloning in progress page')
         })
 
         it('works with spaces in the repository name', async () => {
@@ -733,11 +731,11 @@ describe('Repository', () => {
                         },
                     },
                 }),
+                ContextFilters: () => createCodyContextFiltersResult(),
             })
             await driver.page.goto(driver.sourcegraphBaseUrl + '/github.com/sourcegraph/sourcegraph/-/commits')
             await driver.page.waitForSelector('[data-testid="commits-page"]', { visible: true })
             await driver.page.waitForSelector('.list-group-item', { visible: true })
-            await percySnapshotWithVariants(driver.page, 'Repository commits page')
             await accessibilityAudit(driver.page)
         })
     })
@@ -849,7 +847,6 @@ describe('Repository', () => {
                 })
                 await driver.page.goto(driver.sourcegraphBaseUrl + repositorySourcegraphUrl)
                 await driver.page.waitForSelector('.test-filtered-contributors-connection')
-                await percySnapshotWithVariants(driver.page, 'Contributor list')
                 await accessibilityAudit(driver.page)
             })
         })
@@ -861,20 +858,27 @@ describe('Repository', () => {
                     ...commonWebGraphQlResults,
                     ...getCommonRepositoryGraphQlResults(repositoryName, repositorySourcegraphUrl, []),
                     RepositoryGitBranchesOverview: () => ({
+                        __typename: 'Query',
                         node: {
+                            __typename: 'Repository',
                             defaultBranch: {
+                                __typename: 'GitRef',
                                 id: 'QmV3b2Q=',
                                 displayName: 'main',
                                 name: 'refs/heads/main',
                                 abbrevName: 'main',
                                 url: `/${repositoryName}/-/branches/${'1'.repeat(40)}`,
                                 target: {
+                                    __typename: 'GitObject',
                                     commit: {
+                                        __typename: 'GitCommit',
                                         author: {
                                             __typename: 'Signature',
                                             person: {
+                                                __typename: 'Person',
                                                 displayName: 'John Doe',
                                                 user: {
+                                                    __typename: 'User',
                                                     username: 'johndoe',
                                                 },
                                             },
@@ -883,12 +887,14 @@ describe('Repository', () => {
                                         committer: {
                                             __typename: 'Signature',
                                             person: {
+                                                __typename: 'Person',
                                                 displayName: 'John Doe',
                                                 user: null,
                                             },
                                             date: subDays(new Date(), 1).toISOString(),
                                         },
                                         behindAhead: {
+                                            __typename: 'BehindAheadCounts',
                                             behind: 0,
                                             ahead: 0,
                                         },
@@ -896,21 +902,27 @@ describe('Repository', () => {
                                 },
                             },
                             gitRefs: {
-                                pageInfo: { hasNextPage: false },
+                                __typename: 'GitRefConnection',
+                                pageInfo: { __typename: 'PageInfo', hasNextPage: false },
                                 nodes: [
                                     {
+                                        __typename: 'GitRef',
                                         id: 'BranchId1',
                                         displayName: 'integration-tests-trigramming',
                                         name: 'refs/heads/integration-tests-trigramming',
                                         abbrevName: 'integration-tests-trigramming',
                                         url: `/${repositoryName}/-/branches/${'1'.repeat(40)}`,
                                         target: {
+                                            __typename: 'GitObject',
                                             commit: {
+                                                __typename: 'GitCommit',
                                                 author: {
                                                     __typename: 'Signature',
                                                     person: {
+                                                        __typename: 'Person',
                                                         displayName: 'John Doe',
                                                         user: {
+                                                            __typename: 'User',
                                                             username: 'johndoe',
                                                         },
                                                     },
@@ -919,14 +931,17 @@ describe('Repository', () => {
                                                 committer: {
                                                     __typename: 'Signature',
                                                     person: {
+                                                        __typename: 'Person',
                                                         displayName: 'John Doe',
                                                         user: {
+                                                            __typename: 'User',
                                                             username: 'johndoe',
                                                         },
                                                     },
                                                     date: subDays(new Date(), 1).toISOString(),
                                                 },
                                                 behindAhead: {
+                                                    __typename: 'BehindAheadCounts',
                                                     behind: 12633,
                                                     ahead: 1,
                                                 },
@@ -934,18 +949,23 @@ describe('Repository', () => {
                                         },
                                     },
                                     {
+                                        __typename: 'GitRef',
                                         id: 'BranchId2',
                                         displayName: 'integration-tests-quadgramming',
                                         name: 'refs/heads/integration-tests-quadgramming',
                                         abbrevName: 'integration-tests-quadgramming',
                                         url: `/${repositoryName}/-/branches/${'1'.repeat(40)}`,
                                         target: {
+                                            __typename: 'GitObject',
                                             commit: {
+                                                __typename: 'GitCommit',
                                                 author: {
                                                     __typename: 'Signature',
                                                     person: {
+                                                        __typename: 'Person',
                                                         displayName: 'Alice',
                                                         user: {
+                                                            __typename: 'User',
                                                             username: 'alice',
                                                         },
                                                     },
@@ -954,14 +974,17 @@ describe('Repository', () => {
                                                 committer: {
                                                     __typename: 'Signature',
                                                     person: {
+                                                        __typename: 'Person',
                                                         displayName: 'Alice',
                                                         user: {
+                                                            __typename: 'User',
                                                             username: 'alice',
                                                         },
                                                     },
                                                     date: subDays(new Date(), 1).toISOString(),
                                                 },
                                                 behindAhead: {
+                                                    __typename: 'BehindAheadCounts',
                                                     behind: 12633,
                                                     ahead: 1,
                                                 },
@@ -976,7 +999,6 @@ describe('Repository', () => {
 
                 await driver.page.goto(driver.sourcegraphBaseUrl + repositorySourcegraphUrl)
                 await driver.page.waitForSelector('[data-testid="active-branches-list"]')
-                await percySnapshotWithVariants(driver.page, 'Repository branches page')
                 await accessibilityAudit(driver.page)
             })
         })
@@ -1080,13 +1102,12 @@ describe('Repository', () => {
                 await driver.page.waitForSelector('.test-filtered-tags-connection')
                 await driver.page.click('input[name="query"]')
                 await driver.page.waitForSelector('input[name="query"].focus-visible')
-                await percySnapshotWithVariants(driver.page, 'Repository tags page')
                 await accessibilityAudit(driver.page)
             })
         })
 
         describe('Compare page', () => {
-            const repositorySourcegraphUrl = `/${repositoryName}/-/compare/main...bl/readme?visible=1`
+            const repositorySourcegraphUrl = `/${repositoryName}/-/compare/main...bl/readme`
             it('should render correctly compare page, including diff view', async () => {
                 testContext.overrideGraphQL({
                     ...commonWebGraphQlResults,
@@ -1227,7 +1248,6 @@ describe('Repository', () => {
                 })
                 await driver.page.goto(driver.sourcegraphBaseUrl + repositorySourcegraphUrl)
                 await driver.page.waitForSelector('.test-file-diff-connection')
-                await percySnapshotWithVariants(driver.page, 'Repository compare page')
                 await accessibilityAudit(driver.page)
             })
         })

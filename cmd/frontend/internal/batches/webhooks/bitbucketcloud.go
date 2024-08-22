@@ -10,7 +10,7 @@ import (
 
 	sglog "github.com/sourcegraph/log"
 
-	fewebhooks "github.com/sourcegraph/sourcegraph/cmd/frontend/webhooks"
+	fewebhooks "github.com/sourcegraph/sourcegraph/cmd/frontend/internal/webhooks"
 	"github.com/sourcegraph/sourcegraph/internal/actor"
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	bbcs "github.com/sourcegraph/sourcegraph/internal/batches/sources/bitbucketcloud"
@@ -167,7 +167,7 @@ func (h *BitbucketCloudWebhook) parseEvent(r *http.Request) (interface{}, *types
 		}
 	}
 
-	if extSvc == nil || err != nil {
+	if extSvc == nil {
 		return nil, nil, &httpError{http.StatusUnauthorized, err}
 	}
 

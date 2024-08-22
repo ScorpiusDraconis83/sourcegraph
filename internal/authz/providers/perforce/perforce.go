@@ -3,6 +3,7 @@ package perforce
 import (
 	"context"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/sourcegraph/sourcegraph/internal/authz"
+	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc/perforce"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
@@ -27,6 +29,7 @@ const cacheTTL = time.Hour
 // Provider implements authz.Provider for Perforce depot permissions.
 type Provider struct {
 	logger log.Logger
+	db     database.DB
 
 	urn      string
 	codeHost *extsvc.CodeHost
@@ -56,9 +59,10 @@ func cacheIsUpToDate(lastUpdate time.Time) bool {
 // host, user and password to talk to a Perforce Server that is the source of
 // truth for permissions. It assumes emails of Sourcegraph accounts match 1-1
 // with emails of Perforce Server users.
-func NewProvider(logger log.Logger, gitserverClient gitserver.Client, urn, host, user, password string, depots []extsvc.RepoID, ignoreRulesWithHost bool) *Provider {
+func NewProvider(logger log.Logger, db database.DB, gitserverClient gitserver.Client, urn, host, user, password string, depots []extsvc.RepoID, ignoreRulesWithHost bool) *Provider {
 	baseURL, _ := url.Parse(host)
 	return &Provider{
+		db:                  db,
 		logger:              logger,
 		urn:                 urn,
 		codeHost:            extsvc.NewCodeHost(baseURL, extsvc.TypePerforce),
@@ -75,7 +79,7 @@ func NewProvider(logger log.Logger, gitserverClient gitserver.Client, urn, host,
 // FetchAccount uses given user's verified emails to match users on the Perforce
 // Server. It returns when any of the verified email has matched and the match
 // result is not deterministic.
-func (p *Provider) FetchAccount(ctx context.Context, user *types.User, _ []*extsvc.Account, verifiedEmails []string) (_ *extsvc.Account, err error) {
+func (p *Provider) FetchAccount(ctx context.Context, user *types.User) (_ *extsvc.Account, err error) {
 	if user == nil {
 		return nil, nil
 	}
@@ -93,9 +97,18 @@ func (p *Provider) FetchAccount(ctx context.Context, user *types.User, _ []*exts
 		tr.End()
 	}()
 
-	emailSet := make(map[string]struct{}, len(verifiedEmails))
-	for _, email := range verifiedEmails {
-		emailSet[email] = struct{}{}
+	userEmails, err := p.db.UserEmails().ListByUser(ctx,
+		database.UserEmailsListOptions{
+			UserID:       user.ID,
+			OnlyVerified: true,
+		})
+	if err != nil {
+		return nil, errors.Wrap(err, "could not fetch user emails")
+	}
+
+	emailSet := make(map[string]struct{}, len(userEmails))
+	for _, email := range userEmails {
+		emailSet[strings.ToLower(email.Email)] = struct{}{}
 	}
 
 	users, err := p.gitserverClient.PerforceUsers(ctx, protocol.PerforceConnectionDetails{
@@ -111,12 +124,13 @@ func (p *Provider) FetchAccount(ctx context.Context, user *types.User, _ []*exts
 		if p4User.Email == "" || p4User.Username == "" {
 			continue
 		}
+		p4Email := strings.ToLower(p4User.Email)
 
-		if _, ok := emailSet[p4User.Email]; ok {
+		if _, ok := emailSet[p4Email]; ok {
 			accountData, err := jsoniter.Marshal(
 				perforce.AccountData{
 					Username: p4User.Username,
-					Email:    p4User.Email,
+					Email:    p4Email,
 				},
 			)
 			if err != nil {
@@ -128,7 +142,7 @@ func (p *Provider) FetchAccount(ctx context.Context, user *types.User, _ []*exts
 				AccountSpec: extsvc.AccountSpec{
 					ServiceType: p.codeHost.ServiceType,
 					ServiceID:   p.codeHost.ServiceID,
-					AccountID:   p4User.Email,
+					AccountID:   p4Email,
 				},
 				AccountData: extsvc.AccountData{
 					Data: extsvc.NewUnencryptedData(accountData),
@@ -172,7 +186,7 @@ func (p *Provider) FetchUserPerms(ctx context.Context, account *extsvc.Account, 
 		err = errors.Wrap(scanProtects(p.logger, protects, repoIncludesExcludesScanner(perms), p.ignoreRulesWithHost), "repoIncludesExcludesScanner")
 	} else {
 		// SubRepoPermissions-enabled code path
-		perms.SubRepoPermissions = make(map[extsvc.RepoID]*authz.SubRepoPermissions, len(p.depots))
+		perms.SubRepoPermissions = make(map[extsvc.RepoID]*authz.SubRepoPermissionsWithIPs, len(p.depots))
 		err = errors.Wrap(scanProtects(p.logger, protects, fullRepoPermsScanner(p.logger, perms, p.depots), p.ignoreRulesWithHost), "fullRepoPermsScanner")
 	}
 

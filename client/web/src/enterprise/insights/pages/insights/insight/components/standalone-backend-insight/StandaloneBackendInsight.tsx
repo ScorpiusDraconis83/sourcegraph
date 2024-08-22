@@ -2,8 +2,11 @@ import React, { useContext, useMemo, useState } from 'react'
 
 import classNames from 'classnames'
 import { useNavigate } from 'react-router-dom'
+import { lastValueFrom } from 'rxjs'
 
 import { useQuery } from '@sourcegraph/http-client'
+import { useSettingsCascade } from '@sourcegraph/shared/src/settings/settings'
+import { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { Card, CardBody, useDebounce, useDeepMemo, type FormChangeEvent } from '@sourcegraph/wildcard'
 
@@ -14,6 +17,7 @@ import type {
     SeriesDisplayOptionsInput,
 } from '../../../../../../../graphql-operations'
 import { useSeriesToggle } from '../../../../../../../insights/utils/use-series-toggle'
+import { defaultPatternTypeFromSettings } from '../../../../../../../util/settings'
 import { InsightCard, InsightCardHeader, InsightCardLoading } from '../../../../../components'
 import {
     DrillDownInsightFilters,
@@ -41,13 +45,13 @@ import { StandaloneInsightContextMenu } from '../context-menu/StandaloneInsightC
 
 import styles from './StandaloneBackendInsight.module.scss'
 
-interface StandaloneBackendInsight extends TelemetryProps {
+interface StandaloneBackendInsight extends TelemetryProps, TelemetryV2Props {
     insight: BackendInsight
     className?: string
 }
 
 export const StandaloneBackendInsight: React.FunctionComponent<StandaloneBackendInsight> = props => {
-    const { telemetryService, insight, className } = props
+    const { telemetryService, telemetryRecorder, insight, className } = props
     const navigate = useNavigate()
     const { updateInsight } = useContext(CodeInsightsBackendContext)
     const [saveAsNewView] = useSaveInsightAsNewView({ dashboard: null })
@@ -93,6 +97,8 @@ export const StandaloneBackendInsight: React.FunctionComponent<StandaloneBackend
         }
     )
 
+    const defaultPatternType = defaultPatternTypeFromSettings(useSettingsCascade())
+
     const insightData = useMemo(() => {
         const node = data?.insightViews.nodes[0]
 
@@ -100,15 +106,16 @@ export const StandaloneBackendInsight: React.FunctionComponent<StandaloneBackend
             stopPolling()
             return
         }
-        const parsedData = createBackendInsightData({ ...insight, filters }, node)
+        const parsedData = createBackendInsightData({ ...insight, filters }, node, defaultPatternType)
         if (!parsedData.isFetchingHistoricalData) {
             stopPolling()
         }
         return parsedData
-    }, [data, filters, insight, stopPolling])
+    }, [data, filters, insight, stopPolling, defaultPatternType])
 
     const { trackMouseLeave, trackMouseEnter, trackDatumClicks } = useCodeInsightViewPings({
         telemetryService,
+        telemetryRecorder,
         insightType: getTrackingTypeByInsightType(insight.type),
     })
 
@@ -119,9 +126,12 @@ export const StandaloneBackendInsight: React.FunctionComponent<StandaloneBackend
     }
 
     const handleFilterSave = async (filters: InsightFilters): Promise<void> => {
-        await updateInsight({ insightId: insight.id, nextInsightData: { ...insight, filters } }).toPromise()
+        await lastValueFrom(updateInsight({ insightId: insight.id, nextInsightData: { ...insight, filters } }), {
+            defaultValue: undefined,
+        })
         setOriginalInsightFilters(filters)
         telemetryService.log('CodeInsightsSearchBasedFilterUpdating')
+        telemetryRecorder.recordEvent('insights.searchBasedFilter', 'update', { metadata: { location: 1 } })
     }
 
     const handleInsightFilterCreation = async (values: DrillDownInsightCreationFormValues): Promise<void> => {
@@ -135,6 +145,7 @@ export const StandaloneBackendInsight: React.FunctionComponent<StandaloneBackend
         setOriginalInsightFilters(filters)
         navigate('/insights/all')
         telemetryService.log('CodeInsightsSearchBasedFilterInsightCreation')
+        telemetryRecorder.recordEvent('insights.createFromFilter.searchBased', 'submit', { metadata: { location: 1 } })
     }
 
     return (

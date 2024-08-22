@@ -3,9 +3,9 @@ package codemonitors
 import (
 	"context"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/envvar"
 	"github.com/sourcegraph/sourcegraph/cmd/worker/job"
 	workerdb "github.com/sourcegraph/sourcegraph/cmd/worker/shared/init/db"
+	"github.com/sourcegraph/sourcegraph/internal/codemonitors"
 	"github.com/sourcegraph/sourcegraph/internal/codemonitors/background"
 	"github.com/sourcegraph/sourcegraph/internal/env"
 	"github.com/sourcegraph/sourcegraph/internal/goroutine"
@@ -27,11 +27,7 @@ func (j *codeMonitorJob) Config() []env.Config {
 }
 
 func (j *codeMonitorJob) Routines(_ context.Context, observationCtx *observation.Context) ([]goroutine.BackgroundRoutine, error) {
-	// Code monitors have been deprecated on dotcom and are set to be fully disabled
-	// after November 29th 2023.
-	// This is a temporary line to disable the background workers that execute them,
-	// before we simply turn off the feature via a feature gate or similar.
-	if envvar.SourcegraphDotComMode() {
+	if !codemonitors.IsEnabled() {
 		return nil, nil
 	}
 

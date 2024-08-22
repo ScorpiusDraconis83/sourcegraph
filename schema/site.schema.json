@@ -7,6 +7,16 @@
   "type": "object",
   "additionalProperties": true,
   "properties": {
+    "ssc.apiBaseUrl": {
+      "type": "string",
+      "default": "https://accounts.sourcegraph.com/cody/api",
+      "description": "The base URL of the Self-Serve Cody API."
+    },
+    "ssc.samsHostName": {
+      "type": "string",
+      "default": "accounts.sourcegraph.com",
+      "description": "The hostname of SAMS instance to connect."
+    },
     "search.index.symbols.enabled": {
       "description": "Whether indexed symbol search is enabled. This is contingent on the indexed search configuration, and is true by default for instances with indexed search enabled. Enabling this will cause every repository to re-index, which is a time consuming (several hours) operation. Additionally, it requires more storage and ram to accommodate the added symbols information in the search index.",
       "type": "boolean",
@@ -165,6 +175,38 @@
       "type": "object",
       "additionalProperties": true,
       "properties": {
+        "commitGraphUpdates": {
+          "description": "Customize strategy used for commit graph updates",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "defaultBranchOnly": {
+              "description": "Disables precise code nav on non-default branches. Specify repo names using regex syntax.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "examples": ["github.com/myorg/huge-monorepo", "github.com/other-org/.*"]
+              }
+            }
+          }
+        },
+        "scipBasedAPIs": {
+          "description": "Enable usage of new CodeGraph and usagesForSymbol APIs",
+          "type": "boolean",
+          "default": true,
+          "_comment": "Keep default above in sync with NOTE(id: scip-based-apis-feature-flag)",
+          "!go": {
+            "pointer": true
+          }
+        },
+        "codyContextIgnore": {
+          "description": "Enabled filtering of remote Cody context based on repositories ./cody/ignore file",
+          "type": "boolean",
+          "default": false,
+          "!go": {
+            "pointer": true
+          }
+        },
         "searchJobs": {
           "description": "Enables search jobs (long-running exhaustive) search feature and its UI",
           "type": "boolean",
@@ -233,7 +275,7 @@
           "description": "Enables structural search.",
           "type": "string",
           "enum": ["enabled", "disabled"],
-          "default": "enabled"
+          "default": "disabled"
         },
         "perforce": {
           "description": "Allow adding Perforce code host connections",
@@ -428,14 +470,6 @@
           "type": "boolean",
           "default": false
         },
-        "enableGRPC": {
-          "description": "Enables gRPC for communication between internal services",
-          "type": "boolean",
-          "default": true,
-          "!go": {
-            "pointer": true
-          }
-        },
         "enablePermissionsWebhooks": {
           "description": "DEPRECATED: No longer has any effect.",
           "type": "boolean",
@@ -591,6 +625,68 @@
               "default": "useFileContents"
             }
           }
+        },
+        "codeintelSyntacticIndexing.enabled": {
+          "description": "When enabled, syntactic indexing jobs will be scheduled for all enabled repos",
+          "type": "boolean",
+          "default": false
+        },
+        "cody.serverSideContext": {
+          "description": "Configuration for Server-side context API",
+          "type": "object",
+          "!go": {
+            "pointer": true
+          },
+          "group": "Cody",
+          "properties": {
+            "intentDetectionAPI": {
+              "description": "Configuration for intent detection API",
+              "type": "object",
+              "properties": {
+                "default": {
+                  "description": "Default URL for intent detection API",
+                  "$ref": "#/definitions/BackendAPIConfig"
+                },
+                "search": {
+                  "description": "Default URL for intent detection API",
+                  "$ref": "#/definitions/BackendAPIConfig"
+                },
+                "edit": {
+                  "description": "Default URL for intent detection API",
+                  "$ref": "#/definitions/BackendAPIConfig"
+                },
+                "extra": {
+                  "description": "Array of additional intent detection API configs",
+                  "type": "array",
+                  "default": [],
+                  "items": {
+                    "$ref": "#/definitions/BackendAPIConfig"
+                  }
+                }
+              }
+            },
+            "reranker": {
+              "description": "Reranker to use for rankContext requests",
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": ["identity", "cohere"]
+                }
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/definitions/CodyRerankerIdentity"
+                },
+                {
+                  "$ref": "#/definitions/CodyRerankerCohere"
+                }
+              ],
+              "!go": {
+                "taggedUnionType": true
+              }
+            }
+          }
         }
       },
       "examples": [
@@ -615,7 +711,6 @@
       ],
       "group": "Experimental"
     },
-
     "batchChanges.enabled": {
       "description": "Enables/disables the Batch Changes feature.",
       "type": "boolean",
@@ -907,7 +1002,7 @@
     "gitLongCommandTimeout": {
       "description": "Maximum number of seconds that a long Git command (e.g. clone or remote update) is allowed to execute. The default is 3600 seconds, or 1 hour.",
       "type": "integer",
-      "default": 3600,
+      "default": 7200,
       "group": "External services"
     },
     "gitMaxConcurrentClones": {
@@ -925,16 +1020,30 @@
       "default": -1,
       "group": "External services"
     },
+    "codeMonitors": {
+      "description": "Configuration options for code monitors",
+      "type": "object",
+      "properties": {
+        "pollInterval": {
+          "description": "The interval at which a monitor checks for new changes. Increase to reduce average load.",
+          "type": "string",
+          "default": "5m"
+        },
+        "concurrency": {
+          "description": "The number of code monitor jobs allowed to run concurrenctly. Decrease to reduce peak load.",
+          "type": "integer",
+          "default": 4
+        }
+      }
+    },
     "syntaxHighlighting": {
       "title": "SyntaxHighlighting",
       "description": "Syntax highlighting configuration",
       "type": "object",
-      "required": ["engine", "languages"],
       "properties": {
         "engine": {
           "title": "SyntaxHighlightingEngine",
           "type": "object",
-          "required": ["default"],
           "properties": {
             "default": {
               "description": "The default syntax highlighting engine to use",
@@ -954,7 +1063,6 @@
         "languages": {
           "title": "SyntaxHighlightingLanguage",
           "type": "object",
-          "required": ["extensions", "patterns"],
           "properties": {
             "extensions": {
               "description": "Map of extension to language",
@@ -1136,11 +1244,6 @@
         }
       ]
     },
-    "auth.dailyEmailDomainSignupLimit": {
-      "type": "integer",
-      "default": 0,
-      "description": "The maximum number of users that can sign from Google using the same email domain in a 24 hour period."
-    },
     "auth.accessTokens": {
       "description": "Settings for access tokens, which enable external tools to access the Sourcegraph API with the privileges of the user.",
       "type": "object",
@@ -1151,17 +1254,65 @@
           "type": "string",
           "enum": ["all-users-create", "site-admin-create", "none"],
           "default": "all-users-create"
+        },
+        "allowNoExpiration": {
+          "description": "Allows new tokens to be created without specifying an expiration.",
+          "type": "boolean",
+          "!go": {
+            "pointer": true
+          },
+          "default": "true"
+        },
+        "expirationOptionDays": {
+          "description": "Options users will see for the number of days until token expiration. The defaultExpirationDays will be added to the list if not already present.",
+          "type": "array",
+          "default": [7, 14, 30, 60, 90],
+          "items": {
+            "type": "integer",
+            "maximum": 365,
+            "minimum": 1
+          },
+          "examples": [[7, 14, 30, 60, 90]]
+        },
+        "defaultExpirationDays": {
+          "description": "The default duration selection when creating a new access token. This value will be added to the expirationOptionDays if it is not already present",
+          "type": "integer",
+          "!go": {
+            "pointer": true
+          },
+          "default": 90,
+          "maximum": 365,
+          "minimum": 1
+        },
+        "maxTokensPerUser": {
+          "description": "The maximum number of active access tokens a user may have.",
+          "type": "integer",
+          "!go": {
+            "pointer": true
+          },
+          "default": 25,
+          "maximum": 100,
+          "minimum": 1
         }
       },
       "default": {
-        "allow": "all-users-create"
+        "allow": "all-users-create",
+        "allowNoExpiration": false,
+        "expirationOptionDays": [7, 14, 30, 60, 90],
+        "defaultExpirationDays": 90
       },
       "examples": [
         {
-          "allow": "site-admin-create"
+          "allow": "site-admin-create",
+          "allowNoExpiration": true,
+          "expirationOptionDays": [7, 14, 30, 60, 90],
+          "defaultExpirationDays": 90
         },
         {
-          "allow": "none"
+          "allow": "none",
+          "allowNoExpiration": false,
+          "expirationOptionDays": [7, 14, 30, 60, 90],
+          "defaultExpirationDays": 45
         }
       ],
       "group": "Security"
@@ -1223,11 +1374,6 @@
       "description": "When true, site admins will only be able to see private code they have access to via our authz system.",
       "type": "boolean",
       "default": false
-    },
-    "authz.refreshInterval": {
-      "description": "Time interval (in seconds) of how often each component picks up authorization changes in external services.",
-      "type": "integer",
-      "default": 5
     },
     "permissions.userMapping": {
       "description": "Settings for Sourcegraph explicit permissions, which allow the site admin to explicitly manage repository permissions via the GraphQL API. This will mark repositories as restricted by default.",
@@ -1355,7 +1501,7 @@
     },
     "email.smtp": {
       "title": "SMTPServerConfig",
-      "description": "The SMTP server used to send transactional emails.\nPlease see https://docs.sourcegraph.com/admin/config/email",
+      "description": "The SMTP server used to send transactional emails.\nPlease see https://sourcegraph.com/docs/admin/config/email",
       "type": "object",
       "additionalProperties": false,
       "required": ["host", "port", "authentication"],
@@ -1430,7 +1576,7 @@
       "group": "Email"
     },
     "email.address": {
-      "description": "The \"from\" address for emails sent by this server.\nPlease see https://docs.sourcegraph.com/admin/config/email",
+      "description": "The \"from\" address for emails sent by this server.\nPlease see https://sourcegraph.com/docs/admin/config/email",
       "type": "string",
       "format": "email",
       "group": "Email",
@@ -1697,11 +1843,11 @@
       ]
     },
     "observability.tracing": {
-      "description": "Configures distributed tracing within Sourcegraph. To learn more, refer to https://docs.sourcegraph.com/admin/observability/tracing",
+      "description": "Configures distributed tracing within Sourcegraph. To learn more, refer to https://sourcegraph.com/docs/admin/observability/tracing",
       "type": "object",
       "properties": {
         "sampling": {
-          "description": "Determines the conditions under which distributed traces are recorded. \"none\" turns off tracing entirely. \"selective\" (default) sends traces whenever `?trace=1` is present in the URL (though background jobs may still emit traces). \"all\" sends traces on every request. Note that this only affects the behavior of the distributed tracing client. To learn more about additional sampling and traace export configuration with the default tracing type \"opentelemetry\", refer to https://docs.sourcegraph.com/admin/observability/opentelemetry#tracing ",
+          "description": "Determines the conditions under which distributed traces are recorded. \"none\" turns off tracing entirely. \"selective\" (default) sends traces whenever `?trace=1` is present in the URL (though background jobs may still emit traces). \"all\" sends traces on every request. Note that this only affects the behavior of the distributed tracing client. To learn more about additional sampling and traace export configuration with the default tracing type \"opentelemetry\", refer to https://sourcegraph.com/docs/admin/observability/opentelemetry#tracing ",
           "type": "string",
           "enum": ["selective", "all", "none"],
           "default": "selective"
@@ -2071,6 +2217,39 @@
       "description": "Configuration options for Sourcegraph.com only.",
       "type": "object",
       "properties": {
+        "sams.server": {
+          "type": "string",
+          "description": "The server URL for SAMS production instance."
+        },
+        "sams.clientID": {
+          "type": "string",
+          "description": "The clientID for SAMS production instance."
+        },
+        "sams.clientSecret": {
+          "type": "string",
+          "description": "The clientSecret for SAMS production instance."
+        },
+        "samsDev.server": {
+          "type": "string",
+          "description": "The server URL for SAMS development instance.",
+          "default": "https://accounts.sgdev.org"
+        },
+        "samsDev.clientID": {
+          "type": "string",
+          "description": "The clientID for SAMS development instance."
+        },
+        "samsDev.clientSecret": {
+          "type": "string",
+          "description": "The clientSecret for SAMS development instance."
+        },
+        "enterprisePortal.enableProxies": {
+          "type": "boolean",
+          "default": true,
+          "!go": {
+            "pointer": true
+          },
+          "description": "Whether to enable Enterprise Portal auth proxies for site admins."
+        },
         "minimumExternalAccountAge": {
           "description": "The minimum amount of days a Github or GitLab account must exist, before being allowed on Sourcegraph.com.",
           "type": "integer",
@@ -2170,6 +2349,40 @@
               "type": "string"
             }
           }
+        },
+        "codyProConfig": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "stripePublishableKey": {
+              "type": "string",
+              "default": null,
+              "description": "Stripe Publishable Key for use in Stripe Checkout, Stripe Elements. This is not considered a secret.",
+              "examples": ["pk_test_...", "pk_live_..."]
+            },
+            "samsBackendOrigin": {
+              "type": "string",
+              "default": "",
+              "description": "Origin of the SAMS backend. (Must match the SAMS OIDC registration in auth.providers.)",
+              "examples": ["https://accounts.sourcegraph.com"]
+            },
+            "sscBackendOrigin": {
+              "type": "string",
+              "default": "",
+              "description": "Origin of the Self-serve Cody backend.",
+              "examples": ["https://accounts.sourcegraph.com"]
+            },
+            "sscBaseUrl": {
+              "type": "string",
+              "default": "https://accounts.sourcegraph.com/cody",
+              "description": "The base URL of the Self-Serve Cody site."
+            },
+            "useEmbeddedUI": {
+              "type": "boolean",
+              "default": false,
+              "description": "Whether Cody Pro UI is served from sourcegraph.com. If false, users are directed to https://accounts.sourcegraph.com/cody to manage their Cody Pro subscription."
+            }
+          }
         }
       },
       "group": "Sourcegraph.com"
@@ -2211,6 +2424,7 @@
             "enum": [
               "azureDevOps",
               "bitbucketcloud",
+              "bitbucketserver",
               "builtin",
               "gerrit",
               "github",
@@ -2227,6 +2441,9 @@
           },
           {
             "$ref": "#/definitions/BitbucketCloudAuthProvider"
+          },
+          {
+            "$ref": "#/definitions/BitbucketServerAuthProvider"
           },
           {
             "$ref": "#/definitions/BuiltinAuthProvider"
@@ -2506,8 +2723,42 @@
       },
       "group": "Cody"
     },
+    "cody.contextFilters": {
+      "description": "Rules defining the repositories that will never be shared by Cody with third-party LLM providers.",
+      "type": "object",
+      "properties": {
+        "include": {
+          "description": "List of rules specifying repositories that Cody may include as context in requests to third-party LLMs. If defined, only repositories matching these rules will be considered for sharing. If not defined, all repositories may be shared.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/CodyContextFilterItem"
+          },
+          "minItems": 1
+        },
+        "exclude": {
+          "description": "List of rules specifying repositories that Cody should excluded from context in requests to third-party LLMs. These rules are applied only to repositories matching the include rules.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/CodyContextFilterItem"
+          },
+          "minItems": 1
+        }
+      },
+      "minProperties": 1,
+      "additionalProperties": false,
+      "group": "Cody"
+    },
+    "cody.permissions": {
+      "description": "Whether to enable Cody role-based access controls. Only respected if cody.restrictUsersFeatureFlag is not set. See https://sourcegraph.com/docs/admin/access_control",
+      "type": "boolean",
+      "default": true,
+      "!go": {
+        "pointer": true
+      },
+      "group": "Cody"
+    },
     "cody.restrictUsersFeatureFlag": {
-      "description": "Restrict Cody to only be enabled for users that have a feature flag labeled \"cody\" set to true. You must create a feature flag with this ID after enabling this setting: https://docs.sourcegraph.com/dev/how-to/use_feature_flags#create-a-feature-flag. This setting only has an effect if cody.enabled is true.",
+      "description": "DEPRECATED; see cody.permissions instead. PRIOR DESCRIPTION: Cody to only be enabled for users that have a feature flag labeled \"cody\" set to true. You must create a feature flag with this ID after enabling this setting: https://docs-legacy.sourcegraph.com/dev/how-to/use_feature_flags#create-a-feature-flag. This setting only has an effect if cody.enabled is true.",
       "type": "boolean",
       "default": false,
       "!go": {
@@ -2516,6 +2767,7 @@
       "group": "Cody"
     },
     "embeddings": {
+      "deprecationMessage": "Deprecated changes to this section will not be respected.",
       "description": "Configuration for embeddings service.",
       "type": "object",
       "properties": {
@@ -2663,116 +2915,6 @@
             "pointer": true
           },
           "default": true
-        },
-        "qdrant": {
-          "description": "Overrides for the default qdrant config. These should generally not be modified without direction from the Sourcegraph support team.",
-          "type": "object",
-          "$comment": "Skipped fields from HnswConfigDiff: MaxIndexingThreads",
-          "properties": {
-            "enabled": {
-              "type": "boolean",
-              "default": false
-            },
-            "hnsw": {
-              "description": "Overrides for the HNSW index config.",
-              "type": "object",
-              "properties": {
-                "m": {
-                  "description": "Number of edges per node in the index graph. Larger the value - more accurate the search, more space required.",
-                  "type": "integer",
-                  "minimum": 0,
-                  "!go": {
-                    "pointer": true
-                  },
-                  "default": 8
-                },
-                "efConstruct": {
-                  "description": "Number of neighbours to consider during the index building. Larger the value, more accurate the search, more time required to build the index.",
-                  "type": "integer",
-                  "minimum": 0,
-                  "!go": {
-                    "pointer": true
-                  },
-                  "default": 100
-                },
-                "fullScanThreshold": {
-                  "description": "Minimal size (in KiloBytes) of vectors for additional payload-based indexing.",
-                  "type": "integer",
-                  "minimum": 0,
-                  "!go": {
-                    "pointer": true
-                  },
-                  "default": 1000
-                },
-                "onDisk": {
-                  "description": "Store HNSW index on disk.",
-                  "type": "boolean",
-                  "!go": {
-                    "pointer": true
-                  },
-                  "default": true
-                },
-                "payloadM": {
-                  "description": "Number of edges per node in the index graph. Larger the value, more accurate the search, more space required.",
-                  "type": "integer",
-                  "minimum": 0,
-                  "!go": {
-                    "pointer": true
-                  },
-                  "default": 8
-                }
-              }
-            },
-            "quantization": {
-              "description": "Overrides for quantization config.",
-              "type": "object",
-              "$comment": "Skipped fields from ScalarQuantization: AlwaysRam",
-              "properties": {
-                "enabled": {
-                  "description": "Whether to enable int8 scalar quantization",
-                  "type": "boolean",
-                  "!go": {
-                    "pointer": true
-                  },
-                  "default": true
-                },
-                "quantile": {
-                  "description": "Any values that lie outside the quantile range will be truncated",
-                  "type": "number",
-                  "minimum": 0,
-                  "maximum": 1,
-                  "!go": {
-                    "pointer": true
-                  },
-                  "default": 0.98
-                }
-              }
-            },
-            "optimizers": {
-              "type": "object",
-              "$comment": "Skipped fields from OptimizersConfigDiff: DeletedThreshold, VacuumMinVectorNumber, DefaultSegmentNumber, MaxSegmentSize, FlushIntervalSec, MaxOptimizationThreads",
-              "properties": {
-                "indexingThreshold": {
-                  "description": "Maximum size (in kilobytes) of vectors allowed for plain index, exceeding this threshold will enable vector indexing. Set to 0 to disable indexing",
-                  "type": "integer",
-                  "minimum": 0,
-                  "!go": {
-                    "pointer": true
-                  },
-                  "default": 0
-                },
-                "memmapThreshold": {
-                  "description": "Maximum size (in kilobytes) of vectors to store in-memory per segment.",
-                  "type": "integer",
-                  "minimum": 0,
-                  "!go": {
-                    "pointer": true
-                  },
-                  "default": 100
-                }
-              }
-            }
-          }
         }
       },
       "examples": [
@@ -2802,25 +2944,94 @@
           "description": "DEPRECATED. Use chatModel instead.",
           "type": "string"
         },
-        "fastChatModel": {
-          "description": "The model used for fast chat completions.",
+        "user": {
+          "description": "The user field for OpenAI config for both AzureOpenAI and OpenAI",
           "type": "string"
+        },
+        "azureChatModel": {
+          "description": "Optional: Specify the Azure OpenAI model name for chat completions. This is only needed when you want to count tokens associated with your azure model",
+          "type": "string",
+          "enum": [
+            "gpt-3.5-turbo",
+            "gpt-3.5-turbo-16k",
+            "gpt-3.5-turbo-instruct",
+            "gpt-3.5-turbo-0301",
+            "gpt-3.5-turbo-0613",
+            "gpt-3.5-turbo-16k-0613",
+            "gpt-4-0314",
+            "gpt-4-32k-0314",
+            "gpt-4-0613",
+            "gpt-4-32k-0613",
+            "gpt-4o",
+            "gpt-4"
+          ]
+        },
+        "azureCompletionModel": {
+          "description": "Optional: Specify the Azure OpenAI model name for chat completions. This is only needed when you want to count tokens associated with your azure model",
+          "type": "string",
+          "enum": [
+            "gpt-3.5-turbo",
+            "gpt-3.5-turbo-instruct",
+            "gpt-3.5-turbo-16k",
+            "gpt-3.5-turbo-0301",
+            "gpt-3.5-turbo-0613",
+            "gpt-3.5-turbo-16k-0613",
+            "gpt-4-0314",
+            "gpt-4-32k-0314",
+            "gpt-4-0613",
+            "gpt-4-32k-0613",
+            "gpt-4o",
+            "gpt-4"
+          ]
+        },
+        "fastChatModel": {
+          "description": "The model used for fast chat completions. \n NOTE: The Anthropic messages API does not support model names like claude-2 or claude-instant-1 where only the major version is specified as they are retired. We recommend using a specific model identifier as specified here https://docs.anthropic.com/claude/docs/models-overview#model-comparison ",
+          "type": "string",
+          "not": {
+            "enum": ["claude-2", "claude-instant-1"]
+          }
+        },
+        "azureUseDeprecatedCompletionsAPIForOldModels": {
+          "description": "Enables the use of the older completions API for select Azure OpenAI models.",
+          "type": "boolean",
+          "default": true
         },
         "fastChatModelMaxTokens": {
           "description": "The maximum number of tokens to use as client when talking to fastChatModel. If not set, clients need to set their own limit.",
           "type": "integer"
         },
         "chatModel": {
-          "description": "The model used for chat completions. If using the default provider 'sourcegraph', a reasonable default model will be set.",
-          "type": "string"
+          "description": "The model used for chat completions. If using the default provider 'sourcegraph', a reasonable default model will be set.\n NOTE: The Anthropic messages API does not support model names like claude-2 or claude-instant-1 where only the major version is specified as they are retired. We recommend using a specific model identifier as specified here https://docs.anthropic.com/claude/docs/models-overview#model-comparison ",
+          "type": "string",
+          "not": {
+            "enum": ["claude-2", "claude-instant-1"]
+          },
+          "errorMessage": "The substring 'cumber' is not allowed because it is a bad idea and may lead to unexpected issues."
         },
         "chatModelMaxTokens": {
-          "description": "The maximum number of tokens to use as client when talking to chatModel. If not set, clients need to set their own limit.",
+          "description": "The maximum number of tokens to use as client when talking to chatModel. If not set, clients need to set their own limit. If smartContextWindow is enabled, this value will be overridden by the clients.",
           "type": "integer"
         },
+        "smartContextWindow": {
+          "description": "Whether the maximum number of tokens should be automatically adjusted by the client based on the name of chatModel. If enabled, it will override the value set in chatModelMaxTokens.",
+          "type": "string",
+          "default": "enabled",
+          "enum": ["enabled", "disabled"]
+        },
+        "disableClientConfigAPI": {
+          "description": "Should not be set. If set to true, disables the use of the new client config API. This new API has no user-facing effect, this opt-out is provided only as an escape hatch in case of issues.",
+          "type": "boolean",
+          "!go": {
+            "pointer": true
+          },
+          "deprecationMessage": "This opt-out feature flag will be removed soon."
+        },
         "completionModel": {
-          "description": "The model used for code completion. If using the default provider 'sourcegraph', a reasonable default model will be set.",
-          "type": "string"
+          "description": "The model used for code completion. If using the default provider 'sourcegraph', a reasonable default model will be set.\n NOTE: The Anthropic messages API does not support model names like claude-2 or claude-instant-1 where only the major version is specified as they are retired. We recommend using a specific model identifier as specified here https://docs.anthropic.com/claude/docs/models-overview#model-comparison ",
+          "type": "string",
+          "not": {
+            "enum": ["claude-2", "claude-instant-1"]
+          }
         },
         "completionModelMaxTokens": {
           "description": "The maximum number of tokens to use as client when talking to completionModel. If not set, clients need to set their own limit.",
@@ -2834,11 +3045,11 @@
           "type": "string",
           "description": "The external completions provider. Defaults to 'sourcegraph'.",
           "default": "sourcegraph",
-          "enum": ["anthropic", "openai", "sourcegraph", "azure-openai", "aws-bedrock", "fireworks"]
+          "enum": ["anthropic", "openai", "sourcegraph", "azure-openai", "aws-bedrock", "fireworks", "google"]
         },
         "endpoint": {
           "type": "string",
-          "description": "The endpoint under which to reach the provider. Currently only used for provider types \"sourcegraph\", \"openai\" and \"anthropic\". The default values are \"https://cody-gateway.sourcegraph.com\", \"https://api.openai.com/v1/chat/completions\", and \"https://api.anthropic.com/v1/complete\" for Sourcegraph, OpenAI, and Anthropic, respectively."
+          "description": "The endpoint under which to reach the provider. Currently only used for provider types \"sourcegraph\", \"openai\" and \"anthropic\". The default values are \"https://cody-gateway.sourcegraph.com\", \"https://api.openai.com/v1/chat/completions\", and \"https://api.anthropic.com/v1/messages\" for Sourcegraph, OpenAI, and Anthropic, respectively."
         },
         "perUserDailyLimit": {
           "description": "If > 0, limits the number of completions requests allowed for a user in a day. On instances that allow anonymous requests, we enforce the rate limit by IP.",
@@ -2901,9 +3112,827 @@
           "perUserDailyLimit": 100
         }
       ]
+    },
+    "configFeatures": {
+      "description": "Configuration for the completions service.",
+      "type": "object",
+      "properties": {
+        "chat": {
+          "description": "Enable/Disable Chat for the clients",
+          "type": "boolean"
+        },
+        "autoComplete": {
+          "description": "Enable/Disable AutoComplete for the clients",
+          "type": "boolean"
+        },
+        "commands": {
+          "description": "Enable/Disable special commands for the clients",
+          "type": "boolean"
+        }
+      },
+      "examples": [
+        {
+          "chat": true
+        }
+      ]
+    },
+    "attribution.enabled": {
+      "description": "Enable/Disable attribution search for Cody-generated snippets",
+      "type": "boolean",
+      "!go": {
+        "pointer": true
+      }
+    },
+    "attribution.gateway": {
+      "description": "Use this gateway parameters for customers that bring their own key. Otherwise gateway endpoint is used.",
+      "type": "object",
+      "properties": {
+        "endpoint": {
+          "description": "Endpoint where Cody gateway can be accessed for attribution.",
+          "type": "string"
+        },
+        "accessToken": {
+          "description": "Only for use to override token for attribution gateway access. If 'licenseKey' is set, a default access token is generated.",
+          "type": "string"
+        }
+      },
+      "!go": {
+        "pointer": true
+      }
+    },
+    "modelConfiguration": {
+      "$ref": "#/definitions/SiteModelConfiguration"
     }
   },
   "definitions": {
+    "SiteModelConfiguration": {
+      "type": "object",
+      "!go": {
+        "pointer": true
+      },
+      "description": "BETA FEATURE, only enable if you know what you are doing. If set, Cody will use the new model configuration system and ignore the old 'completions' site configuration entirely.",
+      "properties": {
+        "sourcegraph": {
+          "$ref": "#/definitions/SourcegraphModelConfig"
+        },
+        "providerOverrides": {
+          "description": "Configures model providers. Here you can override how Cody connects to model providers and e.g. bring your own API keys or self-hosted models.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/ProviderOverride"
+          }
+        },
+        "modelOverrides": {
+          "description": "Override, or add to, the list of models Cody is aware of and how they are configured to work",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/ModelOverride"
+          }
+        },
+        "modelOverridesRecommendedSettings": {
+          "deprecationMessage": "Deprecated; use 'selfHostedModels' instead.",
+          "description": "Override, or add to, the list of models Cody is aware of - but let Sourcegraph configure how the model should work. Only available for select models.\n\nSpecifying the same model both here and in 'modelOverrides' is not allowed.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string",
+            "enum": [
+              "bigcode::v1::starcoder2-7b",
+              "bigcode::v1::starcoder2-15b",
+              "mistral::v1::mistral-7b-instruct",
+              "mistral::v1::mixtral-8x7b-instruct",
+              "mistral::v1::mixtral-8x22b-instruct"
+            ]
+          }
+        },
+        "selfHostedModels": {
+          "description": "Add models to the list of models Cody is aware of, but let Sourcegraph provide default configuration for the model. Only available for select models, generic models can be configured in 'modelOverrides'.\n\nSpecifying the same model both here and in 'modelOverrides' is not allowed.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/SelfHostedModel"
+          }
+        },
+        "defaultModels": {
+          "$ref": "#/definitions/DefaultModels"
+        }
+      }
+    },
+    "SelfHostedModel": {
+      "type": "object",
+      "examples": [
+        {
+          "provider": "mistral",
+          "model": "mixtral-8x7b-instruct",
+          "override": {
+            "serverSideConfig": {
+              "apiModel": "mixtral-8x7b-instruct"
+            }
+          }
+        }
+      ],
+      "required": ["provider"],
+      "properties": {
+        "provider": {
+          "description": "provider ID",
+          "type": "string",
+          "examples": ["mistral", "meta", "acme-corp-custom"]
+        },
+        "apiVersion": {
+          "description": "API version",
+          "type": "string",
+          "examples": ["v1"],
+          "default": "v1"
+        },
+        "model": {
+          "description": "Which default model configuration to use. Sourcegraph provides default model configuration for select models. Arbitrary models can be configured in 'modelOverrides'",
+          "type": "string",
+          "enum": [
+            "starcoder2-7b@v1",
+            "starcoder2-15b@v1",
+            "mistral-7b-instruct@v1",
+            "mixtral-8x7b-instruct@v1",
+            "mixtral-8x22b-instruct@v1"
+          ]
+        },
+        "override": {
+          "$ref": "#/definitions/SelfHostedModelOverride"
+        }
+      }
+    },
+    "SelfHostedModelOverride": {
+      "description": "Properties to override in the default model configuration",
+      "type": "object",
+      "properties": {
+        "displayName": {
+          "description": "Display name",
+          "type": "string",
+          "examples": ["Claude 3 Sonnet", "GPT-4 Turbo"]
+        },
+        "contextWindow": {
+          "$ref": "#/definitions/ContextWindow"
+        },
+        "clientSideConfig": {
+          "$ref": "#/definitions/ClientSideModelConfigOpenAICompatible"
+        },
+        "serverSideConfig": {
+          "$ref": "#/definitions/ServerSideModelConfigOpenAICompatible"
+        }
+      }
+    },
+    "SourcegraphModelConfig": {
+      "description": "If null, Cody will not use Sourcegraph's servers for model discovery.",
+      "type": ["object", "null"],
+      "!go": {
+        "pointer": true
+      },
+      "properties": {
+        "endpoint": {
+          "description": "The Cody gateway URL to use for making LLM requests. If null, the production URL for Cody gateway will be used.",
+          "type": "string",
+          "!go": {
+            "pointer": true
+          },
+          "default": null
+        },
+        "accessToken": {
+          "description": "The Cody gateway access token to use. If null, an access token will be automatically generated based on the product license.",
+          "type": "string",
+          "!go": {
+            "pointer": true
+          },
+          "default": null
+        },
+        "modelFilters": {
+          "$ref": "#/definitions/ModelFilters"
+        }
+      }
+    },
+    "ModelFilters": {
+      "description": "Filters that allow you to constrain which models are available to users.",
+      "type": "object",
+      "!go": {
+        "pointer": true
+      },
+      "default": null,
+      "properties": {
+        "statusFilter": {
+          "description": "Constrain models to just those matching one of the supplied statuses",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["experimental", "beta", "stable", "deprecated"]
+          },
+          "examples": ["beta", "stable"],
+          "default": ["stable"]
+        },
+        "allow": {
+          "description": "Constrain models to only those in this allow list. Wildcards may be used here, but not regexp.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "examples": ["anthropic::*", "openai::2024-02-01::*"],
+          "default": ["*"]
+        },
+        "deny": {
+          "description": "Any models in this deny list will not be allowed. Wildcards may be used here, but not regexp.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "examples": [["*gpt*"]],
+          "default": []
+        }
+      }
+    },
+    "ProviderOverride": {
+      "type": "object",
+      "required": ["id", "displayName"],
+      "properties": {
+        "id": {
+          "description": "provider ID",
+          "type": "string",
+          "examples": ["anthropic", "google", "acme-corp-custom"]
+        },
+        "displayName": {
+          "description": "display name",
+          "type": "string",
+          "examples": ["Anthropic", "Google", "ACME Corp Custom"]
+        },
+        "clientSideConfig": {
+          "$ref": "#/definitions/ClientSideProviderConfig"
+        },
+        "serverSideConfig": {
+          "$ref": "#/definitions/ServerSideProviderConfig"
+        },
+        "defaultModelConfig": {
+          "$ref": "#/definitions/DefaultModelConfig"
+        }
+      }
+    },
+    "ModelOverride": {
+      "type": "object",
+      "required": ["modelRef", "displayName", "modelName", "capabilities", "category", "status", "contextWindow"],
+      "properties": {
+        "modelRef": {
+          "description": "The qualified name of the model in '${ProviderID}::${APIVersionID}::${ModelID}' format",
+          "type": "string",
+          "examples": ["anthropic::2023-06-01::claude-3-sonnet", "openai::2024-02-01::gpt-4-turbo"]
+        },
+        "displayName": {
+          "description": "display name",
+          "type": "string",
+          "examples": ["Claude 3 Sonnet", "GPT-4 Turbo"]
+        },
+        "modelName": {
+          "description": "model name used when sending requests to the LLM provider's backend API.",
+          "type": "string",
+          "examples": ["claude-3-sonnet-20240229", "gpt-4-turbo"]
+        },
+        "capabilities": {
+          "description": "Whether the model can be used for chat, just autocomplete, etc.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["autocomplete", "chat"]
+          },
+          "examples": [["chat", "autocomplete"]]
+        },
+        "category": {
+          "type": "string",
+          "enum": ["accuracy", "balanced", "speed"],
+          "examples": ["balanced"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["experimental", "beta", "stable", "deprecated"],
+          "examples": ["stable"]
+        },
+        "contextWindow": {
+          "$ref": "#/definitions/ContextWindow"
+        },
+        "clientSideConfig": {
+          "$ref": "#/definitions/ClientSideModelConfig"
+        },
+        "serverSideConfig": {
+          "$ref": "#/definitions/ServerSideModelConfig"
+        }
+      }
+    },
+    "ContextWindow": {
+      "description": "Context window for the model",
+      "type": "object",
+      "examples": [
+        {
+          "maxInputTokens": 7000,
+          "maxOutputTokens": 4000
+        }
+      ],
+      "required": ["maxInputTokens", "maxOutputTokens"],
+      "properties": {
+        "maxInputTokens": {
+          "type": "integer",
+          "examples": [7000]
+        },
+        "maxOutputTokens": {
+          "type": "integer",
+          "examples": [4000]
+        }
+      }
+    },
+    "DefaultModels": {
+      "type": "object",
+      "!go": {
+        "pointer": true
+      },
+      "default": null,
+      "properties": {
+        "chat": {
+          "description": "The qualified name of the model to use for chat, in '${ProviderID}::${APIVersionID}::${ModelID}' format",
+          "type": "string",
+          "examples": [["anthropic::2023-06-01::claude-3-sonnet", "openai::2024-02-01::gpt-4-turbo"]]
+        },
+        "fastChat": {
+          "description": "The qualified name of the model to use for fast chat, in '${ProviderID}::${APIVersionID}::${ModelID}' format",
+          "type": "string",
+          "examples": [["anthropic::2023-06-01::claude-3-sonnet", "openai::2024-02-01::gpt-4-turbo"]]
+        },
+        "codeCompletion": {
+          "description": "The qualified name of the model to use for code completion, in '${ProviderID}::${APIVersionID}::${ModelID}' format",
+          "type": "string",
+          "examples": [["anthropic::2023-06-01::claude-3-sonnet", "openai::2024-02-01::gpt-4-turbo"]]
+        }
+      }
+    },
+    "DefaultModelConfig": {
+      "description": "The model configuration that is applied to every model for a given provider.",
+      "type": "object",
+      "required": ["capabilities", "category", "status", "contextWindow"],
+      "properties": {
+        "capabilities": {
+          "description": "Whether the model can be used for chat, just autocomplete, etc.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["autocomplete", "chat"]
+          },
+          "examples": [["chat", "autocomplete"]]
+        },
+        "category": {
+          "type": "string",
+          "enum": ["accuracy", "balanced", "speed"],
+          "examples": [["balanced"]]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["experimental", "beta", "stable", "deprecated"],
+          "examples": [["stable"]]
+        },
+        "contextWindow": {
+          "$ref": "#/definitions/ContextWindow"
+        },
+        "clientSideConfig": {
+          "$ref": "#/definitions/ClientSideModelConfig"
+        },
+        "serverSideConfig": {
+          "$ref": "#/definitions/ServerSideModelConfig"
+        }
+      }
+    },
+    "ClientSideProviderConfig": {
+      "type": "object",
+      "!go": {
+        "pointer": true
+      },
+      "default": null,
+      "description": "No client-side provider configuration is currently available.",
+      "properties": {}
+    },
+    "ServerSideProviderConfig": {
+      "type": "object",
+      "!go": {
+        "pointer": true,
+        "taggedUnionType": true
+      },
+      "default": null,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "awsBedrock",
+            "azureOpenAI",
+            "anthropic",
+            "fireworks",
+            "google",
+            "openai",
+            "huggingface-tgi",
+            "openaicompatible",
+            "sourcegraph"
+          ]
+        }
+      },
+      "oneOf": [
+        {
+          "$ref": "#/definitions/ServerSideProviderConfigAWSBedrock"
+        },
+        {
+          "$ref": "#/definitions/ServerSideProviderConfigAzureOpenAI"
+        },
+        {
+          "$ref": "#/definitions/ServerSideProviderConfigAnthropicProvider"
+        },
+        {
+          "$ref": "#/definitions/ServerSideProviderConfigFireworksProvider"
+        },
+        {
+          "$ref": "#/definitions/ServerSideProviderConfigGoogleProvider"
+        },
+        {
+          "$ref": "#/definitions/ServerSideProviderConfigOpenAIProvider"
+        },
+        {
+          "$ref": "#/definitions/ServerSideProviderConfigHuggingfaceTGIProvider"
+        },
+        {
+          "$ref": "#/definitions/ServerSideProviderConfigOpenAICompatibleProvider"
+        },
+        {
+          "$ref": "#/definitions/ServerSideProviderConfigSourcegraphProvider"
+        },
+        {
+          "$ref": "#/definitions/DoNotUsePhonyDiscriminantType"
+        }
+      ]
+    },
+    "ServerSideProviderConfigAWSBedrock": {
+      "type": "object",
+      "required": ["type", "accessToken", "endpoint", "region"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "awsBedrock"
+        },
+        "accessToken": {
+          "description": "Leave empty to rely on instance role bindings or other AWS configurations in frontend service. <ACCESS_KEY_ID>:<SECRET_ACCESS_KEY> if directly configuring the credentials, or <ACCESS_KEY_ID>:<SECRET_ACCESS_KEY>:<SESSION_TOKEN> if a session token is also required.",
+          "type": "string"
+        },
+        "endpoint": {
+          "description": "For Pay-as-you-go, set it to an AWS region code (e.g., us-west-2) when using a public Amazon Bedrock endpoint; For Provisioned Throughput, set it to the provisioned VPC endpoint for the bedrock-runtime API (e.g., 'https://vpce-0a10b2345cd67e89f-abc0defg.bedrock-runtime.us-west-2.vpce.amazonaws.com')",
+          "type": "string"
+        },
+        "region": {
+          "description": "Region to use when configuring API clients. (Since the 'frontend' binary's container won't be able to pick this up from the host OS's environment variables.)",
+          "type": "string"
+        }
+      }
+    },
+    "ServerSideProviderConfigAzureOpenAI": {
+      "type": "object",
+      "required": ["type", "accessToken", "endpoint", "user", "useDeprecatedCompletionsAPI"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "azureOpenAI"
+        },
+        "accessToken": {
+          "description": "As of 5.2.4 the access token can be left empty and it will rely on Environmental, Workload Identity or Managed Identity credentials configured for the frontend and worker services; Set it to <API_KEY> if directly configuring the credentials using the API key specified in the Azure portal",
+          "type": "string"
+        },
+        "endpoint": {
+          "description": "Endpoint from the Azure OpenAI Service portal",
+          "type": "string"
+        },
+        "user": {
+          "description": "The user field passed along to OpenAI-provided models.",
+          "type": "string"
+        },
+        "useDeprecatedCompletionsAPI": {
+          "description": "Enables the use of the older completions API for select Azure OpenAI models. This is just an escape hatch, for backwards compatibility, because not all Azure OpenAI models are available on the 'newer' completions API.",
+          "type": "boolean"
+        }
+      }
+    },
+    "ServerSideProviderConfigAnthropicProvider": {
+      "type": "object",
+      "required": ["type", "accessToken", "endpoint"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "anthropic"
+        },
+        "accessToken": {
+          "type": "string"
+        },
+        "endpoint": {
+          "type": "string"
+        }
+      }
+    },
+    "ServerSideProviderConfigFireworksProvider": {
+      "type": "object",
+      "required": ["type", "accessToken", "endpoint"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "fireworks"
+        },
+        "accessToken": {
+          "type": "string"
+        },
+        "endpoint": {
+          "type": "string"
+        }
+      }
+    },
+    "ServerSideProviderConfigGoogleProvider": {
+      "type": "object",
+      "required": ["type", "accessToken", "endpoint"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "google"
+        },
+        "accessToken": {
+          "type": "string"
+        },
+        "endpoint": {
+          "type": "string"
+        }
+      }
+    },
+    "ServerSideProviderConfigOpenAIProvider": {
+      "type": "object",
+      "required": ["type", "accessToken", "endpoint"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "openai"
+        },
+        "accessToken": {
+          "type": "string"
+        },
+        "endpoint": {
+          "type": "string"
+        }
+      }
+    },
+    "ServerSideProviderConfigHuggingfaceTGIProvider": {
+      "type": "object",
+      "required": ["type", "endpoints"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "huggingface-tgi"
+        },
+        "endpoints": {
+          "$ref": "#/definitions/OpenAICompatibleEndpoint"
+        },
+        "enableVerboseLogs": {
+          "description": "Whether to enable verbose logging of requests. When enabled, grep for 'OpenAICompatible' in the frontend container logs to see the requests Cody makes to the endpoint.",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "ServerSideProviderConfigOpenAICompatibleProvider": {
+      "type": "object",
+      "required": ["type", "endpoints"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "openaicompatible"
+        },
+        "endpoints": {
+          "$ref": "#/definitions/OpenAICompatibleEndpoint"
+        },
+        "enableVerboseLogs": {
+          "description": "Whether to enable verbose logging of requests. When enabled, grep for 'OpenAICompatible' in the frontend container logs to see the requests Cody makes to the endpoint.",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "OpenAICompatibleEndpoint": {
+      "description": "Endpoints to connect to. If multiple are specified, Sourcegraph will randomly distribute requests between them.",
+      "type": "array",
+      "items": {
+        "minLength": 1,
+        "type": "object",
+        "required": ["url"],
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "accessToken": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "ServerSideProviderConfigSourcegraphProvider": {
+      "type": "object",
+      "required": ["type", "accessToken", "endpoint"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "sourcegraph"
+        },
+        "accessToken": {
+          "type": "string"
+        },
+        "endpoint": {
+          "type": "string"
+        }
+      }
+    },
+    "ClientSideModelConfig": {
+      "type": "object",
+      "!go": {
+        "pointer": true
+      },
+      "default": null,
+      "description": "No client-side model configuration is currently available.",
+      "properties": {
+        "openaicompatible": {
+          "$ref": "#/definitions/ClientSideModelConfigOpenAICompatible"
+        }
+      }
+    },
+    "ClientSideModelConfigOpenAICompatible": {
+      "type": "object",
+      "!go": {
+        "pointer": true
+      },
+      "default": null,
+      "description": "Advanced configuration options that are only respected if the model is provided by an openaicompatible provider.",
+      "properties": {
+        "stopSequences": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "List of stop sequences to use for this model.",
+            "examples": ["\n"]
+          }
+        },
+        "endOfText": {
+          "type": "string",
+          "description": "End of text identifier used by the model.",
+          "examples": ["<|endoftext|>", "<EOT>"]
+        },
+        "contextSizeHintTotalCharacters": {
+          "!go": {
+            "pointer": true
+          },
+          "default": null,
+          "type": "integer",
+          "description": "A hint the client should use when producing context to send to the LLM.\nThe maximum length of all context (prefix + suffix + snippets), in characters."
+        },
+        "contextSizeHintPrefixCharacters": {
+          "!go": {
+            "pointer": true
+          },
+          "default": null,
+          "type": "integer",
+          "description": "A hint the client should use when producing context to send to the LLM.\nThe maximum length of the document prefix (text before the cursor) to include, in characters."
+        },
+        "contextSizeHintSuffixCharacters": {
+          "!go": {
+            "pointer": true
+          },
+          "default": null,
+          "type": "integer",
+          "description": "A hint the client should use when producing context to send to the LLM.\nThe maximum length of the document suffix (text after the cursor) to include, in characters."
+        },
+        "chatPreInstruction": {
+          "type": "string",
+          "description": "Custom instruction to be included at the start of all chat messages\nwhen using this model, e.g. 'Answer all questions in Spanish.'\n\nNote: similar to Cody client config option 'cody.chat.preInstruction'; if user has configured that it will be used instead of this."
+        },
+        "editPostInstruction": {
+          "type": "string",
+          "description": "Custom instruction to be included at the end of all edit commands\nwhen using this model, e.g. 'Write all unit tests with Jest instead of detected framework.'\n\nNote: similar to Cody client config option 'cody.edit.preInstruction'; if user has configured that it will be respected instead of this."
+        },
+        "autocompleteSinglelineTimeout": {
+          "type": "integer",
+          "description": "How long the client should wait for autocomplete results to come back (milliseconds), before giving up and not displaying an autocomplete result at all.\n\nThis applies on single-line completions, e.g. 'var i = <completion>'\n\nNote: similar to hidden Cody client config option 'cody.autocomplete.advanced.timeout.singleline' If user has configured that, it will be respected instead of this."
+        },
+        "autocompleteMultilineTimeout": {
+          "type": "integer",
+          "description": "How long the client should wait for autocomplete results to come back (milliseconds), before giving up and not displaying an autocomplete result at all.\n\nThis applies on multi-line completions, which are based on intent-detection when e.g. a code block is being completed, e.g. 'func parseURL(url string) {<completion>'\n\nNote: similar to hidden Cody client config option 'cody.autocomplete.advanced.timeout.multiline' If user has configured that, it will be respected instead of this."
+        },
+        "chatTopK": {
+          "type": "number"
+        },
+        "chatTopP": {
+          "type": "number"
+        },
+        "chatTemperature": {
+          "type": "number"
+        },
+        "chatMaxTokens": {
+          "type": "integer"
+        },
+        "autoCompleteTopK": {
+          "type": "number"
+        },
+        "autoCompleteTopP": {
+          "type": "number"
+        },
+        "autoCompleteTemperature": {
+          "type": "number"
+        },
+        "autoCompleteSinglelineMaxTokens": {
+          "type": "integer"
+        },
+        "autoCompleteMultilineMaxTokens": {
+          "type": "integer"
+        },
+        "editTopK": {
+          "type": "number"
+        },
+        "editTopP": {
+          "type": "number"
+        },
+        "editTemperature": {
+          "type": "number"
+        },
+        "editMaxTokens": {
+          "type": "integer"
+        }
+      }
+    },
+    "ServerSideModelConfig": {
+      "type": "object",
+      "!go": {
+        "pointer": true,
+        "taggedUnionType": true
+      },
+      "default": null,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["awsBedrockProvisionedThroughput", "openaicompatible"]
+        }
+      },
+      "oneOf": [
+        {
+          "$ref": "#/definitions/ServerSideModelConfigAwsBedrockProvisionedThroughput"
+        },
+        {
+          "$ref": "#/definitions/ServerSideModelConfigOpenAICompatible"
+        },
+        {
+          "$ref": "#/definitions/DoNotUsePhonyDiscriminantType"
+        }
+      ]
+    },
+    "ServerSideModelConfigAwsBedrockProvisionedThroughput": {
+      "type": "object",
+      "required": ["type", "arn"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "awsBedrockProvisionedThroughput"
+        },
+        "arn": {
+          "description": "The 'provisioned throughput ARN' to use when sending requests to AWS Bedrock",
+          "type": "string"
+        }
+      }
+    },
+    "ServerSideModelConfigOpenAICompatible": {
+      "description": "Configuration that is only respected if the model is provided by an openaicompatible provider.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "openaicompatible"
+        },
+        "apiModel": {
+          "description": "The literal string value of the 'model' field that will be sent to the /chat/completions API, for example. If set, Sourcegraph treats this as an opaque string and sends it directly to the API, inferring no information from it. By default, the configured model name is sent.",
+          "type": "string"
+        }
+      }
+    },
+    "DoNotUsePhonyDiscriminantType": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "unused"
+        },
+        "doNotUseThisProperty": {
+          "description": "Do not use/set this property, it is useless. go-jsonschema has an issue where it does not support writing a tagged union unless it can find a field each of the union types do NOT have in common; this type merely exists to provide a field that is not in common with all other oneOf types. https://sourcegraph.com/github.com/sourcegraph/go-jsonschema/-/blob/compiler/generator_tagged_union_type.go?L47-49",
+          "type": "string"
+        }
+      }
+    },
     "BrandAssets": {
       "type": "object",
       "properties": {
@@ -2958,6 +3987,9 @@
         "hidden": {
           "$ref": "#/definitions/AuthProviderCommon/properties/hidden"
         },
+        "noSignIn": {
+          "$ref": "#/definitions/AuthProviderCommon/properties/noSignIn"
+        },
         "order": {
           "$ref": "#/definitions/AuthProviderCommon/properties/order"
         },
@@ -2992,6 +4024,11 @@
           "!go": {
             "pointer": true
           }
+        },
+        "singleIdentityPerUser": {
+          "description": "When true, any user can connect exactly one identity from the identity provider.",
+          "type": "boolean",
+          "default": false
         }
       }
     },
@@ -3025,6 +4062,9 @@
         },
         "hidden": {
           "$ref": "#/definitions/AuthProviderCommon/properties/hidden"
+        },
+        "noSignIn": {
+          "$ref": "#/definitions/AuthProviderCommon/properties/noSignIn"
         },
         "order": {
           "$ref": "#/definitions/AuthProviderCommon/properties/order"
@@ -3107,6 +4147,14 @@
           "description": "Name of the SAML assertion attribute that holds group membership for allowGroups setting",
           "type": "string",
           "default": "groups"
+        },
+        "usernameAttributeNames": {
+          "description": "Names of the SAML assertions attributes to check for a user's username. Checked in the order the names are provided.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },
@@ -3172,6 +4220,9 @@
         "hidden": {
           "$ref": "#/definitions/AuthProviderCommon/properties/hidden"
         },
+        "noSignIn": {
+          "$ref": "#/definitions/AuthProviderCommon/properties/noSignIn"
+        },
         "order": {
           "$ref": "#/definitions/AuthProviderCommon/properties/order"
         },
@@ -3207,7 +4258,7 @@
           ]
         },
         "allowGroupsPermissionsSync": {
-          "description": "Experimental: Allows sync of GitHub teams and organizations permissions across all external services associated with this provider to allow enabling of [repository permissions caching](https://docs.sourcegraph.com/admin/external_service/github#teams-and-organizations-permissions-caching).",
+          "description": "Experimental: Allows sync of GitHub teams and organizations permissions across all external services associated with this provider to allow enabling of [repository permissions caching](https://sourcegraph.com/docs/admin/code_hosts/github#teams-and-organizations-permissions-caching).",
           "default": false,
           "type": "boolean"
         }
@@ -3252,6 +4303,9 @@
         },
         "hidden": {
           "$ref": "#/definitions/AuthProviderCommon/properties/hidden"
+        },
+        "noSignIn": {
+          "$ref": "#/definitions/AuthProviderCommon/properties/noSignIn"
         },
         "order": {
           "$ref": "#/definitions/AuthProviderCommon/properties/order"
@@ -3330,6 +4384,9 @@
         "hidden": {
           "$ref": "#/definitions/AuthProviderCommon/properties/hidden"
         },
+        "noSignIn": {
+          "$ref": "#/definitions/AuthProviderCommon/properties/noSignIn"
+        },
         "order": {
           "$ref": "#/definitions/AuthProviderCommon/properties/order"
         },
@@ -3341,6 +4398,54 @@
         },
         "allowSignup": {
           "description": "Allows new visitors to sign up for accounts via Bitbucket Cloud authentication. If false, users signing in via Bitbucket Cloud must have an existing Sourcegraph account, which will be linked to their Bitbucket Cloud identity after sign-in.",
+          "default": true,
+          "type": "boolean"
+        }
+      }
+    },
+    "BitbucketServerAuthProvider": {
+      "description": "Configures the Bitbucket Server OAuth authentication provider for SSO. In addition to specifying this configuration object, you must also create a OAuth App on your Bitbucket Server instance: https://confluence.atlassian.com/bitbucketserver0720/configure-an-incoming-link-1116282013.html. The application should have the repository read permission and the callback URL set to the concatenation of your Sourcegraph instance URL and \"/.auth/bitbucketserver/callback\".",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "clientID", "clientSecret"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "bitbucketserver"
+        },
+        "url": {
+          "type": "string",
+          "description": "URL of the Bitbucket Server instance.",
+          "example": "https://bitbucket.example.org/"
+        },
+        "clientID": {
+          "type": "string",
+          "description": "The ID of the Bitbucket OAuth app."
+        },
+        "clientSecret": {
+          "type": "string",
+          "description": "The Client Secret of the Bitbucket OAuth app."
+        },
+        "displayName": {
+          "$ref": "#/definitions/AuthProviderCommon/properties/displayName"
+        },
+        "displayPrefix": {
+          "$ref": "#/definitions/AuthProviderCommon/properties/displayPrefix",
+          "!go": {
+            "pointer": true
+          }
+        },
+        "hidden": {
+          "$ref": "#/definitions/AuthProviderCommon/properties/hidden"
+        },
+        "noSignIn": {
+          "$ref": "#/definitions/AuthProviderCommon/properties/noSignIn"
+        },
+        "order": {
+          "$ref": "#/definitions/AuthProviderCommon/properties/order"
+        },
+        "allowSignup": {
+          "description": "Allows new visitors to sign up for accounts via Bitbucket Server OAuth. If false, users signing in via Bitbucket Server must have an existing Sourcegraph account, which will be linked to their Bitbucket Server identity after sign-in.",
           "default": true,
           "type": "boolean"
         }
@@ -3408,6 +4513,9 @@
         "hidden": {
           "$ref": "#/definitions/AuthProviderCommon/properties/hidden"
         },
+        "noSignIn": {
+          "$ref": "#/definitions/AuthProviderCommon/properties/noSignIn"
+        },
         "order": {
           "$ref": "#/definitions/AuthProviderCommon/properties/order"
         },
@@ -3442,6 +4550,11 @@
       "properties": {
         "hidden": {
           "description": "Hides the configured auth provider from regular use through our web interface by omitting it from the JSContext, useful for experimental auth setups.",
+          "type": "boolean",
+          "default": false
+        },
+        "noSignIn": {
+          "description": "Hides the configured auth provider from the sign in page, but still allows users to connect an external account using their Account Security page to enable permissions syncing.",
           "type": "boolean",
           "default": false
         },
@@ -3727,6 +4840,60 @@
         "text": {
           "description": "Optional template for plain-text body. If not provided, a plain-text body will be automatically generated from the HTML template.",
           "type": "string"
+        }
+      }
+    },
+    "CodyContextFilterItem": {
+      "type": "object",
+      "required": ["repoNamePattern"],
+      "properties": {
+        "repoNamePattern": {
+          "description": "Regular expression which matches a set of repository names. The pattern is evaluated using Go regular expression syntax (https://golang.org/pkg/regexp/). By default, the pattern matches partially. Use \\\"^...$\\\" for whole-string matching.",
+          "type": "string",
+          "format": "regex"
+        }
+      }
+    },
+    "BackendAPIConfig": {
+      "type": "object",
+      "required": ["url"],
+      "properties": {
+        "url": {
+          "description": "Full URL of backend API",
+          "type": "string"
+        },
+        "authHeader": {
+          "description": "Value of Authorization header (if required)",
+          "type": "string"
+        }
+      }
+    },
+    "CodyRerankerIdentity": {
+      "description": "Identity re-ranker",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "identity"
+        }
+      }
+    },
+    "CodyRerankerCohere": {
+      "description": "Re-ranker using Cohere API",
+      "type": "object",
+      "required": ["type", "apiKey"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "cohere"
+        },
+        "apiKey": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string",
+          "default": "rerank-english-v3.0"
         }
       }
     }

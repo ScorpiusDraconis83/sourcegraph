@@ -17,9 +17,7 @@ const decorator: Decorator = story => <div className="p-3 container">{story()}</
 const config: Meta = {
     title: 'web/enterprise/searchContexts/SearchContextForm',
     decorators: [decorator],
-    parameters: {
-        chromatic: { viewports: [1200], disableSnapshot: false },
-    },
+    parameters: {},
 }
 
 export default config
@@ -83,7 +81,6 @@ const authUser: AuthenticatedUser = {
     },
     viewerCanAdminister: true,
     hasVerifiedEmail: true,
-    completedPostSignup: true,
     databaseID: 0,
     tosAccepted: true,
     emails: [{ email: 'alice@sourcegraph.com', isPrimary: true, verified: true }],

@@ -34,14 +34,13 @@ type Store interface {
 	TruncateConfigurationSummary(ctx context.Context, numRecordsToRetain int) error
 
 	// Scheduler
-	GetRepositoriesForIndexScan(ctx context.Context, processDelay time.Duration, allowGlobalPolicies bool, repositoryMatchLimit *int, limit int, now time.Time) ([]int, error)
 	GetQueuedRepoRev(ctx context.Context, batchSize int) ([]RepoRev, error)
 	MarkRepoRevsAsProcessed(ctx context.Context, ids []int) error
 
 	// Enqueuer
 	IsQueued(ctx context.Context, repositoryID int, commit string) (bool, error)
 	IsQueuedRootIndexer(ctx context.Context, repositoryID int, commit string, root string, indexer string) (bool, error)
-	InsertIndexes(ctx context.Context, indexes []uploadsshared.Index) ([]uploadsshared.Index, error)
+	InsertJobs(context.Context, []uploadsshared.AutoIndexJob) ([]uploadsshared.AutoIndexJob, error)
 
 	// Dependency indexing
 	InsertDependencyIndexingJob(ctx context.Context, uploadID int, externalServiceKind string, syncTime time.Time) (int, error)

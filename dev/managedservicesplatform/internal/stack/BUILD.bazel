@@ -5,9 +5,12 @@ go_library(
     name = "stack",
     srcs = ["stacks.go"],
     importpath = "github.com/sourcegraph/sourcegraph/dev/managedservicesplatform/internal/stack",
+    tags = [TAG_INFRA_CORESERVICES],
     visibility = ["//dev/managedservicesplatform:__subpackages__"],
     deps = [
+        "//dev/managedservicesplatform/internal/resource/gsmsecret",
         "//dev/managedservicesplatform/internal/resourceid",
+        "//dev/managedservicesplatform/stacks",
         "//lib/pointers",
         "@com_github_hashicorp_terraform_cdk_go_cdktf//:cdktf",
         "@org_golang_x_exp//maps",
@@ -18,5 +21,6 @@ go_test(
     name = "stack_test",
     srcs = ["stacks_test.go"],
     embed = [":stack"],
+    tags = [TAG_INFRA_CORESERVICES],
     deps = ["@com_github_stretchr_testify//assert"],
 )

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/url"
-	"sync/atomic"
 	"time"
 
 	"github.com/derision-test/glock"
@@ -23,14 +22,10 @@ import (
 
 const licenseAnomalyCheckKey = "license_anomaly_check"
 
-var licenseAnomalyCheckers uint32
-
 // StartCheckForAnomalousLicenseUsage checks for anomalous license usage.
+//
+// TODO(@bobheadxi): Migrate to Enterprise Portal https://linear.app/sourcegraph/issue/CORE-182
 func StartCheckForAnomalousLicenseUsage(logger log.Logger, db database.DB) {
-	if atomic.AddUint32(&licenseAnomalyCheckers, 1) != 1 {
-		panic("StartCheckForAnomalousLicenseUsage called more than once")
-	}
-
 	dotcom := conf.Get().Dotcom
 	if dotcom == nil {
 		return
@@ -120,6 +115,7 @@ WITH time_diffs AS (
 		name = 'license.check.api.success'
 		AND timestamp > %s::timestamptz - INTERVAL '48 hours'
 		AND argument->>'site_id' = %s
+		AND argument->>'license_id' = %s
 ),
 percentiles AS (
 	SELECT PERCENTILE_CONT (0.5) WITHIN GROUP (
@@ -161,7 +157,7 @@ func checkP50CallTimeForLicense(ctx context.Context, logger log.Logger, db datab
 		return
 	}
 
-	q := sqlf.Sprintf(percentileTimeDiffQuery, clock.Now().UTC(), *license.SiteID)
+	q := sqlf.Sprintf(percentileTimeDiffQuery, clock.Now().UTC(), *license.SiteID, license.ID)
 	timeDiff, ok, err := basestore.ScanFirstNullInt64(db.Handle().QueryContext(ctx, q.Query(sqlf.PostgresBindVar), q.Args()...))
 	if err != nil {
 		logger.Error("error getting time difference from event_logs", log.Error(err))

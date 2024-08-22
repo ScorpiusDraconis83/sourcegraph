@@ -2,14 +2,15 @@ package graphqlbackend
 
 import (
 	"context"
+	"io"
 	"io/fs"
 	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/api"
+	"github.com/sourcegraph/sourcegraph/internal/gqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/trace"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
@@ -20,7 +21,7 @@ func (r *GitTreeEntryResolver) IsRoot() bool {
 }
 
 type gitTreeEntryConnectionArgs struct {
-	graphqlutil.ConnectionArgs
+	gqlutil.ConnectionArgs
 	Recursive bool
 	// If Ancestors is true and the tree is loaded from a subdirectory, we will
 	// return a flat list of all entries in all parent directories.
@@ -47,13 +48,27 @@ func (r *GitTreeEntryResolver) entries(ctx context.Context, args *gitTreeEntryCo
 		return nil, errors.Newf("invalid argument for first, must be non-negative")
 	}
 
-	entries, err := r.gitserverClient.ReadDir(ctx, r.commit.repoResolver.RepoName(), api.CommitID(r.commit.OID()), r.Path(), args.Recursive)
+	it, err := r.gitserverClient.ReadDir(ctx, r.commit.repoResolver.RepoName(), api.CommitID(r.commit.OID()), r.Path(), args.Recursive)
 	if err != nil {
 		if strings.Contains(err.Error(), "file does not exist") { // TODO proper error value
 			// empty tree is not an error
 		} else {
 			return nil, err
 		}
+	}
+	defer it.Close()
+
+	entries := make([]fs.FileInfo, 0)
+
+	for {
+		entry, err := it.Next()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, err
+		}
+		entries = append(entries, entry)
 	}
 
 	// When using recursive: true on gitserverClient.ReadDir, we get entries for

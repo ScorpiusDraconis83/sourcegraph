@@ -1,14 +1,11 @@
 load("@aspect_bazel_lib//lib:copy_to_bin.bzl", "copy_to_bin")
 load("@aspect_rules_ts//ts:defs.bzl", "ts_config")
 load("@npm//:defs.bzl", "npm_link_all_packages")
-load("//dev:defs.bzl", "npm_package", "sass", "ts_project", "vitest_test")
-load("//client/shared/dev:generate_schema.bzl", "generate_schema")
 load("//client/shared/dev:generate_graphql_operations.bzl", "generate_graphql_operations")
+load("//client/shared/dev:generate_schema.bzl", "generate_schema")
 load("//client/shared/dev:tools.bzl", "module_style_typings")
-load("//dev:eslint.bzl", "eslint_config_and_lint_root", "eslint_test_with_types")
-
-# TODO(bazel): storybook build
-# gazelle:exclude **/*.story.{ts,tsx}
+load("//dev:defs.bzl", "npm_package", "sass", "ts_project", "vitest_test")
+load("//dev:eslint.bzl", "eslint_config_and_lint_root")
 
 # gazelle:js_resolve **/*.module.scss :module_style_typings
 # gazelle:js_resolve ../graphql-operations //client/shared:graphql_operations
@@ -17,20 +14,6 @@ load("//dev:eslint.bzl", "eslint_config_and_lint_root", "eslint_test_with_types"
 npm_link_all_packages(name = "node_modules")
 
 eslint_config_and_lint_root()
-
-# Temporary ESLint target to lint stories. This will be removed once we have a
-# custom gazelle targets. E.g., `gazelle:custom_js_files stories src/**/*.story.tsx`
-eslint_test_with_types(
-    name = "stories_eslint",
-    srcs = glob([
-        "src/**/*.story.tsx",
-        "src/**/*.fixtures.ts",
-    ]),
-    config = ":eslint_config",
-    deps = [
-        "//:node_modules/@types/node",
-    ],
-)
 
 ts_config(
     name = "tsconfig",
@@ -160,7 +143,6 @@ ts_project(
         "src/api/extension/util.ts",
         "src/api/extension/utils/ReferenceCounter.ts",
         "src/api/extension/worker.ts",
-        "src/api/features.ts",
         "src/api/sharedEventLogger.ts",
         "src/api/textDocumentTypes.ts",
         "src/api/util.ts",
@@ -224,6 +206,7 @@ ts_project(
         "src/components/TeamAvatar.tsx",
         "src/components/UserAvatar.tsx",
         "src/components/VirtualList.tsx",
+        "src/components/codemirror/utils.ts",
         "src/components/icons.tsx",
         "src/components/languageIcons.tsx",
         "src/components/ranking/PerFileResultRanking.ts",
@@ -231,7 +214,6 @@ ts_project(
         "src/contributions/contributions.ts",
         "src/deprecated-theme-utils.ts",
         "src/extensions/controller.ts",
-        "src/extensions/createNoopLoadedController.ts",
         "src/extensions/createSyncLoadedController.ts",
         "src/extensions/extension.ts",
         "src/extensions/extensionManifest.ts",
@@ -294,9 +276,9 @@ ts_project(
         "src/search/query/utils.ts",
         "src/search/query/validate.ts",
         "src/search/searchQueryState.tsx",
-        "src/search/searchSimple.ts",
         "src/search/stream.ts",
         "src/search/suggestions/index.ts",
+        "src/search/types.ts",
         "src/settings/edit.ts",
         "src/settings/settings.tsx",
         "src/settings/temporary/TemporarySettings.ts",
@@ -317,9 +299,18 @@ ts_project(
         "src/symbols/SymbolKind.tsx",
         "src/symbols/SymbolTag.tsx",
         "src/symbols/symbolIcons.ts",
+        "src/telemetry/event-names.ts",
         "src/telemetry/index.ts",
         "src/telemetry/telemetryService.ts",
+        "src/telemetry/web/backend.ts",
+        "src/telemetry/web/cookies.ts",
+        "src/telemetry/web/dom.ts",
+        "src/telemetry/web/eventLogger.ts",
+        "src/telemetry/web/sessionTracker.ts",
+        "src/telemetry/web/userTracker.ts",
+        "src/telemetry/web/util.ts",
         "src/theme.ts",
+        "src/theme-types.ts",
         "src/tracking/event-log-creators.ts",
         "src/tracking/utm.ts",
         "src/types/core-js/configurator.d.ts",
@@ -351,18 +342,22 @@ ts_project(
         "//:node_modules/@sourcegraph/extension-api-classes",
         "//:node_modules/@types/classnames",
         "//:node_modules/@types/history",
+        "//:node_modules/@types/js-cookie",
         "//:node_modules/@types/lodash",
         "//:node_modules/@types/lru-cache",
         "//:node_modules/@types/minimatch",
         "//:node_modules/@types/node",
         "//:node_modules/@types/react",
+        "//:node_modules/@types/uuid",
         "//:node_modules/@types/whatwg-url",
         "//:node_modules/classnames",
         "//:node_modules/comlink",
         "//:node_modules/core-js",
+        "//:node_modules/date-fns",
         "//:node_modules/fast-json-stable-stringify",
         "//:node_modules/history",
         "//:node_modules/js-base64",
+        "//:node_modules/js-cookie",
         "//:node_modules/lodash",
         "//:node_modules/lru-cache",
         "//:node_modules/mdi-react",
@@ -376,6 +371,7 @@ ts_project(
         "//:node_modules/use-deep-compare-effect",
         "//:node_modules/util",
         "//:node_modules/utility-types",
+        "//:node_modules/uuid",
         "//:node_modules/whatwg-url",
         "//:node_modules/zustand",
         "//schema:settings",  #keep
@@ -455,9 +451,10 @@ ts_project(
         "src/search/query/selectFilter.test.ts",
         "src/search/query/transformer.test.ts",
         "src/search/query/validate.test.ts",
-        "src/search/searchSimple.test.ts",
         "src/settings/settings.test.ts",
         "src/settings/temporary/useTemporarySetting.test.tsx",
+        "src/telemetry/web/userTracker.test.ts",
+        "src/telemetry/web/util.test.ts",
         "src/testSetup.test.ts",
         "src/tracking/utm.test.ts",
         "src/util/dom.test.ts",
@@ -526,5 +523,24 @@ vitest_test(
         ":module_styles",
         ":shared_tests",
         ":snapshots",
+    ],
+)
+
+ts_project(
+    name = "stories",
+    srcs = [
+        "src/actions/ActionItem.story.tsx",
+        "src/symbols/SymbolTag.story.tsx",
+    ],
+    tsconfig = ":tsconfig",
+    deps = [
+        ":graphql_operations",
+        ":node_modules/@sourcegraph/common",
+        ":node_modules/@sourcegraph/wildcard",
+        ":shared_lib",
+        "//:node_modules/@storybook/addon-actions",
+        "//:node_modules/@storybook/react",
+        "//:node_modules/@types/history",
+        "//:node_modules/history",
     ],
 )

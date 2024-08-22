@@ -1,31 +1,29 @@
-.main-wrapper {
+.root {
+    display: flex;
+    flex-direction: column;
     height: 100%;
     overflow: hidden;
     filter: drop-shadow(0 0 4px rgba(36, 41, 54, 0.1));
 }
 
-.cody-sidebar-header {
+.header {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    border-bottom: 1px solid var(--border-color-2);
+    justify-content: space-between;
     padding: 0.5rem 1rem;
     font-size: 0.875rem;
-    position: sticky;
-    top: 0;
     background-color: var(--input-bg);
-    z-index: 3;
-}
+    border-bottom: 1px solid var(--border-color-2);
 
-.cody-sidebar {
-    background-color: var(--input-bg);
-    overflow-y: auto;
-    overflow-x: hidden;
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-}
+    &--main {
+        display: flex;
+        align-items: center;
+        flex-shrink: 0;
+        gap: 0.5rem;
+    }
 
-.action-buttons {
-    min-width: 52px;
+    &--logo {
+        display: flex;
+        align-items: center;
+    }
 }

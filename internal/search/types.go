@@ -14,6 +14,7 @@ import (
 
 	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/search/result"
+	"github.com/sourcegraph/sourcegraph/internal/searcher/protocol"
 	"github.com/sourcegraph/sourcegraph/internal/trace/policy"
 
 	"github.com/sourcegraph/sourcegraph/internal/api"
@@ -107,7 +108,7 @@ type SymbolsParameters struct {
 	// Query is the search query.
 	Query string
 
-	// IsRegExp if true will treat the Pattern as a regular expression.
+	// IsRegExp if true will treat the Query as a regular expression.
 	IsRegExp bool
 
 	// IsCaseSensitive if false will ignore the case of query and file pattern
@@ -127,6 +128,10 @@ type SymbolsParameters struct {
 	// need to match to get included in the result
 	ExcludePattern string
 
+	// IncludeLangs and ExcludeLangs hold the language filters to apply.
+	IncludeLangs []string
+	ExcludeLangs []string
+
 	// First indicates that only the first n symbols should be returned.
 	First int
 
@@ -139,46 +144,10 @@ type SymbolsParameters struct {
 type SymbolsResponse struct {
 	Symbols result.Symbols `json:"symbols,omitempty"`
 	Err     string         `json:"error,omitempty"`
-}
 
-// GlobalSearchMode designates code paths which optimize performance for global
-// searches, i.e., literal or regexp, indexed searches without repo: filter.
-type GlobalSearchMode int
-
-const (
-	DefaultMode GlobalSearchMode = iota
-
-	// ZoektGlobalSearch designates a performance optimised code path for indexed
-	// searches. For a global search we don't need to resolve repos before searching
-	// shards on Zoekt, instead we can resolve repos and call Zoekt concurrently.
-	//
-	// Note: Even for a global search we have to resolve repos to filter search results
-	// returned by Zoekt.
-	ZoektGlobalSearch
-
-	// SearcherOnly designated a code path on which we skip indexed search, even if
-	// the user specified index:yes. SearcherOnly is used in conjunction with
-	// ZoektGlobalSearch and designates the non-indexed part of the performance
-	// optimised code path.
-	SearcherOnly
-
-	// SkipUnindexed disables content, path, and symbol search. Used:
-	// (1) in conjunction with ZoektGlobalSearch on Sourcegraph.com.
-	// (2) when a query does not specify any patterns, include patterns, or exclude pattern.
-	SkipUnindexed
-)
-
-var globalSearchModeStrings = map[GlobalSearchMode]string{
-	ZoektGlobalSearch: "ZoektGlobalSearch",
-	SearcherOnly:      "SearcherOnly",
-	SkipUnindexed:     "SkipUnindexed",
-}
-
-func (m GlobalSearchMode) String() string {
-	if s, ok := globalSearchModeStrings[m]; ok {
-		return s
-	}
-	return "None"
+	// LimitHit is true if the search results are incomplete due to limits
+	// imposed by the service.
+	LimitHit bool `json:"limitHit,omitempty"`
 }
 
 type IndexedRequestType string
@@ -216,24 +185,21 @@ func (o *ZoektParameters) ToSearchOptions(ctx context.Context) (searchOpts *zoek
 
 	defaultTimeout := 20 * time.Second
 	searchOpts = &zoekt.SearchOptions{
-		Trace:             policy.ShouldTrace(ctx),
-		MaxWallTime:       defaultTimeout,
-		ChunkMatches:      true,
-		UseKeywordScoring: o.PatternType == query.SearchTypeKeyword,
-		NumContextLines:   o.NumContextLines,
+		Trace:           policy.ShouldTrace(ctx),
+		MaxWallTime:     defaultTimeout,
+		ChunkMatches:    true,
+		UseBM25Scoring:  o.PatternType == query.SearchTypeCodyContext && o.Typ == TextRequest,
+		NumContextLines: o.NumContextLines,
 	}
 
 	// These are reasonable default amounts of work to do per shard and
 	// replica respectively.
 	searchOpts.ShardMaxMatchCount = 10_000
 	searchOpts.TotalMaxMatchCount = 100_000
-	// KeywordScoring and Features.UseZoektParser represent different approaches we
-	// are evaluating to deliver a better keyword-based search experience. For now
-	// these are separate, but we might combine them in the future. Both profit from
-	// higher defaults.
-	if searchOpts.UseKeywordScoring || o.PatternType == query.SearchTypeNewStandardRC1 {
-		// Keyword searches tends to match much more broadly than code searches, so we need to
-		// consider more candidates to ensure we don't miss highly-ranked documents
+	// Keyword searches tends to match much more broadly than code searches, so we need to
+	// consider more candidates to ensure we don't miss highly-ranked documents. The same
+	// holds for BM25 scoring, which is used for Cody context searches.
+	if searchOpts.UseBM25Scoring || o.PatternType == query.SearchTypeKeyword {
 		searchOpts.ShardMaxMatchCount *= 10
 		searchOpts.TotalMaxMatchCount *= 10
 	}
@@ -263,7 +229,7 @@ func (o *ZoektParameters) ToSearchOptions(ctx context.Context) (searchOpts *zoek
 
 	// This enables our stream based ranking, where we wait a certain amount
 	// of time to collect results before ranking.
-	searchOpts.FlushWallTime = conf.SearchFlushWallTime(searchOpts.UseKeywordScoring)
+	searchOpts.FlushWallTime = conf.SearchFlushWallTime(searchOpts.UseBM25Scoring)
 
 	// Only use document ranks if the jobs to calculate the ranks are enabled. This
 	// is to make sure we don't use outdated ranks for scoring in Zoekt.
@@ -297,12 +263,10 @@ type SearcherParameters struct {
 // TextPatternInfo defines the search request for unindexed and structural search
 // (the 'searcher' service). Keep it in sync with pkg/searcher/protocol.PatternInfo.
 type TextPatternInfo struct {
-	// Values dependent on pattern atom.
-	Pattern   string
-	IsNegated bool
-	IsRegExp  bool
+	// Query defines the search query
+	Query protocol.QueryNode
 
-	// Values dependent on parameters.
+	// Parameters for the search
 	IsStructuralPat bool
 	CombyRule       string
 	IsCaseSensitive bool
@@ -310,14 +274,19 @@ type TextPatternInfo struct {
 	Index           query.YesNoOnly
 	Select          filter.SelectPath
 
-	IncludePatterns []string
-	ExcludePattern  string
+	IncludePaths []string
+	ExcludePaths string
+
+	IncludeLangs []string
+	ExcludeLangs []string
 
 	PathPatternsAreCaseSensitive bool
 
 	PatternMatchesContent bool
 	PatternMatchesPath    bool
 
+	// Languages is only used for structural search, and is separate from IncludeLangs above
+	// TODO: remove this once the 'search-content-based-lang-detection' feature is enabled by default
 	Languages []string
 }
 
@@ -327,14 +296,8 @@ func (p *TextPatternInfo) Fields() []attribute.KeyValue {
 		res = append(res, fs...)
 	}
 
-	add(attribute.String("pattern", p.Pattern))
+	add(attribute.Stringer("query", p.Query))
 
-	if p.IsNegated {
-		add(attribute.Bool("isNegated", p.IsNegated))
-	}
-	if p.IsRegExp {
-		add(attribute.Bool("isRegexp", p.IsRegExp))
-	}
 	if p.IsStructuralPat {
 		add(attribute.Bool("isStructural", p.IsStructuralPat))
 	}
@@ -352,11 +315,11 @@ func (p *TextPatternInfo) Fields() []attribute.KeyValue {
 	if len(p.Select) > 0 {
 		add(attribute.StringSlice("select", p.Select))
 	}
-	if len(p.IncludePatterns) > 0 {
-		add(attribute.StringSlice("includePatterns", p.IncludePatterns))
+	if len(p.IncludePaths) > 0 {
+		add(attribute.StringSlice("includePatterns", p.IncludePaths))
 	}
-	if p.ExcludePattern != "" {
-		add(attribute.String("excludePattern", p.ExcludePattern))
+	if p.ExcludePaths != "" {
+		add(attribute.String("excludePattern", p.ExcludePaths))
 	}
 	if p.PathPatternsAreCaseSensitive {
 		add(attribute.Bool("pathPatternsAreCaseSensitive", p.PathPatternsAreCaseSensitive))
@@ -371,10 +334,8 @@ func (p *TextPatternInfo) Fields() []attribute.KeyValue {
 }
 
 func (p *TextPatternInfo) String() string {
-	args := []string{fmt.Sprintf("%q", p.Pattern)}
-	if p.IsRegExp {
-		args = append(args, "re")
-	}
+	args := []string{p.Query.String()}
+
 	if p.IsStructuralPat {
 		if p.CombyRule != "" {
 			args = append(args, fmt.Sprintf("comby:%s", p.CombyRule))
@@ -402,10 +363,10 @@ func (p *TextPatternInfo) String() string {
 	if p.PathPatternsAreCaseSensitive {
 		path = "F"
 	}
-	if p.ExcludePattern != "" {
-		args = append(args, fmt.Sprintf("-%s:%q", path, p.ExcludePattern))
+	if p.ExcludePaths != "" {
+		args = append(args, fmt.Sprintf("-%s:%q", path, p.ExcludePaths))
 	}
-	for _, inc := range p.IncludePatterns {
+	for _, inc := range p.IncludePaths {
 		args = append(args, fmt.Sprintf("%s:%q", path, inc))
 	}
 
@@ -437,6 +398,15 @@ type Features struct {
 	// options. This should be used for quick interactive experiments only. An
 	// invalid JSON string or unknown fields will be ignored.
 	ZoektSearchOptionsOverride string
+
+	// Experimental fields for Cody context search, for internal use only.
+	CodyContextCodeCount int `json:"-"`
+	CodyContextTextCount int `json:"-"`
+
+	// CodyFileMatcher is used to pass down "Cody ignore" filters. This matcher returns true if
+	// the given repo and path are allowed to be returned. NOTE: we should eventually switch
+	// to standard repo and file filters instead of having this custom 'postfiltering' logic.
+	CodyFileMatcher func(repo api.RepoID, path string) bool `json:"-"`
 }
 
 func (f *Features) String() string {
@@ -544,10 +514,10 @@ func (op *RepoOptions) Attributes() []attribute.KeyValue {
 		for i, arg := range op.HasKVPs {
 			nondefault := []attribute.KeyValue{}
 			if arg.Key != "" {
-				nondefault = append(nondefault, attribute.String("key", arg.Key))
+				nondefault = append(nondefault, attribute.String("key", string(arg.Key)))
 			}
 			if arg.Value != nil {
-				nondefault = append(nondefault, attribute.String("value", *arg.Value))
+				nondefault = append(nondefault, attribute.String("value", string(*arg.Value)))
 			}
 			if arg.Negated {
 				nondefault = append(nondefault, attribute.Bool("negated", arg.Negated))

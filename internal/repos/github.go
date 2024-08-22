@@ -136,7 +136,8 @@ func newGitHubSource(
 	}
 
 	for _, r := range c.Exclude {
-		rule := ex.AddRule().
+		// Either Name OR ID must match, or pattern if set.
+		rule := NewRule().
 			Exact(r.Name).
 			Exact(r.Id).
 			Pattern(r.Pattern)
@@ -162,6 +163,8 @@ func newGitHubSource(
 		if r.Forks {
 			rule.Generic(excludeFork)
 		}
+
+		ex.AddRule(rule)
 	}
 	if err := ex.RuleErrors(); err != nil {
 		return nil, err
@@ -406,8 +409,9 @@ func (s *GitHubSource) makeRepo(r *github.Repository) *types.Repo {
 	// so we don't want to store it.
 	metadata.ViewerPermission = ""
 	metadata.Description = sanitizeToUTF8(metadata.Description)
+	metadata.Visibility = github.Visibility(strings.ToLower(string(r.Visibility)))
 
-	if github.Visibility(strings.ToLower(string(r.Visibility))) == github.VisibilityInternal && s.markInternalReposAsPublic {
+	if metadata.Visibility == github.VisibilityInternal && s.markInternalReposAsPublic {
 		r.IsPrivate = false
 	}
 
@@ -465,17 +469,34 @@ func (s *GitHubSource) excludes(r *github.Repository) bool {
 	return false
 }
 
-// repositoryPager is a function that returns repositories on a given `page`.
+// pager is a function that returns items on a given `page`.
 // It also returns:
 // - `hasNext` bool: if there is a next page
 // - `cost` int: rate limit cost used to determine recommended wait before next call
 // - `err` error: if something goes wrong
-type repositoryPager func(page int) (repos []*github.Repository, hasNext bool, cost int, err error)
+type pager[T any] func(page int) (items []T, hasNext bool, cost int, err error)
 
-// paginate returns all the repositories from the given repositoryPager.
+// fetchAll returns all items from the given pager.
+func fetchAll[T any](pager pager[T]) (allItems []T, err error) {
+	for page := 1; true; page++ {
+		items, hasNextPage, _, err := pager(page)
+		if err != nil {
+			return nil, err
+		}
+		allItems = append(allItems, items...)
+
+		if !hasNextPage {
+			break
+		}
+	}
+
+	return allItems, nil
+}
+
+// paginateRepos returns all the repositories from the given repositoryPager.
 // It repeatedly calls `pager` with incrementing page count until it
 // returns false for hasNext.
-func paginate(ctx context.Context, results chan *githubResult, pager repositoryPager) {
+func paginateRepos(ctx context.Context, results chan *githubResult, pager pager[*github.Repository]) {
 	hasNext := true
 	for page := 1; hasNext; page++ {
 		if err := ctx.Err(); err != nil {
@@ -521,7 +542,7 @@ func (s *GitHubSource) listOrg(ctx context.Context, org string, results chan *gi
 	getReposByType := func(tp string) error {
 		var oerr error
 
-		paginate(ctx, dedupC, func(page int) (repos []*github.Repository, hasNext bool, cost int, err error) {
+		paginateRepos(ctx, dedupC, func(page int) (repos []*github.Repository, hasNext bool, cost int, err error) {
 			defer func() {
 				if page == 1 {
 					var e *github.APIError
@@ -593,7 +614,7 @@ func (s *GitHubSource) listOrg(ctx context.Context, org string, results chan *gi
 //
 // It returns an error if the request fails on the first page.
 func (s *GitHubSource) listUser(ctx context.Context, user string, results chan *githubResult) (fail error) {
-	paginate(ctx, results, func(page int) (repos []*github.Repository, hasNext bool, cost int, err error) {
+	paginateRepos(ctx, results, func(page int) (repos []*github.Repository, hasNext bool, cost int, err error) {
 		defer func() {
 			if err != nil && page == 1 {
 				fail, err = err, nil
@@ -619,7 +640,7 @@ func (s *GitHubSource) listUser(ctx context.Context, user string, results chan *
 //
 // It returns an error if the request fails on the first page.
 func (s *GitHubSource) listAppInstallation(ctx context.Context, results chan *githubResult) (fail error) {
-	paginate(ctx, results, func(page int) (repos []*github.Repository, hasNext bool, cost int, err error) {
+	paginateRepos(ctx, results, func(page int) (repos []*github.Repository, hasNext bool, cost int, err error) {
 		defer func() {
 			if err != nil && page == 1 {
 				fail, err = err, nil
@@ -691,33 +712,23 @@ func (s *GitHubSource) listRepos(ctx context.Context, repos []string, results ch
 	}
 }
 
+func batchPublicRepos(repos []*github.PublicRepository, batchSize int) (batches [][]*github.PublicRepository) {
+	for i := 0; i < len(repos); i += batchSize {
+		end := i + batchSize
+		if end > len(repos) {
+			end = len(repos)
+		}
+		batches = append(batches, repos[i:end])
+	}
+	return batches
+}
+
 // listPublic handles the `public` keyword of the `repositoryQuery` config option.
 // It returns the public repositories listed on the /repositories endpoint.
 func (s *GitHubSource) listPublic(ctx context.Context, results chan *githubResult) {
 	if s.githubDotCom {
 		results <- &githubResult{err: errors.New(`unsupported configuration "public" for "repositoryQuery" for github.com`)}
 		return
-	}
-
-	// The regular Github API endpoint for listing public repos doesn't return whether the repo is archived, so we have to list
-	// all of the public archived repos first so we know if a repo is archived or not.
-	// TODO: Remove querying for archived repos first when https://github.com/orgs/community/discussions/12554 gets resolved
-	archivedReposChan := make(chan *githubResult)
-	archivedRepos := make(map[string]struct{})
-	archivedReposCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	go func() {
-		s.listPublicArchivedRepos(archivedReposCtx, archivedReposChan)
-		close(archivedReposChan)
-	}()
-
-	for res := range archivedReposChan {
-		if res.err != nil {
-			results <- &githubResult{err: errors.Wrap(res.err, "failed to list public archived Github repositories")}
-			return
-		}
-		archivedRepos[res.repo.ID] = struct{}{}
 	}
 
 	var sinceRepoID int64
@@ -738,30 +749,35 @@ func (s *GitHubSource) listPublic(ctx context.Context, results chan *githubResul
 			return
 		}
 		s.logger.Debug("github sync public", log.Int("repos", len(repos)), log.Error(err))
-		for _, r := range repos {
-			_, isArchived := archivedRepos[r.ID]
-			r.IsArchived = isArchived
-			if err := ctx.Err(); err != nil {
-				results <- &githubResult{err: err}
+
+		// The ListPublicRepositories endpoint returns incomplete information,
+		// so we make additional calls to get the full information of each repo.
+
+		batchedRepos := batchPublicRepos(repos, 30)
+		for _, batch := range batchedRepos {
+			namesWithOwners := make([]string, 0, len(batch))
+
+			for _, r := range batch {
+				namesWithOwners = append(namesWithOwners, r.NameWithOwner)
+			}
+
+			repos, err := s.v4Client.GetReposByNameWithOwner(ctx, namesWithOwners...)
+			if err != nil {
+				results <- &githubResult{err: errors.Wrapf(err, "failed to get full information for public repositories: sinceRepoID=%d", sinceRepoID)}
 				return
 			}
 
-			results <- &githubResult{repo: r}
-			if sinceRepoID < r.DatabaseID {
-				sinceRepoID = r.DatabaseID
+			for _, r := range repos {
+				results <- &githubResult{repo: r}
 			}
 		}
+
+		sinceRepoID = repos[len(repos)-1].DatabaseID
+
 		if !hasNextPage {
 			return
 		}
 	}
-}
-
-// listPublicArchivedRepos returns all of the public archived repositories listed on the /search/repositories endpoint.
-// NOTE: There is a limitation on the search API that this uses, if there are more than 1000 public archived repos that
-// were created in the same time (to the second), this list will miss any repos that lie outside of the first 1000.
-func (s *GitHubSource) listPublicArchivedRepos(ctx context.Context, results chan *githubResult) {
-	s.listSearch(ctx, "archived:true is:public", results)
 }
 
 // listAffiliated handles the `affiliated` keyword of the `repositoryQuery` config option.
@@ -771,7 +787,7 @@ func (s *GitHubSource) listPublicArchivedRepos(ctx context.Context, results chan
 // Affiliation is present if the user: (1) owns the repo, (2) is a part of an org that
 // the repo belongs to, or (3) is a collaborator.
 func (s *GitHubSource) listAffiliated(ctx context.Context, results chan *githubResult) {
-	paginate(ctx, results, func(page int) (repos []*github.Repository, hasNext bool, cost int, err error) {
+	paginateRepos(ctx, results, func(page int) (repos []*github.Repository, hasNext bool, cost int, err error) {
 		defer func() {
 			remaining, reset, retry, _ := s.v3Client.ExternalRateLimiter().Get()
 			s.logger.Debug(
@@ -801,6 +817,52 @@ func (s *GitHubSource) listAffiliatedPage(ctx context.Context, first int, result
 		}
 
 		results <- &githubResult{repo: r}
+	}
+}
+
+// fetchInternal fetches a list of all internal repositories visible to the authenticated user.
+// It first fetches a list of all organizations the user belongs to and then fetches
+// all of the internal repositories belonging to these organizations by using
+// a search query. This leads to much fewer requests to the GitHub API.
+func (s *GitHubSource) listInternal(ctx context.Context, results chan *githubResult) {
+	// If the user is using a GitHub App, we iterate over the repos the app has access to.
+	// GitHub App installations belong to a single user/org, so we can't iterate
+	// over a list of orgs.
+	if s.config.GitHubAppDetails != nil {
+		page := 1
+		for {
+			repos, hasNextPage, _, err := s.v3Client.ListInstallationRepositories(ctx, page)
+			if err != nil {
+				results <- &githubResult{err: err}
+				return
+			}
+
+			for _, repo := range repos {
+				if repo.Visibility == github.VisibilityInternal {
+					results <- &githubResult{repo: repo}
+				}
+			}
+
+			if !hasNextPage {
+				return
+			}
+
+			page += 1
+		}
+	}
+
+	orgs, err := fetchAll(func(page int) (items []*github.Org, hasNext bool, cost int, err error) {
+		return s.v3Client.GetAuthenticatedUserOrgs(ctx, page)
+	})
+	if err != nil {
+		results <- &githubResult{err: err}
+		return
+	}
+
+	for _, org := range orgs {
+		paginateRepos(ctx, results, func(page int) (repos []*github.Repository, hasNext bool, cost int, err error) {
+			return s.v3Client.ListOrgRepositories(ctx, org.Login, page, string(github.VisibilityInternal))
+		})
 	}
 }
 
@@ -1161,6 +1223,9 @@ func (s *GitHubSource) listRepositoryQuery(ctx context.Context, query string, re
 		return
 	case "affiliated":
 		s.listAffiliated(ctx, results)
+		return
+	case "internal":
+		s.listInternal(ctx, results)
 		return
 	case "none":
 		// nothing

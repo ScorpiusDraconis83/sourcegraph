@@ -10,29 +10,17 @@ import (
 
 func TestNewCodyGatewayChatRateLimit(t *testing.T) {
 	tests := []struct {
-		name        string
-		plan        Plan
-		userCount   *int
-		licenseTags []string
-		want        CodyGatewayRateLimit
+		name      string
+		plan      Plan
+		userCount *int
+		want      CodyGatewayRateLimit
 	}{
 		{
-			name:        "Enterprise plan with GPT tag and user count",
-			plan:        PlanEnterprise1,
-			userCount:   pointers.Ptr(50),
-			licenseTags: []string{GPTLLMAccessTag},
-			want: CodyGatewayRateLimit{
-				AllowedModels:   []string{"anthropic/claude-v1", "anthropic/claude-2", "anthropic/claude-2.0", "anthropic/claude-2.1", "anthropic/claude-instant-v1", "anthropic/claude-instant-1", "anthropic/claude-instant-1.2", "openai/gpt-4", "openai/gpt-3.5-turbo"},
-				Limit:           2500,
-				IntervalSeconds: 60 * 60 * 24,
-			},
-		},
-		{
-			name:      "Enterprise plan with no GPT tag",
+			name:      "Enterprise plan with user count",
 			plan:      PlanEnterprise1,
 			userCount: pointers.Ptr(50),
 			want: CodyGatewayRateLimit{
-				AllowedModels:   []string{"anthropic/claude-v1", "anthropic/claude-2", "anthropic/claude-2.0", "anthropic/claude-2.1", "anthropic/claude-instant-v1", "anthropic/claude-instant-1", "anthropic/claude-instant-1.2"},
+				AllowedModels:   []string{"*"},
 				Limit:           2500,
 				IntervalSeconds: 60 * 60 * 24,
 			},
@@ -41,16 +29,16 @@ func TestNewCodyGatewayChatRateLimit(t *testing.T) {
 			name: "Enterprise plan with no user count",
 			plan: PlanEnterprise1,
 			want: CodyGatewayRateLimit{
-				AllowedModels:   []string{"anthropic/claude-v1", "anthropic/claude-2", "anthropic/claude-2.0", "anthropic/claude-2.1", "anthropic/claude-instant-v1", "anthropic/claude-instant-1", "anthropic/claude-instant-1.2"},
+				AllowedModels:   []string{"*"},
 				Limit:           50,
 				IntervalSeconds: 60 * 60 * 24,
 			},
 		},
 		{
-			name: "Non-enterprise plan with no GPT tag and no user count",
+			name: "Non-enterprise plan with no user count",
 			plan: "unknown",
 			want: CodyGatewayRateLimit{
-				AllowedModels:   []string{"anthropic/claude-v1", "anthropic/claude-2", "anthropic/claude-2.0", "anthropic/claude-2.1", "anthropic/claude-instant-v1", "anthropic/claude-instant-1", "anthropic/claude-instant-1.2"},
+				AllowedModels:   []string{"*"},
 				Limit:           10,
 				IntervalSeconds: 60 * 60 * 24,
 			},
@@ -58,7 +46,7 @@ func TestNewCodyGatewayChatRateLimit(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := NewCodyGatewayChatRateLimit(tt.plan, tt.userCount, tt.licenseTags)
+			got := NewCodyGatewayChatRateLimit(tt.plan, tt.userCount)
 			if diff := cmp.Diff(got, tt.want); diff != "" {
 				t.Fatalf("incorrect rate limit computed: %s", diff)
 			}
@@ -75,12 +63,12 @@ func TestCodyGatewayCodeRateLimit(t *testing.T) {
 		want        CodyGatewayRateLimit
 	}{
 		{
-			name:        "Enterprise plan with GPT tag and user count",
+			name:        "Enterprise plan with legacy GPT tag and user count",
 			plan:        PlanEnterprise1,
 			userCount:   pointers.Ptr(50),
-			licenseTags: []string{GPTLLMAccessTag},
+			licenseTags: []string{"gpt"},
 			want: CodyGatewayRateLimit{
-				AllowedModels:   []string{"anthropic/claude-instant-v1", "anthropic/claude-instant-1", "anthropic/claude-instant-1.2", "openai/gpt-3.5-turbo"},
+				AllowedModels:   []string{"*"},
 				Limit:           50000,
 				IntervalSeconds: 60 * 60 * 24,
 			},
@@ -90,7 +78,7 @@ func TestCodyGatewayCodeRateLimit(t *testing.T) {
 			plan:      PlanEnterprise1,
 			userCount: pointers.Ptr(50),
 			want: CodyGatewayRateLimit{
-				AllowedModels:   []string{"anthropic/claude-instant-v1", "anthropic/claude-instant-1", "anthropic/claude-instant-1.2"},
+				AllowedModels:   []string{"*"},
 				Limit:           50000,
 				IntervalSeconds: 60 * 60 * 24,
 			},
@@ -99,7 +87,7 @@ func TestCodyGatewayCodeRateLimit(t *testing.T) {
 			name: "Enterprise plan with no user count",
 			plan: PlanEnterprise1,
 			want: CodyGatewayRateLimit{
-				AllowedModels:   []string{"anthropic/claude-instant-v1", "anthropic/claude-instant-1", "anthropic/claude-instant-1.2"},
+				AllowedModels:   []string{"*"},
 				Limit:           1000,
 				IntervalSeconds: 60 * 60 * 24,
 			},
@@ -108,15 +96,15 @@ func TestCodyGatewayCodeRateLimit(t *testing.T) {
 			name: "Non-enterprise plan with no GPT tag and no user count",
 			plan: "unknown",
 			want: CodyGatewayRateLimit{
-				AllowedModels:   []string{"anthropic/claude-instant-v1", "anthropic/claude-instant-1", "anthropic/claude-instant-1.2"},
-				Limit:           100,
+				AllowedModels:   []string{"*"},
+				Limit:           1000,
 				IntervalSeconds: 60 * 60 * 24,
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := NewCodyGatewayCodeRateLimit(tt.plan, tt.userCount, tt.licenseTags)
+			got := NewCodyGatewayCodeRateLimit(tt.plan, tt.userCount)
 			if diff := cmp.Diff(got, tt.want); diff != "" {
 				t.Fatalf("incorrect rate limit computed: %s", diff)
 			}
@@ -137,7 +125,7 @@ func TestCodyGatewayEmbeddingsRateLimit(t *testing.T) {
 			plan:      PlanEnterprise1,
 			userCount: pointers.Ptr(50),
 			want: CodyGatewayRateLimit{
-				AllowedModels:   []string{"openai/text-embedding-ada-002"},
+				AllowedModels:   []string{"*"},
 				Limit:           20 * 50 * 10_000_000 / 30,
 				IntervalSeconds: 60 * 60 * 24,
 			},
@@ -146,7 +134,7 @@ func TestCodyGatewayEmbeddingsRateLimit(t *testing.T) {
 			name: "Enterprise plan with no user count",
 			plan: PlanEnterprise1,
 			want: CodyGatewayRateLimit{
-				AllowedModels:   []string{"openai/text-embedding-ada-002"},
+				AllowedModels:   []string{"*"},
 				Limit:           1 * 20 * 10_000_000 / 30,
 				IntervalSeconds: 60 * 60 * 24,
 			},
@@ -155,7 +143,7 @@ func TestCodyGatewayEmbeddingsRateLimit(t *testing.T) {
 			name: "Non-enterprise plan with no user count",
 			plan: "unknown",
 			want: CodyGatewayRateLimit{
-				AllowedModels:   []string{"openai/text-embedding-ada-002"},
+				AllowedModels:   []string{"*"},
 				Limit:           1 * 10 * 10_000_000 / 30,
 				IntervalSeconds: 60 * 60 * 24,
 			},
@@ -163,7 +151,7 @@ func TestCodyGatewayEmbeddingsRateLimit(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := NewCodyGatewayEmbeddingsRateLimit(tt.plan, tt.userCount, tt.licenseTags)
+			got := NewCodyGatewayEmbeddingsRateLimit(tt.plan, tt.userCount)
 			if diff := cmp.Diff(got, tt.want); diff != "" {
 				t.Fatalf("incorrect rate limit computed: %s", diff)
 			}

@@ -32,10 +32,8 @@ func FromSearchClient(client client.SearchClient) NewSearcher {
 		// latency is not a priority of Search Jobs.
 		q = "index:no " + q
 
-		// TODO this hack is an ugly workaround to limit searches to type:file only.
-		// This is OK for the EAP but we should remove the limitation soon.
-		if !strings.Contains(q, "type:file") {
-			q = "type:file " + q
+		if strings.Contains(strings.ToLower(q), "patterntype:structural") {
+			return nil, errors.New("Structural search is not supported in Search Jobs")
 		}
 
 		inputs, err := client.Plan(
@@ -152,7 +150,11 @@ func (s searchQuery) toRepoRevSpecs(ctx context.Context, repoRevSpec types.Repos
 
 	var revs []query.RevisionSpecifier
 	for _, revspec := range repoRevSpec.RevisionSpecifiers.Get() {
-		revs = append(revs, query.ParseRevisionSpecifier(revspec))
+		rs, err := query.ParseRevisionSpecifier(revspec)
+		if err != nil {
+			return repos.RepoRevSpecs{}, err
+		}
+		revs = append(revs, rs)
 	}
 
 	return repos.RepoRevSpecs{
@@ -161,7 +163,7 @@ func (s searchQuery) toRepoRevSpecs(ctx context.Context, repoRevSpec types.Repos
 	}, nil
 }
 
-func (s searchQuery) Search(ctx context.Context, repoRev types.RepositoryRevision, w CSVWriter) error {
+func (s searchQuery) Search(ctx context.Context, repoRev types.RepositoryRevision, matchWriter MatchWriter) error {
 	if err := isSameUser(ctx, s.userID); err != nil {
 		return err
 	}
@@ -181,10 +183,6 @@ func (s searchQuery) Search(ctx context.Context, repoRev types.RepositoryRevisio
 
 	var mu sync.Mutex     // serialize writes to w
 	var writeRowErr error // capture if w.Write fails
-	matchWriter, err := newMatchCSVWriter(w)
-	if err != nil {
-		return err
-	}
 
 	// TODO currently ignoring returned Alert
 	_, err = job.Run(ctx, s.clients, streaming.StreamFunc(func(se streaming.SearchEvent) {
@@ -212,7 +210,7 @@ func (s searchQuery) Search(ctx context.Context, repoRev types.RepositoryRevisio
 	// An empty repository we treat as success. When searching HEAD we haven't
 	// yet validated the commit actually exists so we need to ignore at this
 	// point. We should consider
-	if repoRev.Revision == "HEAD" && errors.HasType(err, &gitdomain.RevisionNotFoundError{}) {
+	if repoRev.Revision == "HEAD" && errors.HasType[*gitdomain.RevisionNotFoundError](err) {
 		return nil
 	}
 
@@ -233,6 +231,5 @@ func (s searchQuery) minimalRepo(ctx context.Context, repoID api.RepoID) (sgtype
 }
 
 func isReposMissingError(err error) bool {
-	var m repos.MissingRepoRevsError
-	return errors.Is(err, repos.ErrNoResolvedRepos) || errors.HasType(err, &m)
+	return errors.Is(err, repos.ErrNoResolvedRepos) || errors.HasType[*repos.MissingRepoRevsError](err)
 }

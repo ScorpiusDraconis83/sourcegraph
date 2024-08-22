@@ -15,7 +15,7 @@ import {
 } from './story/fixtures'
 import { WebhookLogNode } from './WebhookLogNode'
 
-import gridStyles from './WebhookLogPage.module.scss'
+import gridStyles from '../SiteAdminWebhookPage.module.scss'
 
 const decorator: Decorator = story => (
     <Container>
@@ -25,11 +25,7 @@ const decorator: Decorator = story => (
 
 const config: Meta = {
     title: 'web/site-admin/webhooks/WebhookLogNode',
-    parameters: {
-        chromatic: {
-            viewports: [320, 576, 978, 1440],
-        },
-    },
+    parameters: {},
     decorators: [decorator],
     argTypes: {
         receivedAt: {

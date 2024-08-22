@@ -2,19 +2,19 @@ import React, { forwardRef, useContext } from 'react'
 
 import { mdiMenu } from '@mdi/js'
 import classNames from 'classnames'
-import { type LinkProps, NavLink as RouterNavLink } from 'react-router-dom'
+import { NavLink as RouterNavLink, type LinkProps } from 'react-router-dom'
 
 import {
-    Link,
-    Icon,
     H1,
-    type ForwardReferenceComponent,
-    VIEWPORT_SM,
+    Icon,
+    Link,
     Menu,
-    MenuList,
     MenuButton,
     MenuLink,
+    MenuList,
+    VIEWPORT_SM,
     useMatchMedia,
+    type ForwardReferenceComponent,
 } from '@sourcegraph/wildcard'
 
 import { PageRoutes } from '../../routes.constants'
@@ -51,14 +51,15 @@ export interface NavLinkProps extends NavItemProps, Pick<LinkProps, 'to'> {
 }
 
 export const NavBar = forwardRef(function NavBar({ children, logo }, reference): JSX.Element {
+    const logoUrl = window.context?.codeSearchEnabledOnInstance ? PageRoutes.Search : PageRoutes.CodyChat
     return (
         <nav aria-label="Main" className={navBarStyles.navbar} ref={reference}>
             {logo && (
                 <>
                     <H1 className={navBarStyles.logo}>
-                        <RouterNavLink className="d-flex align-items-center" to={PageRoutes.Search}>
+                        <Link className="d-flex align-items-center" to={logoUrl}>
                             {logo}
-                        </RouterNavLink>
+                        </Link>
                     </H1>
                     <hr className={navBarStyles.divider} aria-hidden={true} />
                 </>

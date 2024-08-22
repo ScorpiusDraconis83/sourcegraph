@@ -179,8 +179,6 @@ type PermsStore interface {
 	ListUserPermissions(ctx context.Context, userID int32, args *ListUserPermissionsArgs) (perms []*UserPermission, err error)
 	// ListRepoPermissions returns list of users the repo is accessible to.
 	ListRepoPermissions(ctx context.Context, repoID api.RepoID, args *ListRepoPermissionsArgs) (perms []*RepoPermission, err error)
-	// IsRepoUnrestructed returns if the repo is unrestricted.
-	IsRepoUnrestricted(ctx context.Context, repoID api.RepoID) (unrestricted bool, err error)
 }
 
 // It is concurrency-safe and maintains data consistency over the 'user_permissions',
@@ -1607,13 +1605,17 @@ SELECT u.id as user_id, MAX(p.finished_at) as finished_at
 FROM users u
 LEFT JOIN permission_sync_jobs p ON u.id = p.user_id AND p.user_id IS NOT NULL
 WHERE u.deleted_at IS NULL AND (%s)
+AND NOT EXISTS (
+	SELECT 1 FROM permission_sync_jobs p2
+	WHERE p2.user_id = u.id AND (p2.state = 'queued' OR p2.state = 'processing')
+)
 GROUP BY u.id
 ORDER BY finished_at ASC NULLS FIRST, user_id ASC
 LIMIT %d;
 `
 
 // UserIDsWithOldestPerms lists the users with the oldest synced perms, limited
-// to limit. If age is non-zero, users that have synced within "age" since now
+// to limit, for which there is no sync job scheduled at the moment. If age is non-zero, users that have synced within "age" since now
 // will be filtered out.
 func (s *permsStore) UserIDsWithOldestPerms(ctx context.Context, limit int, age time.Duration) (map[int32]time.Time, error) {
 	q := sqlf.Sprintf(usersWithOldestPermsQuery, s.getCutoffClause(age), limit)
@@ -1625,11 +1627,18 @@ SELECT r.id as repo_id, MAX(p.finished_at) as finished_at
 FROM repo r
 LEFT JOIN permission_sync_jobs p ON r.id = p.repository_id AND p.repository_id IS NOT NULL
 WHERE r.private AND r.deleted_at IS NULL AND (%s)
+AND NOT EXISTS (
+	SELECT 1 FROM permission_sync_jobs p2
+	WHERE p2.repository_id = r.id AND (p2.state = 'queued' OR p2.state = 'processing')
+)
 GROUP BY r.id
 ORDER BY finished_at ASC NULLS FIRST, repo_id ASC
 LIMIT %d;
 `
 
+// ReposIDsWithOldestPerms lists the repositories with the oldest synced perms, limited
+// to limit, for which there is no sync job scheduled at the moment. If age is non-zero, repos that have synced within "age" since now
+// will be filtered out.
 func (s *permsStore) ReposIDsWithOldestPerms(ctx context.Context, limit int, age time.Duration) (map[api.RepoID]time.Time, error) {
 	q := sqlf.Sprintf(reposWithOldestPermsQuery, s.getCutoffClause(age), limit)
 
@@ -2030,28 +2039,22 @@ func (s *permsStore) ListRepoPermissions(ctx context.Context, repoID api.RepoID,
 	permsQueryConditions := []*sqlf.Query{}
 	unrestricted := false
 
-	if authzParams.BypassAuthzReasons.NoAuthzProvider {
-		// return all users as auth is bypassed for everyone
+	// find if the repo is unrestricted
+	unrestricted, err = s.isRepoUnrestricted(ctx, repoID, authzParams)
+	if err != nil {
+		return nil, err
+	}
+
+	if unrestricted {
+		// return all users as repo is unrestricted
 		permsQueryConditions = append(permsQueryConditions, sqlf.Sprintf("TRUE"))
-		unrestricted = true
 	} else {
-		// find if the repo is unrestricted
-		unrestricted, err = s.isRepoUnrestricted(ctx, repoID, authzParams)
-		if err != nil {
-			return nil, err
+		if !authzParams.AuthzEnforceForSiteAdmins {
+			// include all site admins
+			permsQueryConditions = append(permsQueryConditions, sqlf.Sprintf("users.site_admin"))
 		}
 
-		if unrestricted {
-			// return all users as repo is unrestricted
-			permsQueryConditions = append(permsQueryConditions, sqlf.Sprintf("TRUE"))
-		} else {
-			if !authzParams.AuthzEnforceForSiteAdmins {
-				// include all site admins
-				permsQueryConditions = append(permsQueryConditions, sqlf.Sprintf("users.site_admin"))
-			}
-
-			permsQueryConditions = append(permsQueryConditions, sqlf.Sprintf(`urp.repo_id = %d`, repoID))
-		}
+		permsQueryConditions = append(permsQueryConditions, sqlf.Sprintf(`urp.repo_id = %d`, repoID))
 	}
 
 	where := []*sqlf.Query{sqlf.Sprintf("(%s)", sqlf.Join(permsQueryConditions, " OR "))}
@@ -2171,15 +2174,6 @@ WHERE
 	users.deleted_at IS NULL
 	AND %s
 `
-
-func (s *permsStore) IsRepoUnrestricted(ctx context.Context, repoID api.RepoID) (bool, error) {
-	authzParams, err := GetAuthzQueryParameters(context.Background(), s.db)
-	if err != nil {
-		return false, err
-	}
-
-	return s.isRepoUnrestricted(ctx, repoID, authzParams)
-}
 
 func (s *permsStore) isRepoUnrestricted(ctx context.Context, repoID api.RepoID, authzParams *AuthzQueryParameters) (bool, error) {
 	conditions := []*sqlf.Query{GetUnrestrictedReposCond()}

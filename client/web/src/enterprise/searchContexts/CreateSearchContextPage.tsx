@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react'
+import React, { useCallback, useEffect } from 'react'
 
 import { mdiMagnify } from '@mdi/js'
 import { Navigate, useLocation } from 'react-router-dom'
@@ -6,14 +6,14 @@ import type { Observable } from 'rxjs'
 
 import type {
     Scalars,
+    SearchContextFields,
     SearchContextInput,
     SearchContextRepositoryRevisionsInput,
-    SearchContextFields,
 } from '@sourcegraph/shared/src/graphql-operations'
 import type { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
 import type { SearchContextProps } from '@sourcegraph/shared/src/search'
 import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
-import { PageHeader, Link } from '@sourcegraph/wildcard'
+import { Link, PageHeader } from '@sourcegraph/wildcard'
 
 import type { AuthenticatedUser } from '../../auth'
 import { withAuthenticatedUser } from '../../auth/withAuthenticatedUser'
@@ -26,26 +26,31 @@ import { SearchContextForm } from './SearchContextForm'
 export interface CreateSearchContextPageProps
     extends TelemetryProps,
         Pick<SearchContextProps, 'createSearchContext' | 'deleteSearchContext'>,
-        PlatformContextProps<'requestGraphQL'> {
+        PlatformContextProps<'requestGraphQL' | 'telemetryRecorder'> {
     authenticatedUser: AuthenticatedUser
     isSourcegraphDotCom: boolean
 }
 
-export const AuthenticatedCreateSearchContextPage: React.FunctionComponent<
-    React.PropsWithChildren<CreateSearchContextPageProps>
-> = props => {
+export const AuthenticatedCreateSearchContextPage: React.FunctionComponent<CreateSearchContextPageProps> = props => {
     const { authenticatedUser, createSearchContext, platformContext } = props
 
     const location = useLocation()
 
     const query = parseSearchURLQuery(location.search)
 
+    useEffect(() => {
+        platformContext.telemetryRecorder.recordEvent('searchContexts.create', 'view')
+    }, [platformContext.telemetryRecorder])
+
     const onSubmit = useCallback(
         (
             id: Scalars['ID'] | undefined,
             searchContext: SearchContextInput,
             repositories: SearchContextRepositoryRevisionsInput[]
-        ): Observable<SearchContextFields> => createSearchContext({ searchContext, repositories }, platformContext),
+        ): Observable<SearchContextFields> => {
+            platformContext.telemetryRecorder.recordEvent('searchContext', 'create')
+            return createSearchContext({ searchContext, repositories }, platformContext)
+        },
         [createSearchContext, platformContext]
     )
 
@@ -61,10 +66,10 @@ export const AuthenticatedCreateSearchContextPage: React.FunctionComponent<
                     <PageHeader
                         description={
                             <span className="text-muted">
-                                A search context represents a group of repositories at specified branches or revisions
-                                that will be targeted by search queries.{' '}
+                                A search context is a group of repositories at specified branches or revisions that you
+                                can refer to in a search query.{' '}
                                 <Link
-                                    to="/help/code_search/explanations/features#search-contexts"
+                                    to="/help/code-search/working/search_contexts"
                                     target="_blank"
                                     rel="noopener noreferrer"
                                 >

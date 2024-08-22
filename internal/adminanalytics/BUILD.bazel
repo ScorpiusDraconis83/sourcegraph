@@ -19,14 +19,13 @@ go_library(
         "utils.go",
     ],
     importpath = "github.com/sourcegraph/sourcegraph/internal/adminanalytics",
+    tags = [TAG_DATA_ANALYTICS],
     visibility = ["//:__subpackages__"],
     deps = [
         "//internal/database",
-        "//internal/featureflag",
         "//internal/redispool",
         "//lib/errors",
         "@com_github_keegancsmith_sqlf//:sqlf",
-        "@com_github_sourcegraph_log//:log",
     ],
 )
 
@@ -34,12 +33,14 @@ go_test(
     name = "adminanalytics_test",
     timeout = "short",
     srcs = [
+        "cache_test.go",
         "users_test.go",
         "utils_test.go",
     ],
     embed = [":adminanalytics"],
     flaky = True,
     tags = [
+        TAG_DATA_ANALYTICS,
         # Test requires localhost for database
         "requires-network",
     ],

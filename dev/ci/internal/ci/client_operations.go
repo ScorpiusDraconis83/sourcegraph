@@ -2,7 +2,6 @@ package ci
 
 import (
 	"fmt"
-	"strconv"
 
 	bk "github.com/sourcegraph/sourcegraph/dev/ci/internal/buildkite"
 	"github.com/sourcegraph/sourcegraph/dev/ci/internal/ci/operations"
@@ -16,12 +15,7 @@ func addStylelint(pipeline *bk.Pipeline) {
 
 var browsers = []string{"chrome"}
 
-func getParallelTestCount(webParallelTestCount int) int {
-	return webParallelTestCount + len(browsers)
-}
-
-func addBrowserExtensionIntegrationTests(parallelTestCount int) operations.Operation {
-	testCount := getParallelTestCount(parallelTestCount)
+func addBrowserExtensionIntegrationTests() operations.Operation {
 	return func(pipeline *bk.Pipeline) {
 		for _, browser := range browsers {
 			pipeline.AddStep(
@@ -32,8 +26,6 @@ func addBrowserExtensionIntegrationTests(parallelTestCount int) operations.Opera
 				bk.Env("LOG_BROWSER_CONSOLE", "false"),
 				bk.Env("SOURCEGRAPH_BASE_URL", "https://sourcegraph.com"),
 				bk.Env("POLLYJS_MODE", "replay"), // ensure that we use existing recordings
-				bk.Env("PERCY_ON", "true"),
-				bk.Env("PERCY_PARALLEL_TOTAL", strconv.Itoa(testCount)),
 				bk.Cmd("pnpm install --frozen-lockfile --fetch-timeout 60000"),
 				bk.Cmd("pnpm --filter @sourcegraph/browser run build"),
 				bk.Cmd("pnpm run test-browser-integration"),
@@ -60,36 +52,6 @@ func recordBrowserExtensionIntegrationTests(pipeline *bk.Pipeline) {
 			bk.AutomaticRetry(1),
 			bk.ArtifactPaths("./puppeteer/*.png"),
 		)
-	}
-}
-
-func clientChromaticTests(opts CoreTestOperationsOptions) operations.Operation {
-	return func(pipeline *bk.Pipeline) {
-		stepOpts := []bk.StepOpt{
-			withPnpmCache(),
-			bk.AutomaticRetry(3),
-			bk.Cmd("./dev/ci/pnpm-install-with-retry.sh"),
-			bk.Cmd("pnpm run generate"),
-			bk.Env("MINIFY", "1"),
-		}
-
-		// Upload storybook to Chromatic
-		//
-		// We run chromatic through `run-chromatic` because the script detects whether a build is being retried
-		// and then adds the flag `--force-rebuild`. We need to do this because Chromatic fails when running on
-		// the same commit.
-		chromaticCommand := "./dev/ci/run-chromatic.sh --exit-zero-on-changes --exit-once-uploaded"
-		if opts.ChromaticShouldAutoAccept {
-			chromaticCommand += " --auto-accept-changes"
-		} else {
-			// Unless we plan on automatically accepting these changes, we only run this
-			// step on ready-for-review pull requests.
-			stepOpts = append(stepOpts, bk.IfReadyForReview(opts.ForceReadyForReview))
-			chromaticCommand += " | ./dev/ci/post-chromatic.sh"
-		}
-
-		pipeline.AddStep(":chromatic: Upload Storybook to Chromatic",
-			append(stepOpts, bk.Cmd(chromaticCommand))...)
 	}
 }
 

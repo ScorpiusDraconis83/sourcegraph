@@ -30,7 +30,7 @@ func TestAllReposIterator(t *testing.T) {
 	repoStore.ListFunc.SetDefaultHook(func(ctx context.Context, opt database.ReposListOptions) ([]*types.Repo, error) {
 		repoStoreListCalls = append(repoStoreListCalls, opt)
 		var result []*types.Repo
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			nextRepoID++
 			result = append(result, &types.Repo{ID: nextRepoID, Name: api.RepoName(fmt.Sprint(nextRepoID))})
 		}
@@ -40,7 +40,7 @@ func TestAllReposIterator(t *testing.T) {
 		return result, nil
 	})
 
-	iter := NewAllReposIterator(repoStore, clock, false, 15*time.Minute, &prometheus.CounterOpts{Name: "fake_name123"})
+	iter := NewAllReposIterator(repoStore, clock, 15*time.Minute, &prometheus.CounterOpts{Name: "fake_name123"})
 	{
 		// Do we get all 9 repositories?
 		var each []string

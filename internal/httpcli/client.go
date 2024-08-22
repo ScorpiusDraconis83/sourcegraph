@@ -15,7 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"code.gitea.io/gitea/modules/hostmatcher"
 	"github.com/PuerkitoBio/rehttp"
 	"github.com/gregjones/httpcache"
 	"github.com/prometheus/client_golang/prometheus"
@@ -25,12 +24,15 @@ import (
 
 	"github.com/sourcegraph/sourcegraph/internal/actor"
 	"github.com/sourcegraph/sourcegraph/internal/env"
+	"github.com/sourcegraph/sourcegraph/internal/hostmatcher"
 	"github.com/sourcegraph/sourcegraph/internal/instrumentation"
 	"github.com/sourcegraph/sourcegraph/internal/lazyregexp"
 	"github.com/sourcegraph/sourcegraph/internal/metrics"
 	"github.com/sourcegraph/sourcegraph/internal/rcache"
+	"github.com/sourcegraph/sourcegraph/internal/redispool"
 	"github.com/sourcegraph/sourcegraph/internal/requestclient"
 	"github.com/sourcegraph/sourcegraph/internal/requestinteraction"
+	"github.com/sourcegraph/sourcegraph/internal/tenant"
 	"github.com/sourcegraph/sourcegraph/internal/trace"
 	"github.com/sourcegraph/sourcegraph/internal/trace/policy"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
@@ -83,7 +85,7 @@ type Factory struct {
 // redisCache is an HTTP cache backed by Redis. The TTL of a week is a balance
 // between caching values for a useful amount of time versus growing the cache
 // too large.
-var redisCache = rcache.NewWithTTL("http", 604800)
+var redisCache = rcache.NewWithTTL(redispool.Cache, "http", 604800)
 
 // CachedTransportOpt is the default transport cache - it will return values from
 // the cache where possible (avoiding a network request) and will additionally add
@@ -111,6 +113,7 @@ var (
 	externalRetryDelayMax, _         = time.ParseDuration(env.Get("SRC_HTTP_CLI_EXTERNAL_RETRY_DELAY_MAX", "3s", "Max retry delay duration for external HTTP requests"))
 	externalRetryMaxAttempts, _      = strconv.Atoi(env.Get("SRC_HTTP_CLI_EXTERNAL_RETRY_MAX_ATTEMPTS", "20", "Max retry attempts for external HTTP requests"))
 	externalRetryAfterMaxDuration, _ = time.ParseDuration(env.Get("SRC_HTTP_CLI_EXTERNAL_RETRY_AFTER_MAX_DURATION", "3s", "Max duration to wait in retry-after header before we won't auto-retry"))
+	codyGatewayDisableHTTP2          = env.MustGetBool("SRC_HTTP_CLI_DISABLE_CODY_GATEWAY_HTTP2", false, "Whether we should disable HTTP2 for Cody Gateway communication")
 )
 
 // NewExternalClientFactory returns a httpcli.Factory with common options
@@ -135,6 +138,7 @@ func newExternalClientFactory(cache bool, testOpt bool, middleware ...Middleware
 		ContextErrorMiddleware,
 		HeadersMiddleware("User-Agent", "Sourcegraph-Bot"),
 		redisLoggerMiddleware(),
+		externalRequestCountMetricsMiddleware,
 	}
 	mw = append(mw, middleware...)
 
@@ -178,6 +182,10 @@ var ExternalDoer, _ = ExternalClientFactory.Doer()
 // This client does not cache responses. To cache responses see ExternalDoer instead.
 var UncachedExternalDoer, _ = UncachedExternalClientFactory.Doer()
 
+// CodyGatewayDoer is a client for communication with Cody Gateway.
+// This client does not cache responses.
+var CodyGatewayDoer, _ = UncachedExternalClientFactory.Doer(NewDisableHTTP2Opt(codyGatewayDisableHTTP2))
+
 // TestExternalClientFactory is a httpcli.Factory with common options
 // and is created for tests where you'd normally use an ExternalClientFactory.
 // Must be used in tests only as it doesn't apply any IP restrictions.
@@ -203,9 +211,9 @@ var ExternalClient, _ = ExternalClientFactory.Client()
 // WARN: This client does not cache responses. To cache responses see ExternalClient instead.
 var UncachedExternalClient, _ = UncachedExternalClientFactory.Client()
 
-// InternalClientFactory is a httpcli.Factory with common options
+// internalClientFactory is a httpcli.Factory with common options
 // and middleware pre-set for communicating with internal services.
-var InternalClientFactory = NewInternalClientFactory("internal")
+var internalClientFactory = newInternalClientFactory("internal")
 
 var (
 	internalTimeout, _               = time.ParseDuration(env.Get("SRC_HTTP_CLI_INTERNAL_TIMEOUT", "0", "Timeout for internal HTTP requests"))
@@ -215,10 +223,10 @@ var (
 	internalRetryAfterMaxDuration, _ = time.ParseDuration(env.Get("SRC_HTTP_CLI_INTERNAL_RETRY_AFTER_MAX_DURATION", "3s", "Max duration to wait in retry-after header before we won't auto-retry"))
 )
 
-// NewInternalClientFactory returns a httpcli.Factory with common options
+// newInternalClientFactory returns a httpcli.Factory with common options
 // and middleware pre-set for communicating with internal services. Additional
 // middleware can also be provided to e.g. enable logging with NewLoggingMiddleware.
-func NewInternalClientFactory(subsystem string, middleware ...Middleware) *Factory {
+func newInternalClientFactory(subsystem string, middleware ...Middleware) *Factory {
 	mw := []Middleware{
 		ContextErrorMiddleware,
 	}
@@ -233,6 +241,7 @@ func NewInternalClientFactory(subsystem string, middleware ...Middleware) *Facto
 			ExpJitterDelayOrRetryAfterDelay(internalRetryDelayBase, internalRetryDelayMax),
 		),
 		MeteredTransportOpt(subsystem),
+		TenantTransportOpt,
 		ActorTransportOpt,
 		RequestClientTransportOpt,
 		RequestInteractionTransportOpt,
@@ -242,11 +251,11 @@ func NewInternalClientFactory(subsystem string, middleware ...Middleware) *Facto
 
 // InternalDoer is a shared client for internal communication. This is a
 // convenience for existing uses of http.DefaultClient.
-var InternalDoer, _ = InternalClientFactory.Doer()
+var InternalDoer, _ = internalClientFactory.Doer()
 
 // InternalClient returns a shared client for internal communication. This is
 // a convenience for existing uses of http.DefaultClient.
-var InternalClient, _ = InternalClientFactory.Client()
+var InternalClient, _ = internalClientFactory.Client()
 
 // Doer returns a new Doer wrapped with the middleware stack
 // provided in the Factory constructor and with the given common
@@ -405,6 +414,8 @@ type denyRule struct {
 var defaultDenylist = []denyRule{
 	{builtin: "loopback"},
 	{pattern: "169.254.169.254"},
+	{pattern: "0.0.0.0"},
+	{pattern: "<nil>"},
 }
 
 var localDevDenylist = []denyRule{
@@ -559,6 +570,43 @@ var metricRetry = promauto.NewCounter(prometheus.CounterOpts{
 	Help: "Total number of times we retry HTTP requests.",
 })
 
+var metricExternalRequestCount = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "src_http_client_external_request_count",
+	Help: "Count of external HTTP requests made by the Sourcegraph HTTP client.",
+}, []string{"host", "method", "status_code"})
+
+func externalRequestCountMetricsMiddleware(next Doer) Doer {
+	return doExternalRequestCountMetricsMiddleware(next, func(host, method string, statusCode int) {
+		code := strconv.Itoa(statusCode)
+		metricExternalRequestCount.WithLabelValues(host, method, code).Inc()
+	})
+}
+
+func doExternalRequestCountMetricsMiddleware(next Doer, observe func(host, method string, statusCode int)) Doer {
+	return DoerFunc(func(req *http.Request) (*http.Response, error) {
+		host := "<unknown>"
+		if req.Host != "" {
+			host = req.Host
+		} else if u := req.URL; u != nil && u.Host != "" {
+			host = u.Host
+		}
+
+		method := req.Method
+
+		var statusCode int
+
+		resp, err := next.Do(req)
+		if err != nil {
+			statusCode = -1 // -1 indicates unknown status code if an error occurred
+		} else {
+			statusCode = resp.StatusCode
+		}
+
+		observe(host, method, statusCode)
+		return resp, err
+	})
+}
+
 // A regular expression to match the error returned by net/http when the
 // configured number of redirects is exhausted. This error isn't typed
 // specifically so we resort to matching on the error string.
@@ -645,7 +693,7 @@ func NewRetryPolicy(max int, maxRetryAfterDuration time.Duration) rehttp.RetryFn
 			return false
 		default:
 			// Don't retry more than 3 times for no such host errors.
-			// This affords some resilience to dns unreliability while
+			// This affords some resilience to DNS unreliability while
 			// preventing 20 attempts with a non existing name.
 			var dnsErr *net.DNSError
 			if a.Index >= 3 && errors.As(a.Error, &dnsErr) && dnsErr.IsNotFound {
@@ -721,15 +769,13 @@ func extractRetryAfter(response *http.Response) (retryAfterHeader string, retryA
 			}
 
 			// If we weren't able to parse as seconds, try to parse as RFC1123.
+			after, err := time.Parse(time.RFC1123, retryAfterHeader)
 			if err != nil {
-				after, err := time.Parse(time.RFC1123, retryAfterHeader)
-				if err != nil {
-					// We don't know how to parse this header
-					return retryAfterHeader, nil
-				}
-				in := time.Until(after)
-				return retryAfterHeader, &in
+				// We don't know how to parse this header
+				return retryAfterHeader, nil
 			}
+			in := time.Until(after)
+			return retryAfterHeader, &in
 		}
 	}
 	return retryAfterHeader, nil
@@ -827,6 +873,22 @@ func NewMaxIdleConnsPerHostOpt(max int) Opt {
 	}
 }
 
+// NewDisableHTTP2Opt returns an Opt that makes the http.Client use HTTP/1.1 (instead of defaulting to HTTP/2).
+func NewDisableHTTP2Opt(disable bool) Opt {
+	return func(cli *http.Client) error {
+		tr, err := getTransportForMutation(cli)
+		if err != nil {
+			return errors.Wrap(err, "httpcli.NewDisableHTTP2Opt")
+		}
+		if disable {
+			tr.ForceAttemptHTTP2 = false
+			tr.TLSNextProto = make(map[string]func(authority string, c *tls.Conn) http.RoundTripper)
+			tr.TLSClientConfig = &tls.Config{}
+		}
+		return nil
+	}
+}
+
 // NewTimeoutOpt returns a Opt that sets the Timeout field of an http.Client.
 func NewTimeoutOpt(timeout time.Duration) Opt {
 	return func(cli *http.Client) error {
@@ -884,6 +946,23 @@ func ActorTransportOpt(cli *http.Client) error {
 
 	cli.Transport = &wrappedTransport{
 		RoundTripper: &actor.HTTPTransport{RoundTripper: cli.Transport},
+		Wrapped:      cli.Transport,
+	}
+
+	return nil
+}
+
+// TenantTransportOpt wraps an existing http.Transport of an http.Client to pull the tenant
+// from the context and add it to each request's HTTP headers.
+//
+// Servers can use tenant.InternalHTTPMiddleware to populate tenant context from incoming requests.
+func TenantTransportOpt(cli *http.Client) error {
+	if cli.Transport == nil {
+		cli.Transport = http.DefaultTransport
+	}
+
+	cli.Transport = &wrappedTransport{
+		RoundTripper: &tenant.InternalHTTPTransport{RoundTripper: cli.Transport},
 		Wrapped:      cli.Transport,
 	}
 

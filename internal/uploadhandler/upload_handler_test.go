@@ -17,12 +17,9 @@ import (
 	"github.com/sourcegraph/log"
 	"github.com/sourcegraph/log/logtest"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/backend"
-	"github.com/sourcegraph/sourcegraph/internal/api"
+	"github.com/sourcegraph/sourcegraph/internal/object"
+	objectmocks "github.com/sourcegraph/sourcegraph/internal/object/mocks"
 	"github.com/sourcegraph/sourcegraph/internal/observation"
-	"github.com/sourcegraph/sourcegraph/internal/types"
-	"github.com/sourcegraph/sourcegraph/internal/uploadstore"
-	uploadstoremocks "github.com/sourcegraph/sourcegraph/internal/uploadstore/mocks"
 )
 
 func TestMain(m *testing.M) {
@@ -36,10 +33,8 @@ func TestMain(m *testing.M) {
 const testCommit = "deadbeef01deadbeef02deadbeef03deadbeef04"
 
 func TestHandleEnqueueSinglePayload(t *testing.T) {
-	setupRepoMocks(t)
-
 	mockDBStore := NewMockDBStore[testUploadMetadata]()
-	mockUploadStore := uploadstoremocks.NewMockStore()
+	mockUploadStore := objectmocks.NewMockStorage()
 
 	mockDBStore.WithTransactionFunc.SetDefaultHook(func(ctx context.Context, f func(tx DBStore[testUploadMetadata]) error) error { return f(mockDBStore) })
 	mockDBStore.InsertUploadFunc.SetDefaultReturn(42, nil)
@@ -56,7 +51,7 @@ func TestHandleEnqueueSinglePayload(t *testing.T) {
 	}).Encode()
 
 	var expectedContents []byte
-	for i := 0; i < 20000; i++ {
+	for i := range 20000 {
 		expectedContents = append(expectedContents, byte(i))
 	}
 
@@ -117,10 +112,8 @@ func TestHandleEnqueueSinglePayload(t *testing.T) {
 }
 
 func TestHandleEnqueueSinglePayloadNoIndexerName(t *testing.T) {
-	setupRepoMocks(t)
-
 	mockDBStore := NewMockDBStore[testUploadMetadata]()
-	mockUploadStore := uploadstoremocks.NewMockStore()
+	mockUploadStore := objectmocks.NewMockStorage()
 
 	mockDBStore.WithTransactionFunc.SetDefaultHook(func(ctx context.Context, f func(tx DBStore[testUploadMetadata]) error) error { return f(mockDBStore) })
 	mockDBStore.InsertUploadFunc.SetDefaultReturn(42, nil)
@@ -137,7 +130,7 @@ func TestHandleEnqueueSinglePayloadNoIndexerName(t *testing.T) {
 
 	var lines []string
 	lines = append(lines, `{"label": "metaData", "toolInfo": {"name": "lsif-go"}}`)
-	for i := 0; i < 20000; i++ {
+	for range 20000 {
 		lines = append(lines, `{"id": "a", "type": "edge", "label": "textDocument/references", "outV": "b", "inV": "c"}`)
 	}
 
@@ -179,10 +172,8 @@ func TestHandleEnqueueSinglePayloadNoIndexerName(t *testing.T) {
 }
 
 func TestHandleEnqueueMultipartSetup(t *testing.T) {
-	setupRepoMocks(t)
-
 	mockDBStore := NewMockDBStore[testUploadMetadata]()
-	mockUploadStore := uploadstoremocks.NewMockStore()
+	mockUploadStore := objectmocks.NewMockStorage()
 
 	mockDBStore.WithTransactionFunc.SetDefaultHook(func(ctx context.Context, f func(tx DBStore[testUploadMetadata]) error) error { return f(mockDBStore) })
 	mockDBStore.InsertUploadFunc.SetDefaultReturn(42, nil)
@@ -239,10 +230,8 @@ func TestHandleEnqueueMultipartSetup(t *testing.T) {
 }
 
 func TestHandleEnqueueMultipartUpload(t *testing.T) {
-	setupRepoMocks(t)
-
 	mockDBStore := NewMockDBStore[testUploadMetadata]()
-	mockUploadStore := uploadstoremocks.NewMockStore()
+	mockUploadStore := objectmocks.NewMockStorage()
 
 	upload := Upload[testUploadMetadata]{
 		ID:            42,
@@ -263,7 +252,7 @@ func TestHandleEnqueueMultipartUpload(t *testing.T) {
 	}).Encode()
 
 	var expectedContents []byte
-	for i := 0; i < 20000; i++ {
+	for i := range 20000 {
 		expectedContents = append(expectedContents, byte(i))
 	}
 
@@ -311,10 +300,8 @@ func TestHandleEnqueueMultipartUpload(t *testing.T) {
 }
 
 func TestHandleEnqueueMultipartFinalize(t *testing.T) {
-	setupRepoMocks(t)
-
 	mockDBStore := NewMockDBStore[testUploadMetadata]()
-	mockUploadStore := uploadstoremocks.NewMockStore()
+	mockUploadStore := objectmocks.NewMockStorage()
 
 	upload := Upload[testUploadMetadata]{
 		ID:            42,
@@ -374,10 +361,8 @@ func TestHandleEnqueueMultipartFinalize(t *testing.T) {
 }
 
 func TestHandleEnqueueMultipartFinalizeIncompleteUpload(t *testing.T) {
-	setupRepoMocks(t)
-
 	mockDBStore := NewMockDBStore[testUploadMetadata]()
-	mockUploadStore := uploadstoremocks.NewMockStore()
+	mockUploadStore := objectmocks.NewMockStorage()
 
 	upload := Upload[testUploadMetadata]{
 		ID:            42,
@@ -404,7 +389,7 @@ func TestHandleEnqueueMultipartFinalizeIncompleteUpload(t *testing.T) {
 	h := &UploadHandler[testUploadMetadata]{
 		dbStore:     mockDBStore,
 		uploadStore: mockUploadStore,
-		operations:  NewOperations(&observation.TestContext, "test"),
+		operations:  NewOperations(observation.TestContextTB(t), "test"),
 		logger:      logtest.Scoped(t),
 	}
 	h.handleEnqueue(w, r)
@@ -423,7 +408,7 @@ type testUploadMetadata struct {
 	AssociatedIndexID int
 }
 
-func newTestUploadHandler(t *testing.T, dbStore DBStore[testUploadMetadata], uploadStore uploadstore.Store) http.Handler {
+func newTestUploadHandler(t *testing.T, dbStore DBStore[testUploadMetadata], uploadStore object.Storage) http.Handler {
 	metadataFromRequest := func(ctx context.Context, r *http.Request) (testUploadMetadata, int, error) {
 		return testUploadMetadata{
 			RepositoryID:      50,
@@ -436,31 +421,10 @@ func newTestUploadHandler(t *testing.T, dbStore DBStore[testUploadMetadata], upl
 	}
 
 	return NewUploadHandler(
-		logtest.Scoped(t),
+		observation.TestContextTB(t),
 		dbStore,
 		uploadStore,
-		NewOperations(&observation.TestContext, "test"),
+		NewOperations(observation.TestContextTB(t), "test"),
 		metadataFromRequest,
 	)
-}
-
-func setupRepoMocks(t testing.TB) {
-	t.Cleanup(func() {
-		backend.Mocks.Repos.GetByName = nil
-		backend.Mocks.Repos.ResolveRev = nil
-	})
-
-	backend.Mocks.Repos.GetByName = func(ctx context.Context, name api.RepoName) (*types.Repo, error) {
-		if name != "github.com/test/test" {
-			t.Errorf("unexpected repository name. want=%s have=%s", "github.com/test/test", name)
-		}
-		return &types.Repo{ID: 50}, nil
-	}
-
-	backend.Mocks.Repos.ResolveRev = func(ctx context.Context, repo *types.Repo, rev string) (api.CommitID, error) {
-		if rev != testCommit {
-			t.Errorf("unexpected commit. want=%s have=%s", testCommit, rev)
-		}
-		return "", nil
-	}
 }

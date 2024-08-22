@@ -1,5 +1,5 @@
 import type { Remote } from 'comlink'
-import { throwError, of, Subscription, type Unsubscribable, type Subscribable } from 'rxjs'
+import { throwError, of, Subscription, type Unsubscribable, type Observable } from 'rxjs'
 import type * as sourcegraph from 'sourcegraph'
 import { expect } from 'vitest'
 
@@ -9,6 +9,7 @@ import { type InitData, startExtensionHost } from '../api/extension/extensionHos
 import type { WorkspaceRootWithMetadata } from '../api/extension/extensionHostApi'
 import type { TextDocumentData, ViewerData } from '../api/viewerTypes'
 import type { EndpointPair, PlatformContext } from '../platform/context'
+import { noOpTelemetryRecorder } from '../telemetry'
 
 export function assertToJSON(a: any, expected: any): void {
     const raw = JSON.stringify(a)
@@ -38,15 +39,21 @@ const FIXTURE_INIT_DATA: TestInitData = {
 interface Mocks
     extends Pick<
         PlatformContext,
-        'settings' | 'updateSettings' | 'getGraphQLClient' | 'requestGraphQL' | 'clientApplication'
+        | 'settings'
+        | 'updateSettings'
+        | 'getGraphQLClient'
+        | 'requestGraphQL'
+        | 'clientApplication'
+        | 'telemetryRecorder'
     > {}
 
 const NOOP_MOCKS: Mocks = {
     settings: of({ final: {}, subjects: [] }),
     updateSettings: () => Promise.reject(new Error('Mocks#updateSettings not implemented')),
     getGraphQLClient: () => Promise.reject(new Error('Mocks#getGraphQLClient not implemented')),
-    requestGraphQL: () => throwError(new Error('Mocks#queryGraphQL not implemented')),
+    requestGraphQL: () => throwError(() => new Error('Mocks#queryGraphQL not implemented')),
     clientApplication: 'sourcegraph',
+    telemetryRecorder: noOpTelemetryRecorder,
 }
 
 /**
@@ -107,8 +114,9 @@ export async function integrationTestContext(
     }
 }
 
-export function collectSubscribableValues<T>(subscribable: Subscribable<T>): T[] {
+export function collectSubscribableValues<T>(observable: Observable<T>): T[] {
     const values: T[] = []
-    subscribable.subscribe(value => values.push(value))
+    // eslint-disable-next-line rxjs/no-ignored-subscription
+    observable.subscribe(value => values.push(value))
     return values
 }

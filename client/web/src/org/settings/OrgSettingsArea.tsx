@@ -1,7 +1,7 @@
 import React, { type FC } from 'react'
 
 import MapSearchIcon from 'mdi-react/MapSearchIcon'
-import { Routes, Route } from 'react-router-dom'
+import { Route, Routes } from 'react-router-dom'
 
 import { LoadingSpinner } from '@sourcegraph/wildcard'
 
@@ -40,7 +40,7 @@ export interface OrgSettingsAreaRouteContext extends OrgSettingsAreaProps {
  * Renders a layout of a sidebar and a content area to display pages related to
  * an organization's settings.
  */
-export const AuthenticatedOrgSettingsArea: FC<OrgSettingsAreaProps> = props => {
+const AuthenticatedOrgSettingsArea: FC<OrgSettingsAreaProps> = props => {
     const context: OrgSettingsAreaRouteContext = {
         ...props,
     }

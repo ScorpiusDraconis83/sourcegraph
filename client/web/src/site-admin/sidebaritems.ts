@@ -9,7 +9,6 @@ import PackageVariantIcon from 'mdi-react/PackageVariantIcon'
 import SourceRepositoryIcon from 'mdi-react/SourceRepositoryIcon'
 
 import { BatchChangesIcon } from '../batches/icons'
-import { CodyPageIcon } from '../cody/chat/CodyPageIcon'
 import { SHOW_BUSINESS_FEATURES } from '../enterprise/dotcom/productSubscriptions/features'
 import { checkRequestAccessAllowed } from '../util/checkRequestAccessAllowed'
 
@@ -30,10 +29,17 @@ const analyticsGroup: SiteAdminSideBarGroup = {
         {
             label: 'Search',
             to: '/site-admin/analytics/search',
+            condition: () => window.context?.codeSearchEnabledOnInstance,
+        },
+        {
+            label: 'Cody',
+            to: '/site-admin/analytics/cody',
+            condition: () => window.context?.codyEnabledOnInstance,
         },
         {
             label: 'Code navigation',
             to: '/site-admin/analytics/code-intel',
+            condition: () => window.context?.codeSearchEnabledOnInstance,
         },
         {
             label: 'Users',
@@ -52,14 +58,16 @@ const analyticsGroup: SiteAdminSideBarGroup = {
         {
             label: 'Notebooks',
             to: '/site-admin/analytics/notebooks',
+            condition: () => window.context?.codeSearchEnabledOnInstance,
         },
         {
-            label: 'Extensions',
+            label: 'Search extensions',
             to: '/site-admin/analytics/extensions',
         },
         {
             label: 'Code ownership',
             to: '/site-admin/analytics/own',
+            condition: () => window.context?.codeSearchEnabledOnInstance,
         },
         {
             label: 'Feedback survey',
@@ -127,6 +135,12 @@ const maintenanceGroup: SiteAdminSideBarGroup = {
         {
             label: maintenanceGroupUpdatesItemLabel,
             to: '/site-admin/updates',
+            condition: ({ applianceUpdateTarget }) => applianceUpdateTarget === '',
+        },
+        {
+            label: maintenanceGroupUpdatesItemLabel,
+            to: window.context.applianceUpdateTarget,
+            condition: ({ applianceUpdateTarget }) => applianceUpdateTarget !== '',
         },
         {
             label: 'Documentation',
@@ -221,12 +235,7 @@ const businessGroup: SiteAdminSideBarGroup = {
     header: { label: 'Business', icon: BriefcaseIcon },
     items: [
         {
-            label: 'Customers',
-            to: '/site-admin/dotcom/customers',
-            condition: () => SHOW_BUSINESS_FEATURES,
-        },
-        {
-            label: 'Subscriptions',
+            label: 'Enterprise subscriptions',
             to: '/site-admin/dotcom/product/subscriptions',
             condition: () => SHOW_BUSINESS_FEATURES,
         },
@@ -269,24 +278,7 @@ const codeIntelGroup: SiteAdminSideBarGroup = {
             to: '/site-admin/own-signal-page',
         },
     ],
-}
-
-export const codyGroup: SiteAdminSideBarGroup = {
-    header: { label: 'Cody', icon: CodyPageIcon },
-    items: [
-        {
-            label: 'Embeddings jobs',
-            to: '/site-admin/embeddings',
-            exact: true,
-            condition: () => window.context?.embeddingsEnabled,
-        },
-        {
-            label: 'Embeddings policies',
-            to: '/site-admin/embeddings/configuration',
-            condition: () => window.context?.embeddingsEnabled,
-        },
-    ],
-    condition: () => window.context?.codyEnabled,
+    condition: () => window.context?.codeSearchEnabledOnInstance,
 }
 
 const usersGroup: SiteAdminSideBarGroup = {
@@ -371,7 +363,6 @@ export const siteAdminSidebarGroups: SiteAdminSideBarGroups = [
     configurationGroup,
     repositoriesGroup,
     codeIntelGroup,
-    codyGroup,
     usersGroup,
     executorsGroup,
     maintenanceGroup,

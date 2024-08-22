@@ -124,7 +124,7 @@ func (h *handler[T]) dequeue(ctx context.Context, queueName string, metadata exe
 	version2Supported := false
 	if metadata.version != "" {
 		var err error
-		version2Supported, err = api.CheckSourcegraphVersion(metadata.version, "4.3.0-0", "2022-11-24")
+		version2Supported, err = api.CheckSourcegraphVersion(metadata.version, ">= 4.3.0-0", "2022-11-24")
 		if err != nil {
 			return executortypes.Job{}, false, errors.Wrapf(err, "failed to check version %q", metadata.version)
 		}
@@ -439,7 +439,7 @@ func wrapHandler(w http.ResponseWriter, r *http.Request, payload any, logger log
 func decodeAndLabelMetrics(encodedMetrics, instanceName string) ([]*dto.MetricFamily, error) {
 	var data []*dto.MetricFamily
 
-	dec := expfmt.NewDecoder(strings.NewReader(encodedMetrics), expfmt.FmtText)
+	dec := expfmt.NewDecoder(strings.NewReader(encodedMetrics), expfmt.NewFormat(expfmt.TypeTextPlain))
 	for {
 		var mf dto.MetricFamily
 		if err := dec.Decode(&mf); err != nil {

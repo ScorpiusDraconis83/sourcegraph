@@ -1,9 +1,9 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
-load("@rules_oci//oci:defs.bzl", "oci_image", "oci_push", "oci_tarball")
+load("//dev:oci_defs.bzl", "image_repository", "oci_image", "oci_push", "oci_tarball")
 load("@container_structure_test//:defs.bzl", "container_structure_test")
-load("@rules_pkg//:pkg.bzl", "pkg_tar")
+load("//dev:oci_defs.bzl", "pkg_tar")
 load("macro.bzl", "container_dependencies", "dependencies_tars")
-load("//dev:oci_defs.bzl", "image_repository")
+load("//wolfi-images:defs.bzl", "wolfi_base")
 
 go_library(
     name = "server_lib",
@@ -11,9 +11,9 @@ go_library(
     importpath = "github.com/sourcegraph/sourcegraph/cmd/server",
     visibility = ["//visibility:private"],
     deps = [
-        "//client/web/dist",
         "//cmd/server/shared",
         "//internal/sanitycheck",
+        "//ui/assets",
     ],
 )
 
@@ -26,10 +26,6 @@ go_binary(
     ],
     pure = "on",
     visibility = ["//visibility:public"],
-    x_defs = {
-        "github.com/sourcegraph/sourcegraph/internal/version.version": "{STABLE_VERSION}",
-        "github.com/sourcegraph/sourcegraph/internal/version.timestamp": "{VERSION_TIMESTAMP}",
-    },
 )
 
 pkg_tar(
@@ -109,16 +105,14 @@ ZOEKT_DEPS = [
 ]
 
 # Declares rules for pkg_tar for each dep in DEPS
-container_dependencies(DEPS)
+container_dependencies(targets = DEPS)
 
-container_dependencies(ZOEKT_DEPS)
+container_dependencies(targets = ZOEKT_DEPS)
 
-# This one is a special case because inside server images, the procfile expects to find it
-# under syntax-highlighter instead of syntect_server.
 pkg_tar(
     name = "tar_syntax-highlighter",
     srcs = ["//docker-images/syntax-highlighter:syntect_server"],
-    remap_paths = {"/syntect_server": "/usr/local/bin/syntax_highlighter"},
+    package_dir = "/usr/local/bin",
 )
 
 pkg_tar(
@@ -161,7 +155,7 @@ pkg_tar(
 #   bazel cquery '//cmd/server:image' --output build
 oci_image(
     name = "image",
-    base = "@wolfi_server_base",
+    base = ":base_image",
     entrypoint = [
         "/sbin/tini",
         "--",
@@ -183,9 +177,9 @@ oci_image(
         ":tar_postgres_optimize",
         ":tar_postgres_reindex",
         ":tar_prom-wrapper",
-        "//cmd/gitserver:tar_p4_fusion_wrappers",
+        ":tar_image_test_scripts",
+        "//client/web/dist:tar_bundle",
         "//monitoring:generate_grafana_config_tar",
-        "tar_image_test_scripts",
     ] + dependencies_tars(DEPS) + dependencies_tars(ZOEKT_DEPS),
     workdir = "/",
 )
@@ -213,4 +207,46 @@ oci_push(
     name = "candidate_push",
     image = ":image",
     repository = image_repository("server"),
+)
+
+wolfi_base()
+
+# No client bundle targets
+
+oci_image(
+    name = "no_client_bundle.image",
+    base = ":base_image",
+    entrypoint = [
+        "/sbin/tini",
+        "--",
+        "/server",
+    ],
+    env = {
+        "GO111MODULES": "on",
+        "LANG": "en_US.utf8",
+        "LC_ALL": "en_US.utf8",
+        # "PGHOST": "/var/run/postgresql",
+    },
+    tars = [
+        ":tar_server",
+        ":static_config_tar",
+        ":tar_postgres_exporter_config",
+        ":tar_monitoring_config",
+        ":tar_syntax-highlighter",
+        ":tar_scip-ctags",
+        ":tar_postgres_optimize",
+        ":tar_postgres_reindex",
+        ":tar_prom-wrapper",
+        "tar_image_test_scripts",
+        "//monitoring:generate_grafana_config_tar",
+        "//client/web/dist:tar_dummy_manifest",
+    ] + dependencies_tars(DEPS) + dependencies_tars(ZOEKT_DEPS),
+    workdir = "/",
+)
+
+oci_tarball(
+    name = "no_client_bundle.image_tarball",
+    image = ":no_client_bundle.image",
+    repo_tags = ["server:candidate"],
+    visibility = ["//testing:__pkg__"],
 )

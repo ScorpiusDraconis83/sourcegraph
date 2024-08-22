@@ -6,15 +6,13 @@ go_library(
     srcs = [
         "frozen.go",
         "http_api.go",
+        "types.go",
     ],
     embedsrcs = ["frozen_legacy_extensions.json"],
     importpath = "github.com/sourcegraph/sourcegraph/cmd/frontend/internal/registry",
+    tags = [TAG_SEARCHSUITE],
     visibility = ["//cmd/frontend:__subpackages__"],
-    deps = [
-        "//cmd/frontend/envvar",
-        "//cmd/frontend/registry/api",
-        "//cmd/frontend/registry/client",
-    ],
+    deps = ["//internal/dotcom"],
 )
 
 go_test(
@@ -22,5 +20,6 @@ go_test(
     timeout = "short",
     srcs = ["http_api_test.go"],
     embed = [":registry"],
-    deps = ["//cmd/frontend/envvar"],
+    tags = [TAG_SEARCHSUITE],
+    deps = ["//internal/dotcom"],
 )

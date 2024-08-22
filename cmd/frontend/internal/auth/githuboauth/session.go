@@ -16,23 +16,25 @@ import (
 	"github.com/sourcegraph/log"
 
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/auth"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/external/session"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/hubspot"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/hubspot/hubspotutil"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/auth/oauth"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/auth/providers"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/auth/session"
 	"github.com/sourcegraph/sourcegraph/internal/actor"
-	"github.com/sourcegraph/sourcegraph/internal/auth/providers"
 	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
 	esauth "github.com/sourcegraph/sourcegraph/internal/extsvc/auth"
 	githubsvc "github.com/sourcegraph/sourcegraph/internal/extsvc/github"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc/github/githubconvert"
+	"github.com/sourcegraph/sourcegraph/internal/telemetry/telemetryrecorder"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
 
 type sessionIssuerHelper struct {
 	*extsvc.CodeHost
+	logger       log.Logger
 	db           database.DB
 	clientID     string
 	allowSignup  bool
@@ -65,7 +67,7 @@ func (s *sessionIssuerHelper) GetOrCreateUser(ctx context.Context, token *oauth2
 
 	login, err := auth.NormalizeUsername(deref(ghUser.Login))
 	if err != nil {
-		return false, nil, fmt.Sprintf("Error normalizing the username %q. See https://docs.sourcegraph.com/admin/auth/#username-normalization.", login), err
+		return false, nil, fmt.Sprintf("Error normalizing the username %q. See https://sourcegraph.com/docs/admin/auth/#username-normalization.", login), err
 	}
 
 	ghClient := s.newClient(token.AccessToken)
@@ -134,8 +136,9 @@ func (s *sessionIssuerHelper) GetOrCreateUser(ctx context.Context, token *oauth2
 		signupErrorMessage = "\n\nOr failed on creating a user account"
 	}
 
+	recorder := telemetryrecorder.New(s.db)
 	for _, attempt := range attempts {
-		newUserCreated, userID, safeErrMsg, err := auth.GetAndSaveUser(ctx, s.db, auth.GetAndSaveUserOp{
+		newUserCreated, userID, safeErrMsg, err := auth.GetAndSaveUser(ctx, s.logger, s.db, recorder, auth.GetAndSaveUserOp{
 			UserProps: database.NewUser{
 				Username: login,
 

@@ -5,11 +5,11 @@ go_library(
     name = "resolvers",
     srcs = ["resolver.go"],
     importpath = "github.com/sourcegraph/sourcegraph/cmd/frontend/internal/repos/webhooks/resolvers",
+    tags = [TAG_PLATFORM_SOURCE],
     visibility = ["//cmd/frontend:__subpackages__"],
     deps = [
-        "//cmd/frontend/backend",
         "//cmd/frontend/graphqlbackend",
-        "//cmd/frontend/graphqlbackend/graphqlutil",
+        "//cmd/frontend/internal/backend",
         "//internal/auth",
         "//internal/conf",
         "//internal/database",
@@ -28,6 +28,7 @@ go_test(
     timeout = "short",
     srcs = ["resolver_test.go"],
     embed = [":resolvers"],
+    tags = [TAG_PLATFORM_SOURCE],
     deps = [
         "//cmd/frontend/graphqlbackend",
         "//internal/actor",

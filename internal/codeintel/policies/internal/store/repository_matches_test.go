@@ -9,19 +9,18 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/sourcegraph/log/logtest"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/globals"
+	"github.com/sourcegraph/sourcegraph/internal/actor"
 	policiesshared "github.com/sourcegraph/sourcegraph/internal/codeintel/policies/shared"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbtest"
 	"github.com/sourcegraph/sourcegraph/internal/observation"
-	"github.com/sourcegraph/sourcegraph/schema"
 )
 
 func TestRepoIDsByGlobPatterns(t *testing.T) {
-	ctx := context.Background()
+	ctx := actor.WithInternalActor(context.Background())
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
-	store := New(&observation.TestContext, db)
+	store := New(observation.TestContextTB(t), db)
 
 	insertRepo(t, db, 50, "Darth Vader", true)
 	insertRepo(t, db, 51, "Darth Venamis", true)
@@ -46,7 +45,7 @@ func TestRepoIDsByGlobPatterns(t *testing.T) {
 	}
 
 	for _, testCase := range testCases {
-		for lo := 0; lo < len(testCase.expectedRepositoryIDs); lo++ {
+		for lo := range len(testCase.expectedRepositoryIDs) {
 			hi := lo + 3
 			if hi > len(testCase.expectedRepositoryIDs) {
 				hi = len(testCase.expectedRepositoryIDs)
@@ -72,14 +71,8 @@ func TestRepoIDsByGlobPatterns(t *testing.T) {
 	}
 
 	t.Run("enforce repository permissions", func(t *testing.T) {
-		// Turning on explicit permissions forces checking repository permissions
-		// against permissions tables in the database, which should effectively block
-		// all access because permissions tables are empty and repos are private.
-		before := globals.PermissionsUserMapping()
-		globals.SetPermissionsUserMapping(&schema.PermissionsUserMapping{Enabled: true})
-		defer globals.SetPermissionsUserMapping(before)
-
-		repoIDs, _, err := store.GetRepoIDsByGlobPatterns(ctx, []string{"*"}, 10, 0)
+		// We use an actor-less context here. Without an actor, no repositories should be visible.
+		repoIDs, _, err := store.GetRepoIDsByGlobPatterns(context.Background(), []string{"*"}, 10, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -93,7 +86,7 @@ func TestUpdateReposMatchingPatterns(t *testing.T) {
 	ctx := context.Background()
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
-	store := New(&observation.TestContext, db)
+	store := New(observation.TestContextTB(t), db)
 
 	insertRepo(t, db, 50, "r1", false)
 	insertRepo(t, db, 51, "r2", false)
@@ -160,11 +153,11 @@ func TestUpdateReposMatchingPatternsOverLimit(t *testing.T) {
 	ctx := context.Background()
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
-	store := New(&observation.TestContext, db)
+	store := New(observation.TestContextTB(t), db)
 
 	limit := 50
 	ids := make([]int, 0, limit*3)
-	for i := 0; i < cap(ids); i++ {
+	for i := range cap(ids) {
 		ids = append(ids, 50+i)
 	}
 

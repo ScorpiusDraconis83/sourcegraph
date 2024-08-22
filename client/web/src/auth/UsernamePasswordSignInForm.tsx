@@ -4,15 +4,18 @@ import classNames from 'classnames'
 import { useLocation } from 'react-router-dom'
 
 import { asError, logger } from '@sourcegraph/common'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
+import { EVENT_LOGGER } from '@sourcegraph/shared/src/telemetry/web/eventLogger'
 import { Label, Button, LoadingSpinner, Link, Text, Input, Form } from '@sourcegraph/wildcard'
 
 import type { SourcegraphContext } from '../jscontext'
-import { eventLogger } from '../tracking/eventLogger'
+import { V2AuthProviderTypes } from '../util/constants'
 
 import { getReturnTo, PasswordInput } from './SignInSignUpCommon'
 
-interface Props {
+interface Props extends TelemetryV2Props {
     onAuthError: (error: Error | null) => void
+    email: string | null
     context: Pick<
         SourcegraphContext,
         'allowSignup' | 'authProviders' | 'sourcegraphDotComMode' | 'xhrHeaders' | 'resetPasswordEnabled'
@@ -25,11 +28,15 @@ interface Props {
  */
 export const UsernamePasswordSignInForm: React.FunctionComponent<React.PropsWithChildren<Props>> = ({
     onAuthError,
+    email,
     className,
     context,
+    telemetryRecorder,
 }) => {
     const location = useLocation()
-    const [usernameOrEmail, setUsernameOrEmail] = useState('')
+
+    // To populate the username/email text-box with the user's email value on sign-in screen after successful password change request
+    const [usernameOrEmail, setUsernameOrEmail] = useState(email || '')
     const [password, setPassword] = useState('')
     const [loading, setLoading] = useState(false)
 
@@ -49,7 +56,8 @@ export const UsernamePasswordSignInForm: React.FunctionComponent<React.PropsWith
             }
 
             setLoading(true)
-            eventLogger.log('InitiateSignIn')
+            EVENT_LOGGER.log('InitiateSignIn')
+            telemetryRecorder.recordEvent('auth', 'initiate', { metadata: { type: V2AuthProviderTypes.builtin } })
             try {
                 const response = await fetch('/-/sign-in', {
                     credentials: 'same-origin',
@@ -85,7 +93,7 @@ export const UsernamePasswordSignInForm: React.FunctionComponent<React.PropsWith
                 onAuthError(asError(error))
             }
         },
-        [usernameOrEmail, loading, location, password, onAuthError, context]
+        [usernameOrEmail, loading, location, password, onAuthError, context, telemetryRecorder]
     )
 
     return (

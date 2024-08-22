@@ -2,13 +2,14 @@ import React, { useMemo, useRef } from 'react'
 
 import classNames from 'classnames'
 import MapSearchIcon from 'mdi-react/MapSearchIcon'
-import { Routes, Route } from 'react-router-dom'
+import { Route, Routes } from 'react-router-dom'
 
 import type { SiteSettingFields } from '@sourcegraph/shared/src/graphql-operations'
 import type { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
 import type { SettingsCascadeProps } from '@sourcegraph/shared/src/settings/settings'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
-import { PageHeader, LoadingSpinner } from '@sourcegraph/wildcard'
+import { LoadingSpinner, PageHeader } from '@sourcegraph/wildcard'
 
 import type { AuthenticatedUser } from '../auth'
 import { withAuthenticatedUser } from '../auth/withAuthenticatedUser'
@@ -23,10 +24,10 @@ import type { RouteV6Descriptor } from '../util/contributions'
 import {
     maintenanceGroupHeaderLabel,
     maintenanceGroupInstrumentationItemLabel,
-    maintenanceGroupMonitoringItemLabel,
     maintenanceGroupMigrationsItemLabel,
-    maintenanceGroupUpdatesItemLabel,
+    maintenanceGroupMonitoringItemLabel,
     maintenanceGroupTracingItemLabel,
+    maintenanceGroupUpdatesItemLabel,
 } from './sidebaritems'
 import { SiteAdminSidebar, type SiteAdminSideBarGroups } from './SiteAdminSidebar'
 
@@ -48,7 +49,8 @@ export interface SiteAdminAreaRouteContext
     extends PlatformContextProps,
         SettingsCascadeProps,
         BatchChangesProps,
-        TelemetryProps {
+        TelemetryProps,
+        TelemetryV2Props {
     site: Pick<SiteSettingFields, '__typename' | 'id'>
     authenticatedUser: AuthenticatedUser
     isSourcegraphDotCom: boolean
@@ -57,19 +59,26 @@ export interface SiteAdminAreaRouteContext
     overviewComponents: readonly React.ComponentType<React.PropsWithChildren<{}>>[]
 
     codeInsightsEnabled: boolean
+    applianceUpdateTarget: string
 
     endUserOnboardingEnabled: boolean
 }
 
 export interface SiteAdminAreaRoute extends RouteV6Descriptor<SiteAdminAreaRouteContext> {}
 
-interface SiteAdminAreaProps extends PlatformContextProps, SettingsCascadeProps, BatchChangesProps, TelemetryProps {
+interface SiteAdminAreaProps
+    extends PlatformContextProps,
+        SettingsCascadeProps,
+        BatchChangesProps,
+        TelemetryProps,
+        TelemetryV2Props {
     routes: readonly SiteAdminAreaRoute[]
     sideBarGroups: SiteAdminSideBarGroups
     overviewComponents: readonly React.ComponentType<React.PropsWithChildren<unknown>>[]
     authenticatedUser: AuthenticatedUser
     isSourcegraphDotCom: boolean
     codeInsightsEnabled: boolean
+    applianceUpdateTarget: string
 }
 
 const sourcegraphOperatorSiteAdminMaintenanceBlockItems = new Set([
@@ -133,7 +142,9 @@ const AuthenticatedSiteAdminArea: React.FunctionComponent<React.PropsWithChildre
         site: { __typename: 'Site' as const, id: window.context.siteGQLID },
         overviewComponents: props.overviewComponents,
         telemetryService: props.telemetryService,
+        telemetryRecorder: props.telemetryRecorder,
         codeInsightsEnabled: props.codeInsightsEnabled,
+        applianceUpdateTarget: props.applianceUpdateTarget,
         endUserOnboardingEnabled,
     }
 
@@ -153,6 +164,7 @@ const AuthenticatedSiteAdminArea: React.FunctionComponent<React.PropsWithChildre
                     batchChangesExecutionEnabled={props.batchChangesExecutionEnabled}
                     batchChangesWebhookLogsEnabled={props.batchChangesWebhookLogsEnabled}
                     codeInsightsEnabled={props.codeInsightsEnabled}
+                    applianceUpdateTarget={props.applianceUpdateTarget}
                     endUserOnboardingEnabled={endUserOnboardingEnabled}
                 />
                 <div className="flex-bounded">

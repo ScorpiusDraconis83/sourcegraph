@@ -13,16 +13,22 @@ import (
 	"time"
 
 	"github.com/sourcegraph/log"
+
 	"github.com/sourcegraph/sourcegraph/internal/conf/deploy"
 	"github.com/sourcegraph/sourcegraph/internal/rcache"
+	"github.com/sourcegraph/sourcegraph/internal/redispool"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
 
 // outboundRequestsRedisFIFOList is a FIFO redis cache to store the requests.
-var outboundRequestsRedisFIFOList = rcache.NewFIFOListDynamic("outbound-requests", func() int {
-	return int(OutboundRequestLogLimit())
-})
+var outboundRequestsRedisFIFOList = rcache.NewFIFOListDynamic(
+	redispool.Cache,
+	"outbound-requests",
+	func() int {
+		return int(outboundRequestLogLimit())
+	},
+)
 
 const sourcegraphPrefix = "github.com/sourcegraph/sourcegraph/"
 
@@ -34,8 +40,8 @@ func redisLoggerMiddleware() Middleware {
 			resp, err := cli.Do(req)
 			duration := time.Since(start)
 
-			limit := OutboundRequestLogLimit()
-			shouldRedactSensitiveHeaders := !deploy.IsDev(deploy.Type()) || RedactOutboundRequestHeaders()
+			limit := outboundRequestLogLimit()
+			shouldRedactSensitiveHeaders := !deploy.IsDev(deploy.Type()) || redactOutboundRequestHeaders()
 
 			// Feature is turned off, do not log
 			if limit == 0 {
@@ -126,7 +132,7 @@ func redisLoggerMiddleware() Middleware {
 // GetOutboundRequestLogItems returns all outbound request log items after the given key,
 // in ascending order, trimmed to maximum {limit} items. Example for `after`: "2021-01-01T00_00_00.000000".
 func GetOutboundRequestLogItems(ctx context.Context, after string) ([]*types.OutboundRequestLogItem, error) {
-	var limit = int(OutboundRequestLogLimit())
+	var limit = int(outboundRequestLogLimit())
 
 	if limit == 0 {
 		return []*types.OutboundRequestLogItem{}, nil

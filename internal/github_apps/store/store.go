@@ -3,9 +3,11 @@ package store
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 
+	"github.com/google/go-github/v55/github"
 	"github.com/keegancsmith/sqlf"
 
 	"github.com/sourcegraph/log"
@@ -15,6 +17,7 @@ import (
 	encryption "github.com/sourcegraph/sourcegraph/internal/encryption"
 	"github.com/sourcegraph/sourcegraph/internal/encryption/keyring"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
+	gh "github.com/sourcegraph/sourcegraph/internal/extsvc/github"
 	ghtypes "github.com/sourcegraph/sourcegraph/internal/github_apps/types"
 	itypes "github.com/sourcegraph/sourcegraph/internal/types"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
@@ -66,8 +69,8 @@ type GitHubAppsStore interface {
 	// GetBySlug retrieves a GitHub App from the database by slug and base url
 	GetBySlug(ctx context.Context, slug string, baseURL string) (*ghtypes.GitHubApp, error)
 
-	// GetByDomain retrieves a GitHub App from the database by domain and base url
-	GetByDomain(ctx context.Context, domain itypes.GitHubAppDomain, baseURL string) (*ghtypes.GitHubApp, error)
+	// GetByDomainAndKind retrieves a GitHub App from the database by domain and kind and base url
+	GetByDomainAndKind(ctx context.Context, domain itypes.GitHubAppDomain, kind ghtypes.GitHubAppKind, baseURL string) (*ghtypes.GitHubApp, error)
 
 	// WithEncryptionKey sets encryption key on store. Returns a new GitHubAppsStore
 	WithEncryptionKey(key encryption.Key) GitHubAppsStore
@@ -123,10 +126,18 @@ func (s *gitHubAppsStore) Create(ctx context.Context, app *ghtypes.GitHubApp) (i
 		domain = itypes.ReposGitHubAppDomain
 	}
 
+	// Backwards compatibility for apps that did not set the GitHubAppKind.
+	kind := app.Kind
+	if kind == "" {
+		kind = ghtypes.RepoSyncGitHubAppKind
+	} else if !kind.Valid() {
+		return -1, errors.New(fmt.Sprintf("The GitHubAppKind %s is not valid.", kind))
+	}
+
 	// We enforce that GitHub Apps created in the "batches" domain are for unique instance URLs.
-	if domain == itypes.BatchesGitHubAppDomain {
-		existingGHApp, err := s.GetByDomain(ctx, domain, baseURL.String())
-		// An error is expected if no existing app was found, but we double check that
+	if domain == itypes.BatchesGitHubAppDomain && kind == ghtypes.CommitSigningGitHubAppKind {
+		existingGHApp, err := s.GetByDomainAndKind(ctx, domain, kind, baseURL.String())
+		// An error is expected if no existing app was found, but we double-check that
 		// we didn't get a different, unrelated error
 		if _, ok := err.(ErrNoGitHubAppFound); !ok {
 			return -1, errors.Wrap(err, "checking for existing batches app")
@@ -137,10 +148,10 @@ func (s *gitHubAppsStore) Create(ctx context.Context, app *ghtypes.GitHubApp) (i
 	}
 
 	query := sqlf.Sprintf(`INSERT INTO
-	    github_apps (app_id, name, domain, slug, base_url, app_url, client_id, client_secret, private_key, encryption_key_id, logo)
-    	VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+	    github_apps (app_id, name, domain, slug, base_url, app_url, client_id, client_secret, private_key, encryption_key_id, logo, kind, creator_id)
+    	VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 		RETURNING id`,
-		app.AppID, app.Name, domain, app.Slug, baseURL.String(), app.AppURL, app.ClientID, clientSecret, privateKey, keyID, app.Logo)
+		app.AppID, app.Name, domain, app.Slug, baseURL.String(), app.AppURL, app.ClientID, clientSecret, privateKey, keyID, app.Logo, kind, app.CreatedByUserId)
 	id, _, err := basestore.ScanFirstInt(s.Query(ctx, query))
 	return id, err
 }
@@ -167,9 +178,11 @@ func scanGitHubApp(s dbutil.Scanner) (*ghtypes.GitHubApp, error) {
 		&app.WebhookID,
 		&app.PrivateKey,
 		&app.EncryptionKey,
+		&app.Kind,
 		&app.Logo,
 		&app.CreatedAt,
-		&app.UpdatedAt)
+		&app.UpdatedAt,
+		&app.CreatedByUserId)
 	return &app, err
 }
 
@@ -258,10 +271,10 @@ func (s *gitHubAppsStore) Update(ctx context.Context, id int, app *ghtypes.GitHu
 	}
 
 	query := sqlf.Sprintf(`UPDATE github_apps
-             SET app_id = %s, name = %s, domain = %s, slug = %s, base_url = %s, app_url = %s, client_id = %s, client_secret = %s, webhook_id = %d, private_key = %s, encryption_key_id = %s, logo = %s, updated_at = NOW()
+             SET app_id = %s, name = %s, domain = %s, slug = %s, base_url = %s, app_url = %s, client_id = %s, client_secret = %s, webhook_id = %d, private_key = %s, encryption_key_id = %s, kind = %s, logo = %s, updated_at = NOW(), creator_id = %s
              WHERE id = %s
-			 RETURNING id, app_id, name, domain, slug, base_url, app_url, client_id, client_secret, webhook_id, private_key, encryption_key_id, logo, created_at, updated_at`,
-		app.AppID, app.Name, app.Domain, app.Slug, app.BaseURL, app.AppURL, app.ClientID, clientSecret, app.WebhookID, privateKey, keyID, app.Logo, id)
+			 RETURNING id, app_id, name, domain, slug, base_url, app_url, client_id, client_secret, webhook_id, private_key, encryption_key_id, kind, logo, created_at, updated_at, creator_id`,
+		app.AppID, app.Name, app.Domain, app.Slug, app.BaseURL, app.AppURL, app.ClientID, clientSecret, app.WebhookID, privateKey, keyID, app.Kind, app.Logo, app.CreatedByUserId, id)
 	app, ok, err := scanFirstGitHubApp(s.Query(ctx, query))
 	if err != nil {
 		return nil, err
@@ -336,9 +349,11 @@ func (s *gitHubAppsStore) get(ctx context.Context, where *sqlf.Query) (*ghtypes.
 		webhook_id,
 		private_key,
 		encryption_key_id,
+		kind,
 		logo,
 		created_at,
-		updated_at
+		updated_at,
+	    creator_id
 	FROM github_apps
 	WHERE %s`
 
@@ -376,9 +391,11 @@ func (s *gitHubAppsStore) list(ctx context.Context, where *sqlf.Query) ([]*ghtyp
 		webhook_id,
 		private_key,
 		encryption_key_id,
+		kind,
 		logo,
 		created_at,
-		updated_at
+		updated_at,
+		creator_id
 	FROM github_apps
 	WHERE %s`
 
@@ -410,9 +427,9 @@ func (s *gitHubAppsStore) GetBySlug(ctx context.Context, slug string, baseURL st
 	return s.get(ctx, sqlf.Sprintf(`slug = %s AND %s`, slug, baseURLWhere(baseURL)))
 }
 
-// GetByDomain retrieves a GitHub App from the database by domain and base url
-func (s *gitHubAppsStore) GetByDomain(ctx context.Context, domain itypes.GitHubAppDomain, baseURL string) (*ghtypes.GitHubApp, error) {
-	return s.get(ctx, sqlf.Sprintf(`domain = %s AND %s`, domain, baseURLWhere(baseURL)))
+// GetByDomainAndKind retrieves a GitHub App from the database by domain, kind and base url
+func (s *gitHubAppsStore) GetByDomainAndKind(ctx context.Context, domain itypes.GitHubAppDomain, kind ghtypes.GitHubAppKind, baseURL string) (*ghtypes.GitHubApp, error) {
+	return s.get(ctx, sqlf.Sprintf(`domain = %s AND kind = %s AND %s`, domain, kind, baseURLWhere(baseURL)))
 }
 
 // List lists all GitHub Apps in the store
@@ -458,27 +475,39 @@ func (s *gitHubAppsStore) SyncInstallations(ctx context.Context, app ghtypes.Git
 		return errors.Append(errs, err)
 	}
 
-	remoteInstallations, err := client.GetAppInstallations(ctx)
+	getAllAppInstallations := func() (allInstallations []*github.Installation, err error) {
+		hasNextPage := true
+		for page := 1; hasNextPage; page++ {
+			var installations []*github.Installation
+			installations, hasNextPage, err = client.GetAppInstallations(ctx, page)
+			if err != nil {
+				return nil, err
+			}
+			allInstallations = append(allInstallations, installations...)
+		}
+		return allInstallations, nil
+	}
+
+	remoteInstallations, err := getAllAppInstallations()
 	if err != nil {
 		logger.Error("Fetching App Installations from GitHub", log.Error(err), log.String("appName", app.Name), log.Int("id", app.ID))
 		errs = errors.Append(errs, err)
 
-		// This likely means the App has been deleted from GitHub, so we should remove all
-		// installations of it from our database, if we have any.
-		if len(dbInstallations) == 0 {
-			return errs
-		}
-
-		var toBeDeleted []int
-		for _, install := range dbInstallations {
-			toBeDeleted = append(toBeDeleted, install.InstallationID)
-		}
-		if len(toBeDeleted) > 0 {
-			logger.Info("Deleting GitHub App Installations", log.String("appName", app.Name), log.Ints("installationIDs", toBeDeleted))
-			err = s.BulkRemoveInstallations(ctx, app.ID, toBeDeleted)
-			if err != nil {
-				logger.Error("Failed to remove GitHub App Installations", log.Error(err), log.String("appName", app.Name), log.Int("id", app.ID))
-				return errors.Append(errs, err)
+		// if the error from github is 404 then it means the GitHub app has been deleted. If not, we return
+		// the error and preserve whatever installations we have in the database.
+		var e *gh.APIError
+		if errors.As(err, &e) && e.Code == http.StatusNotFound {
+			var toBeDeleted []int
+			for _, install := range dbInstallations {
+				toBeDeleted = append(toBeDeleted, install.InstallationID)
+			}
+			if len(toBeDeleted) > 0 {
+				logger.Info("Deleting GitHub App Installations", log.String("appName", app.Name), log.Ints("installationIDs", toBeDeleted))
+				err = s.BulkRemoveInstallations(ctx, app.ID, toBeDeleted)
+				if err != nil {
+					logger.Error("Failed to remove GitHub App Installations", log.Error(err), log.String("appName", app.Name), log.Int("id", app.ID))
+					return errors.Append(errs, err)
+				}
 			}
 		}
 

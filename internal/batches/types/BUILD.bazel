@@ -25,6 +25,7 @@ go_library(
         "util.go",
     ],
     importpath = "github.com/sourcegraph/sourcegraph/internal/batches/types",
+    tags = [TAG_SEARCHSUITE],
     visibility = ["//:__subpackages__"],
     deps = [
         "//internal/api",
@@ -43,6 +44,7 @@ go_library(
         "//internal/extsvc/github",
         "//internal/extsvc/gitlab",
         "//internal/extsvc/gitlab/webhooks",
+        "//internal/github_apps/auth",
         "//internal/gitserver/gitdomain",
         "//internal/perforce",
         "//internal/timeutil",
@@ -71,6 +73,7 @@ go_test(
         "syncer_test.go",
     ],
     embed = [":types"],
+    tags = [TAG_SEARCHSUITE],
     deps = [
         "//internal/batches/sources/azuredevops",
         "//internal/batches/sources/bitbucketcloud",

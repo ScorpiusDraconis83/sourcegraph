@@ -1,8 +1,8 @@
 package googlesecretsmanager
 
-// ProjectID is the Google Cloud Project that must have the secrets listed in
+// SharedSecretsProjectID is the Google Cloud Project that must have the secrets listed in
 // this package available in Google Secrets Manager for MSP.
-const ProjectID = "sourcegraph-secrets"
+const SharedSecretsProjectID = "sourcegraph-secrets"
 
 const (
 	/// SecretTFCOrgToken is used for managing TFC workspaces. It cannot
@@ -34,7 +34,15 @@ const (
 	//
 	// The current bot user is https://api.slack.com/apps/A06C4TF6YF7/oauth
 	SecretSlackOperatorOAuthToken = "SLACK_OPERATOR_BOT_OAUTH_TOKEN"
-
+	// SecretSentryAuthToken is a Sentry internal integration auth token with Project permissions.
+	// The integration is configured in https://sourcegraph.sentry.io/settings/developer-settings/managed-services-platform-fbf7cc/
+	SecretSentryAuthToken = "TFC_MSP_SENTRY_INTEGRATION"
+	// SecretNobl9ClientSecret is used to provision Nobl9 projects
+	SecretNobl9ClientSecret = "MSP_NOBL9_CLIENT_SECRET"
+	// SecretSourcegraphWildcardKey and SecretSourcegraphWildcardCert are used
+	// for configuring Cloudflare TLS.
 	SecretSourcegraphWildcardKey  = "SOURCEGRAPH_WILDCARD_KEY"
 	SecretSourcegraphWildcardCert = "SOURCEGRAPH_WILDCARD_CERT"
+	// SecretMSPDeployNotificationEndpoint is the endpoint that MSP uses for cloud deploy push notifications.
+	SecretMSPDeployNotificationEndpoint = "MSP_DEPLOY_NOTIFICATION_ENDPOINT"
 )

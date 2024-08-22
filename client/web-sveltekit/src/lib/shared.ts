@@ -1,15 +1,13 @@
 // We want to limit the number of imported modules as much as possible
 
-export type { AbsoluteRepoFile } from '@sourcegraph/shared/src/util/url'
-
 export {
     parseRepoRevision,
-    parseQueryAndHash,
     buildSearchURLQuery,
-    makeRepoURI,
-    type RevisionSpec,
-    type ResolvedRevisionSpec,
-    type RepoSpec,
+    makeRepoGitURI,
+    toPrettyBlobURL,
+    toRepoURL,
+    type AbsoluteRepoFile,
+    replaceRevisionInURL,
 } from '@sourcegraph/shared/src/util/url'
 export {
     isCloneInProgressErrorLike,
@@ -25,30 +23,36 @@ export { viewerSettingsQuery } from '@sourcegraph/shared/src/backend/settings'
 export { SectionID as SearchSidebarSectionID } from '@sourcegraph/shared/src/settings/temporary/searchSidebar'
 export { TemporarySettingsStorage } from '@sourcegraph/shared/src/settings/temporary/TemporarySettingsStorage'
 export {
-    type Skipped,
-    getFileMatchUrl,
-    getRepositoryUrl,
-    aggregateStreamingSearch,
     LATEST_VERSION,
-    type AggregateStreamingSearchResults,
-    type StreamSearchOptions,
+    TELEMETRY_FILTER_TYPES,
+    getRevision,
+    aggregateStreamingSearch,
+    emptyAggregateResults,
+    getFileMatchUrl,
+    getMatchUrl,
     getRepoMatchLabel,
     getRepoMatchUrl,
-    getMatchUrl,
-    type RepositoryMatch,
-    type SymbolMatch,
-    type PathMatch,
-    type ContentMatch,
+    getRepositoryUrl,
+    streamComputeQuery,
+    type AggregateStreamingSearchResults,
+    type Alert,
     type ChunkMatch,
-    type LineMatch,
-    type SearchMatch,
-    type OwnerMatch,
-    type TeamMatch,
-    type PersonMatch,
     type CommitMatch,
+    type ContentMatch,
+    type Filter,
+    type LineMatch,
+    type OwnerMatch,
+    type PathMatch,
+    type PersonMatch,
     type Progress,
     type Range,
-    type Filter,
+    type RepositoryMatch,
+    type SearchEvent,
+    type SearchMatch,
+    type Skipped,
+    type StreamSearchOptions,
+    type SymbolMatch,
+    type TeamMatch,
 } from '@sourcegraph/shared/src/search/stream'
 export {
     type MatchItem,
@@ -58,27 +62,34 @@ export {
     rankByLine,
     truncateGroups,
 } from '@sourcegraph/shared/src/components/ranking/PerFileResultRanking'
-export { type AuthenticatedUser, currentAuthStateQuery } from '@sourcegraph/shared/src/auth'
 export { filterExists } from '@sourcegraph/shared/src/search/query/validate'
+export {
+    getRelevantTokens,
+    type RelevantTokenResult,
+    EMPTY_RELEVANT_TOKEN_RESULT,
+} from '@sourcegraph/shared/src/search/query/analyze'
+export { scanSearchQuery, scanSearchQueryAsPatterns } from '@sourcegraph/shared/src/search/query/scanner'
+export { stringHuman } from '@sourcegraph/shared/src/search/query/printer'
+export { KeywordKind, PatternKind, type Token } from '@sourcegraph/shared/src/search/query/token'
 export { FilterType } from '@sourcegraph/shared/src/search/query/filters'
 export { getGlobalSearchContextFilter, findFilter, FilterKind } from '@sourcegraph/shared/src/search/query/query'
+export { isFilterOfType } from '@sourcegraph/shared/src/search/query/utils'
 export { omitFilter, appendFilter, updateFilter } from '@sourcegraph/shared/src/search/query/transformer'
-export {
-    type SettingsCascade,
-    type SettingsSubject,
-    type SettingsCascadeOrError,
-    SettingsProvider,
-    gqlToCascade,
-} from '@sourcegraph/shared/src/settings/settings'
+export type { Settings } from '@sourcegraph/shared/src/settings/settings'
 export { fetchStreamSuggestions } from '@sourcegraph/shared/src/search/suggestions'
-export { QueryChangeSource, type QueryState } from '@sourcegraph/shared/src/search/helpers'
+export {
+    QueryChangeSource,
+    type QueryState,
+    TELEMETRY_SEARCH_SOURCE_TYPE,
+} from '@sourcegraph/shared/src/search/helpers'
 export { migrateLocalStorageToTemporarySettings } from '@sourcegraph/shared/src/settings/temporary/migrateLocalStorageToTemporarySettings'
 export type { TemporarySettings } from '@sourcegraph/shared/src/settings/temporary/TemporarySettings'
-export { SyntaxKind } from '@sourcegraph/shared/src/codeintel/scip'
-export { shortcutDisplayName } from '@sourcegraph/shared/src/keyboardShortcuts'
+export { SyntaxKind, Occurrence } from '@sourcegraph/shared/src/codeintel/scip'
 export { createCodeIntelAPI, type CodeIntelAPI } from '@sourcegraph/shared/src/codeintel/api'
 export { getModeFromPath } from '@sourcegraph/shared/src/languages'
 export type { ActionItemAction } from '@sourcegraph/shared/src/actions/ActionItem'
+export { repositoryInsertText } from '@sourcegraph/shared/src/search/query/completion-utils'
+export { ThemeSetting, Theme } from '@sourcegraph/shared/src/theme-types'
 
 // Copies of non-reusable code
 
@@ -93,12 +104,4 @@ export function displayRepoName(repoName: string): string {
         parts = parts.slice(1) // remove hostname from repo name (reduce visual noise)
     }
     return parts.join('/')
-}
-
-/**
- * Splits the repository name into the dir and base components.
- */
-export function splitPath(path: string): [string, string] {
-    const components = path.split('/')
-    return [components.slice(0, -1).join('/'), components.at(-1) ?? '']
 }

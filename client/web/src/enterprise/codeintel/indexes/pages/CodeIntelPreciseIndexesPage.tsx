@@ -1,4 +1,4 @@
-import { type FunctionComponent, useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FunctionComponent } from 'react'
 
 import { useApolloClient } from '@apollo/client'
 import { mdiChevronRight, mdiDelete, mdiMapSearch, mdiRedo } from '@mdi/js'
@@ -11,6 +11,7 @@ import { isErrorLike } from '@sourcegraph/common'
 import { gql, useQuery } from '@sourcegraph/http-client'
 import type { AuthenticatedUser } from '@sourcegraph/shared/src/auth'
 import { RepoLink } from '@sourcegraph/shared/src/components/RepoLink'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import {
     Button,
@@ -28,16 +29,16 @@ import {
 
 import {
     FilteredConnection,
-    type FilteredConnectionFilter,
+    type Filter,
     type FilteredConnectionQueryArguments,
 } from '../../../../components/FilteredConnection'
 import { PageTitle } from '../../../../components/PageTitle'
 import {
+    PreciseIndexState,
     type IndexerListResult,
     type IndexerListVariables,
-    type PreciseIndexesVariables,
     type PreciseIndexFields,
-    PreciseIndexState,
+    type PreciseIndexesVariables,
 } from '../../../../graphql-operations'
 import { FlashMessage } from '../../configuration/components/FlashMessage'
 import { PreciseIndexLastUpdated } from '../components/CodeIntelLastUpdated'
@@ -59,7 +60,7 @@ export const INDEXER_LIST = gql`
     }
 `
 
-export interface CodeIntelPreciseIndexesPageProps extends TelemetryProps {
+export interface CodeIntelPreciseIndexesPageProps extends TelemetryProps, TelemetryV2Props {
     authenticatedUser: AuthenticatedUser | null
     repo?: { id: string; name: string }
     queryPreciseIndexes?: typeof defaultQueryPreciseIndexes
@@ -70,11 +71,11 @@ export interface CodeIntelPreciseIndexesPageProps extends TelemetryProps {
     indexingEnabled?: boolean
 }
 
-const STATE_FILTER: FilteredConnectionFilter = {
+const STATE_FILTER: Filter = {
     id: 'filters',
     label: 'State',
     type: 'select',
-    values: [
+    options: [
         {
             label: 'All',
             value: 'all',
@@ -125,9 +126,17 @@ export const CodeIntelPreciseIndexesPage: FunctionComponent<CodeIntelPreciseInde
     useReindexPreciseIndexes = defaultUseReindexPreciseIndexes,
     indexingEnabled = window.context?.codeIntelAutoIndexingEnabled,
     telemetryService,
+    telemetryRecorder,
 }) => {
     const location = useLocation()
-    useEffect(() => telemetryService.logViewEvent('CodeIntelPreciseIndexesPage'), [telemetryService])
+    useEffect(() => {
+        telemetryService.logViewEvent('CodeIntelPreciseIndexesPage')
+        if (repo) {
+            telemetryRecorder.recordEvent('repo.codeIntel.preciseIndexes', 'view')
+        } else {
+            telemetryRecorder.recordEvent('admin.codeIntel.preciseIndexes', 'view')
+        }
+    }, [telemetryService, telemetryRecorder, repo])
 
     const apolloClient = useApolloClient()
     const { handleDeletePreciseIndex, deleteError } = useDeletePreciseIndex()
@@ -137,12 +146,12 @@ export const CodeIntelPreciseIndexesPage: FunctionComponent<CodeIntelPreciseInde
 
     const { data: indexerData } = useQuery<IndexerListResult, IndexerListVariables>(INDEXER_LIST, {})
 
-    const filters = useMemo<FilteredConnectionFilter[]>(() => {
-        const indexerFilter: FilteredConnectionFilter = {
+    const filters = useMemo<Filter[]>(() => {
+        const indexerFilter: Filter = {
             id: 'filters-indexer',
             label: 'Indexer',
             type: 'select',
-            values: [
+            options: [
                 {
                     label: 'All',
                     value: 'all',
@@ -154,7 +163,7 @@ export const CodeIntelPreciseIndexesPage: FunctionComponent<CodeIntelPreciseInde
         const keys = (indexerData?.indexerKeys || []).filter(key => Boolean(key))
 
         for (const key of keys) {
-            indexerFilter.values.push({
+            indexerFilter.options.push({
                 label: key,
                 value: key,
                 args: { indexerKey: key },
@@ -165,7 +174,7 @@ export const CodeIntelPreciseIndexesPage: FunctionComponent<CodeIntelPreciseInde
     }, [indexerData?.indexerKeys])
 
     // Poke filtered connection to refresh
-    const refresh = useMemo(() => new Subject<undefined>(), [])
+    const refresh = useMemo(() => new Subject<void>(), [])
     const querySubject = useMemo(() => new Subject<string>(), [])
 
     // State used to control bulk index selection

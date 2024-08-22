@@ -6,7 +6,6 @@ import (
 	"github.com/graph-gophers/graphql-go"
 	"github.com/graph-gophers/graphql-go/relay"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/gqlutil"
 )
 
@@ -44,7 +43,7 @@ type InsightsResolver interface {
 	// Admin Management
 	InsightSeriesQueryStatus(ctx context.Context) ([]InsightSeriesQueryStatusResolver, error)
 	InsightViewDebug(ctx context.Context, args InsightViewDebugArgs) (InsightViewDebugResolver, error)
-	InsightAdminBackfillQueue(ctx context.Context, args *AdminBackfillQueueArgs) (*graphqlutil.ConnectionResolver[*BackfillQueueItemResolver], error)
+	InsightAdminBackfillQueue(ctx context.Context, args *AdminBackfillQueueArgs) (*gqlutil.ConnectionResolver[*BackfillQueueItemResolver], error)
 	// Admin Mutations
 	UpdateInsightSeries(ctx context.Context, args *UpdateInsightSeriesArgs) (InsightSeriesMetadataPayloadResolver, error)
 	RetryInsightSeriesBackfill(ctx context.Context, args *BackfillArgs) (*BackfillQueueItemResolver, error)
@@ -93,11 +92,13 @@ type InsightsDataPointResolver interface {
 	DateTime() gqlutil.DateTime
 	Value() float64
 	DiffQuery() (*string, error)
+	PointInTimeQuery() (*string, error)
 }
 
 type InsightViewDebugResolver interface {
 	Raw(context.Context) ([]string, error)
 }
+
 type InsightStatusResolver interface {
 	TotalPoints(context.Context) (int32, error)
 	PendingJobs(context.Context) (int32, error)
@@ -137,7 +138,7 @@ type InsightsDashboardsArgs struct {
 
 type InsightsDashboardConnectionResolver interface {
 	Nodes(ctx context.Context) ([]InsightsDashboardResolver, error)
-	PageInfo(ctx context.Context) (*graphqlutil.PageInfo, error)
+	PageInfo(ctx context.Context) (*gqlutil.PageInfo, error)
 }
 
 type InsightsDashboardResolver interface {
@@ -190,7 +191,7 @@ type DeleteInsightsDashboardArgs struct {
 type InsightViewConnectionResolver interface {
 	Nodes(ctx context.Context) ([]InsightViewResolver, error)
 	TotalCount(ctx context.Context) (*int32, error)
-	PageInfo(ctx context.Context) (*graphqlutil.PageInfo, error)
+	PageInfo(ctx context.Context) (*gqlutil.PageInfo, error)
 }
 
 type InsightViewResolver interface {
@@ -497,11 +498,13 @@ type IncompleteDatapointAlert interface {
 
 type TimeoutDatapointAlert interface {
 	Time() gqlutil.DateTime
+	Repositories(ctx context.Context) (*[]*RepositoryResolver, error)
 }
 
 type GenericIncompleteDatapointAlert interface {
 	Time() gqlutil.DateTime
 	Reason() string
+	Repositories(ctx context.Context) (*[]*RepositoryResolver, error)
 }
 
 type ValidateScopedInsightQueryArgs struct {
@@ -579,7 +582,7 @@ type BackfillArgs struct {
 }
 
 type AdminBackfillQueueArgs struct {
-	graphqlutil.ConnectionResolverArgs
+	gqlutil.ConnectionResolverArgs
 	OrderBy    string
 	Descending bool
 

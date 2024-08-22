@@ -15,6 +15,7 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/extsvc/auth"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc/github"
 	ghauth "github.com/sourcegraph/sourcegraph/internal/extsvc/github/auth"
+	githubapps_auth "github.com/sourcegraph/sourcegraph/internal/github_apps/auth"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver/gitdomain"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver/protocol"
 	"github.com/sourcegraph/sourcegraph/internal/httpcli"
@@ -78,8 +79,22 @@ func newGitHubSource(ctx context.Context, db database.DB, urn string, c *schema.
 	}, nil
 }
 
-func (s GitHubSource) GitserverPushConfig(repo *types.Repo) (*protocol.PushConfig, error) {
-	return GitserverPushConfig(repo, s.au)
+func (s GitHubSource) AuthenticationStrategy() AuthenticationStrategy {
+	// If the authenticator isn't set, we default to user credentials.
+	if s.au == nil {
+		return AuthenticationStrategyUserCredential
+	}
+
+	switch s.au.(type) {
+	case *githubapps_auth.GitHubAppAuthenticator:
+	case *githubapps_auth.InstallationAuthenticator:
+		return AuthenticationStrategyGitHubApp
+	}
+	return AuthenticationStrategyUserCredential
+}
+
+func (s GitHubSource) GitserverPushConfig(ctx context.Context, repo *types.Repo) (*protocol.PushConfig, error) {
+	return GitserverPushConfig(ctx, repo, s.au)
 }
 
 func (s GitHubSource) WithAuthenticator(a auth.Authenticator) (ChangesetSource, error) {
@@ -207,7 +222,7 @@ func (s GitHubSource) createChangeset(ctx context.Context, c *Changeset, prInput
 			// There is a creation limit (undocumented) in GitHub. When reached, GitHub provides an unclear error
 			// message to users. See https://github.com/cli/cli/issues/4801.
 			if strings.Contains(err.Error(), "was submitted too quickly") {
-				return exists, errors.Wrap(err, "reached GitHub's internal creation limit: see https://docs.sourcegraph.com/admin/config/batch_changes#avoiding-hitting-rate-limits")
+				return exists, errors.Wrapf(err, "reached GitHub's internal creation limit: see https://sourcegraph.com/docs/admin/config/batch_changes#avoiding-hitting-rate-limits")
 			}
 			return exists, err
 		}
@@ -216,7 +231,7 @@ func (s GitHubSource) createChangeset(ctx context.Context, c *Changeset, prInput
 		if err != nil {
 			return exists, errors.Wrap(err, "getting repo owner and name")
 		}
-		pr, err = s.client.GetOpenPullRequestByRefs(ctx, owner, name, c.BaseRef, c.HeadRef)
+		pr, err = s.client.GetOpenPullRequestByRefsReduced(ctx, owner, name, c.BaseRef, c.HeadRef)
 		if err != nil {
 			return exists, errors.Wrap(err, "fetching existing PR")
 		}

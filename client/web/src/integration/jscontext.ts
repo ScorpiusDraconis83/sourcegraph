@@ -1,3 +1,4 @@
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { currentUserMock } from '@sourcegraph/shared/src/testing/integration/graphQlResults'
 
 import type { SourcegraphContext } from '../jscontext'
@@ -12,6 +13,8 @@ export const builtinAuthProvider = {
     displayName: 'Builtin username-password authentication',
     isBuiltin: true,
     authenticationURL: '',
+    noSignIn: false,
+    requiredForAuthz: false,
 }
 
 export const createJsContext = ({ sourcegraphBaseUrl }: { sourcegraphBaseUrl: string }): SourcegraphContext => ({
@@ -19,13 +22,26 @@ export const createJsContext = ({ sourcegraphBaseUrl }: { sourcegraphBaseUrl: st
     temporarySettings: null,
     externalURL: sourcegraphBaseUrl,
     accessTokensAllow: 'all-users-create',
+    accessTokensAllowNoExpiration: false,
+    accessTokensExpirationDaysDefault: 60,
+    accessTokensExpirationDaysOptions: [7, 30, 60, 90],
     allowSignup: false,
     batchChangesEnabled: true,
+    applianceUpdateTarget: '',
+    applianceMenuTarget: '',
     batchChangesDisableWebhooksWarning: false,
     batchChangesWebhookLogsEnabled: true,
     codeInsightsEnabled: true,
     executorsEnabled: true,
-    codyEnabled: true,
+    codyEnabledOnInstance: true,
+    codeSearchEnabledOnInstance: true,
+    codeIntelligenceEnabled: true,
+    codeMonitoringEnabled: true,
+    notebooksEnabled: true,
+    searchJobsEnabled: true,
+    searchAggregationEnabled: true,
+    searchContextsEnabled: true,
+    ownEnabled: true,
     codyEnabledForCurrentUser: true,
     codyRequiresVerifiedEmail: false,
     extsvcConfigAllowEdits: false,
@@ -41,7 +57,6 @@ export const createJsContext = ({ sourcegraphBaseUrl }: { sourcegraphBaseUrl: st
     experimentalFeatures: {},
     isAuthenticatedUser: true,
     licenseInfo: {
-        currentPlan: 'team-0',
         batchChanges: {
             maxNumChangesets: -1,
             unrestricted: true,
@@ -61,7 +76,8 @@ export const createJsContext = ({ sourcegraphBaseUrl }: { sourcegraphBaseUrl: st
     xhrHeaders: {},
     authProviders: [builtinAuthProvider],
     authMinPasswordLength: 12,
-    embeddingsEnabled: false,
     runningOnMacOS: true,
     primaryLoginProvidersCount: 5,
+    // use noOpTelemetryRecorder since this jsContext is only used for integration tests.
+    telemetryRecorder: noOpTelemetryRecorder,
 })

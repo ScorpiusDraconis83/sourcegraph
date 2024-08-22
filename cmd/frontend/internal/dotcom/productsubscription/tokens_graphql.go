@@ -28,11 +28,11 @@ func (e ErrProductSubscriptionNotFound) Extensions() map[string]any {
 // given access token.
 func (r ProductSubscriptionLicensingResolver) ProductSubscriptionByAccessToken(ctx context.Context, args *graphqlbackend.ProductSubscriptionByAccessTokenArgs) (graphqlbackend.ProductSubscription, error) {
 	// 🚨 SECURITY: Only specific entities may use this functionality.
-	if _, err := serviceAccountOrSiteAdmin(ctx, r.DB, false); err != nil {
+	if _, err := hasRBACPermsOrSiteAdmin(ctx, r.DB, false); err != nil {
 		return nil, err
 	}
 
-	subID, err := newDBTokens(r.DB).LookupProductSubscriptionIDByAccessToken(ctx, args.AccessToken)
+	subID, err := NewTokensDB(r.DB).LookupProductSubscriptionIDByAccessToken(ctx, args.AccessToken)
 	if err != nil {
 		if errcode.IsNotFound(err) {
 			return nil, ErrProductSubscriptionNotFound{err}

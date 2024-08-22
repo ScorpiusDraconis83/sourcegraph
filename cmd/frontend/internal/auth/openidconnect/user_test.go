@@ -9,12 +9,15 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
 
+	"github.com/sourcegraph/log/logtest"
+
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/auth"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/hubspot"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbmocks"
 	"github.com/sourcegraph/sourcegraph/internal/encryption"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
-	"github.com/sourcegraph/sourcegraph/internal/httpcli"
+	"github.com/sourcegraph/sourcegraph/internal/telemetry"
+	"github.com/sourcegraph/sourcegraph/internal/telemetry/telemetrytest"
 	"github.com/sourcegraph/sourcegraph/schema"
 )
 
@@ -22,9 +25,10 @@ func TestAllowSignup(t *testing.T) {
 	allow := true
 	disallow := false
 	tests := map[string]struct {
-		allowSignup       *bool
-		usernamePrefix    string
-		shouldAllowSignup bool
+		allowSignup          *bool
+		usernamePrefix       string
+		shouldAllowSignup    bool
+		additionalProperties telemetry.EventMetadata
 	}{
 		"nil": {
 			allowSignup:       nil,
@@ -43,6 +47,11 @@ func TestAllowSignup(t *testing.T) {
 			shouldAllowSignup: false,
 			usernamePrefix:    "sourcegraph-operator-",
 		},
+		"with metadata": {
+			allowSignup:          &allow,
+			shouldAllowSignup:    true,
+			additionalProperties: telemetry.EventMetadata{"foo": 1},
+		},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -55,20 +64,19 @@ func TestAllowSignup(t *testing.T) {
 				)
 				return false, 0, "", nil
 			}
-			p := &Provider{
-				config: schema.OpenIDConnectAuthProvider{
+			db := dbmocks.NewStrictMockDB()
+			_ = telemetrytest.AddDBMocks(db)
+
+			_, _, _, err := getOrCreateUser(
+				context.Background(),
+				logtest.Scoped(t),
+				db,
+				schema.OpenIDConnectAuthProvider{
 					ClientID:           testClientID,
 					ClientSecret:       "aaaaaaaaaaaaaaaaaaaaaaaaa",
 					RequireEmailDomain: "example.com",
 					AllowSignup:        test.allowSignup,
 				},
-				oidc:       &oidcProvider{},
-				httpClient: httpcli.ExternalClient,
-			}
-			_, _, _, err := getOrCreateUser(
-				context.Background(),
-				dbmocks.NewStrictMockDB(),
-				p,
 				&oauth2.Token{},
 				&oidc.IDToken{},
 				&oidc.UserInfo{
@@ -77,10 +85,39 @@ func TestAllowSignup(t *testing.T) {
 				},
 				&userClaims{},
 				test.usernamePrefix,
+				test.additionalProperties,
+
 				&hubspot.ContactProperties{
-					AnonymousUserID: "anonymous-user-id-123",
-					FirstSourceURL:  "https://example.com/",
-					LastSourceURL:   "https://example.com/",
+					AnonymousUserID:            "anonymous-user-id-123",
+					FirstSourceURL:             "https://example.com/",
+					LastSourceURL:              "https://example.com/",
+					LastPageSeenShort:          "https://example.com/",
+					LastPageSeenMid:            "https://example.com/",
+					LastPageSeenLong:           "https://example.com/",
+					MostRecentReferrerUrl:      "https://example.com/",
+					MostRecentReferrerUrlShort: "https://example.com/",
+					MostRecentReferrerUrlMid:   "https://example.com/",
+					MostRecentReferrerUrlLong:  "https://example.com/",
+					SessionUTMCampaign:         "session-utm-campaign-123",
+					UtmCampaignShort:           "utm-campaign-short-123",
+					UtmCampaignMid:             "utm-campaign-mid-123",
+					UtmCampaignLong:            "utm-campaign-long-123",
+					SessionUTMSource:           "session-utm-source-123",
+					UtmSourceShort:             "utm-source-short-123",
+					UtmSourceMid:               "utm-source-mid-123",
+					UtmSourceLong:              "utm-source-long-123",
+					SessionUTMMedium:           "session-utm-medium-123",
+					UtmMediumShort:             "utm-medium-short-123",
+					UtmMediumMid:               "utm-medium-mid-123",
+					UtmMediumLong:              "utm-medium-long-123",
+					SessionUTMTerm:             "session-utm-term-123",
+					UtmTermShort:               "utm-term-short-123",
+					UtmTermMid:                 "utm-term-mid-123",
+					UtmTermLong:                "utm-term-long-123",
+					SessionUTMContent:          "session-utm-content-123",
+					UtmContentShort:            "utm-content-short-123",
+					UtmContentMid:              "utm-content-mid-123",
+					UtmContentLong:             "utm-content-long-123",
 				})
 			require.NoError(t, err)
 		})

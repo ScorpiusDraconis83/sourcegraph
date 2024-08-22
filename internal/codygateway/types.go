@@ -1,8 +1,6 @@
 package codygateway
 
 import (
-	"time"
-
 	"github.com/sourcegraph/sourcegraph/internal/completions/types"
 )
 
@@ -46,6 +44,9 @@ type EmbeddingsRequest struct {
 	Model string `json:"model"`
 	// Input is the list of strings to generate embeddings for.
 	Input []string `json:"input"`
+	// IsQuery is true if the request is used for querying, false if it used for indexing.
+	// TODO: Refactor this to use an enum to be more descriptive. This will require updating callers in bfg/embeddings.
+	IsQuery bool `json:"isQuery"`
 }
 
 type Embedding struct {
@@ -64,19 +65,28 @@ type EmbeddingsResponse struct {
 	ModelDimensions int `json:"dimensions"`
 }
 
-// ActorConcurrencyLimitConfig is the configuration for the concurrent requests
-// limit of an actor.
-type ActorConcurrencyLimitConfig struct {
-	// Percentage is the percentage of the daily rate limit to be used to compute the
-	// concurrency limit.
-	Percentage float32
-	// Interval is the time interval of the limit bucket.
-	Interval time.Duration
+// AttributionRequest is request for attribution search.
+// Expected in JSON form as the body of POST request.
+type AttributionRequest struct {
+	// Snippet is the text to search attribution of.
+	Snippet string `json:"snippet"`
+	// Limit is the upper bound of number of responses we want to get.
+	Limit int `json:"limit"`
 }
 
-// ActorRateLimitNotifyConfig is the configuration for the rate limit
-// notifications of an actor.
-type ActorRateLimitNotifyConfig struct {
-	// SlackWebhookURL is the URL of the Slack webhook to send the alerts to.
-	SlackWebhookURL string
+// AttributionResponse is response of attribution search.
+// Contains some repositories to which the snippet can be attributed to.
+type AttributionResponse struct {
+	// Repositories which contain code matching search snippet.
+	Repositories []AttributionRepository
+	// TotalCount denotes how many total matches there were (including listed repositories).
+	TotalCount int `json:"totalCount,omitempty"`
+	// LimitHit is true if the number of search hits goes beyond limit specified in request.
+	LimitHit bool `json:"limitHit,omitempty"`
+}
+
+// AttributionRepository represents matching of search content against a repository.
+type AttributionRepository struct {
+	// Name of the repo on dotcom. Like github.com/sourcegraph/sourcegraph.
+	Name string `json:"name"`
 }

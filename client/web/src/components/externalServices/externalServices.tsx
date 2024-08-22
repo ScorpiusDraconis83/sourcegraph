@@ -125,10 +125,10 @@ function editWithComment(config: string, path: JSONPath, value: any, comment: st
 
 const editorActionComments = {
     enablePermissions:
-        '// Prerequisite: you must configure GitHub as an OAuth auth provider in the site config (https://docs.sourcegraph.com/admin/auth#github). Otherwise, access to all repositories will be disallowed.',
+        '// Prerequisite: you must configure GitHub as an OAuth auth provider in the site config (https://sourcegraph.com/docs/admin/auth#github). Otherwise, access to all repositories will be disallowed.',
     enforcePermissionsOAuth: `// Prerequisite: you must first update the site configuration to
       // include GitLab OAuth as an auth provider.
-      // See https://docs.sourcegraph.com/admin/auth#gitlab for instructions.`,
+      // See https://sourcegraph.com/docs/admin/auth#gitlab for instructions.`,
     enforcePermissionsSSO: `// Prerequisite: You need a sudo-level access token. If you can configure
     // GitLab as an OAuth identity provider for Sourcegraph, we recommend that
     // option instead.
@@ -136,9 +136,9 @@ const editorActionComments = {
     // 1. Ensure the personal access token in this config has admin privileges
     //    (https://docs.gitlab.com/ee/api/#sudo).
     // 2. Update the site configuration to include the SSO auth provider for GitLab
-    //    (https://docs.sourcegraph.com/admin/auth).
+    //    (https://sourcegraph.com/docs/admin/auth).
     // 3. Update the fields below to match the properties of this auth provider
-    //    (https://docs.sourcegraph.com/admin/repo/permissions#sudo-access-token).`,
+    //    (https://sourcegraph.com/docs/admin/permissions).`,
 }
 
 const Field: React.FunctionComponent<{ children: React.ReactNode | string | string[] }> = props => (
@@ -195,7 +195,7 @@ const GitHubInstructions: React.FunctionComponent<{ isEnterprise: boolean }> = (
         </ol>
         <Text>
             See{' '}
-            <Link rel="noopener noreferrer" target="_blank" to="/help/admin/external_service/github#configuration">
+            <Link rel="noopener noreferrer" target="_blank" to="/help/admin/code_hosts/github#configuration">
                 the docs for more options
             </Link>
             , or try one of the buttons below.
@@ -280,7 +280,7 @@ const GitLabInstructions: React.FunctionComponent<{ isSelfManaged: boolean }> = 
         </ol>
         <Text>
             See{' '}
-            <Link rel="noopener noreferrer" target="_blank" to="/help/admin/external_service/gitlab#configuration">
+            <Link rel="noopener noreferrer" target="_blank" to="/help/admin/code_hosts/gitlab#configuration">
                 the docs for more options
             </Link>
             , or try one of the buttons below.
@@ -685,7 +685,7 @@ const AWS_CODE_COMMIT: AddExternalServiceOptions = {
                 <Link
                     rel="noopener noreferrer"
                     target="_blank"
-                    to="/help/admin/external_service/aws_codecommit#configuration"
+                    to="/help/admin/code_hosts/aws_codecommit#configuration"
                 >
                     the docs for more options
                 </Link>
@@ -839,7 +839,7 @@ const BITBUCKET_CLOUD: AddExternalServiceOptions = {
                 <Link
                     rel="noopener noreferrer"
                     target="_blank"
-                    to="/help/admin/external_service/bitbucket_cloud#configuration"
+                    to="/help/admin/code_hosts/bitbucket_cloud#configuration"
                 >
                     the docs for more options
                 </Link>
@@ -929,7 +929,7 @@ const BITBUCKET_SERVER: AddExternalServiceOptions = {
                 <Link
                     rel="noopener noreferrer"
                     target="_blank"
-                    to="/help/admin/external_service/bitbucket_server#configuration"
+                    to="/help/admin/code_hosts/bitbucket_server#configuration"
                 >
                     the docs for more options
                 </Link>
@@ -1094,11 +1094,7 @@ const GITOLITE: AddExternalServiceOptions = {
             </ol>
             <Text>
                 See{' '}
-                <Link
-                    rel="noopener noreferrer"
-                    target="_blank"
-                    to="/help/admin/external_service/gitolite#configuration"
-                >
+                <Link rel="noopener noreferrer" target="_blank" to="/help/admin/code_hosts/gitolite#configuration">
                     the docs for more advanced options
                 </Link>
                 , or try one of the buttons below.
@@ -1146,7 +1142,7 @@ const PHABRICATOR_SERVICE: AddExternalServiceOptions = {
     defaultConfig: `{
   // Use Ctrl+Space for completion, and hover over JSON properties for documentation.
   // Configuration options are documented here:
-  // https://docs.sourcegraph.com/admin/external_service/phabricator#configuration
+  // https://sourcegraph.com/docs/admin/code_hosts/phabricator#configuration
 
   "url": "https://phabricator.example.com",
   "token": "",
@@ -1208,7 +1204,7 @@ const GENERIC_GIT: AddExternalServiceOptions = {
             </ol>
             <Text>
                 See{' '}
-                <Link rel="noopener noreferrer" target="_blank" to="/help/admin/external_service/other#configuration">
+                <Link rel="noopener noreferrer" target="_blank" to="/help/admin/code_hosts/other#configuration">
                     the docs for more options
                 </Link>
                 , or try one of the buttons below.

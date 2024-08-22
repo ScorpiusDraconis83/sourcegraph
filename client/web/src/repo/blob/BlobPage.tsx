@@ -1,19 +1,20 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { createElement, useCallback, useEffect, useMemo, useState } from 'react'
 
 import classNames from 'classnames'
 import AlertCircleIcon from 'mdi-react/AlertCircleIcon'
 import FileAlertIcon from 'mdi-react/FileAlertIcon'
 import MapSearchIcon from 'mdi-react/MapSearchIcon'
-import { createPortal } from 'react-dom'
+import mermaid from 'mermaid'
+import ReactDOM, { createPortal } from 'react-dom'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import type { Observable } from 'rxjs'
-import { catchError, map, mapTo, startWith, switchMap } from 'rxjs/operators'
+import { catchError, map, startWith, switchMap } from 'rxjs/operators'
 import type { Optional } from 'utility-types'
 
 import type { StreamingSearchResultsListProps } from '@sourcegraph/branded'
 import { TabbedPanelContent } from '@sourcegraph/branded/src/components/panel/TabbedPanelContent'
-import { NoopEditor } from '@sourcegraph/cody-shared/dist/editor'
-import { asError, type ErrorLike, isErrorLike, basename } from '@sourcegraph/common'
+import { NoopEditor } from '@sourcegraph/cody-shared'
+import { asError, basename, isErrorLike, SourcegraphURL, type ErrorLike } from '@sourcegraph/common'
 import {
     createActiveSpan,
     reactManualTracer,
@@ -21,18 +22,20 @@ import {
     useCurrentSpan,
 } from '@sourcegraph/observability-client'
 import type { FetchFileParameters } from '@sourcegraph/shared/src/backend/file'
-import type { ExtensionsControllerProps } from '@sourcegraph/shared/src/extensions/controller'
-import { HighlightResponseFormat } from '@sourcegraph/shared/src/graphql-operations'
+import { HighlightResponseFormat, SearchPatternType } from '@sourcegraph/shared/src/graphql-operations'
 import type { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
 import type { SearchContextProps } from '@sourcegraph/shared/src/search'
-import { type SettingsCascadeProps, useExperimentalFeatures } from '@sourcegraph/shared/src/settings/settings'
+import { useExperimentalFeatures, type SettingsCascadeProps } from '@sourcegraph/shared/src/settings/settings'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import { useIsLightTheme } from '@sourcegraph/shared/src/theme'
 import { lazyComponent } from '@sourcegraph/shared/src/util/lazyComponent'
-import { type ModeSpec, parseQueryAndHash, type RepoFile } from '@sourcegraph/shared/src/util/url'
+import { type ModeSpec, type RepoFile } from '@sourcegraph/shared/src/util/url'
 import {
     Alert,
     Button,
     ButtonLink,
+    ErrorAlert,
     ErrorMessage,
     Icon,
     LoadingSpinner,
@@ -46,7 +49,6 @@ import {
 import type { AuthenticatedUser } from '../../auth'
 import type { CodeIntelligenceProps } from '../../codeintel'
 import { FileContentEditor } from '../../cody/components/FileContentEditor'
-import { isCodyEnabled } from '../../cody/isCodyEnabled'
 import { useCodySidebar } from '../../cody/sidebar/Provider'
 import type { BreadcrumbSetters } from '../../components/Breadcrumbs'
 import { HeroPage } from '../../components/HeroPage'
@@ -64,9 +66,7 @@ import type { SearchStreamingProps } from '../../search'
 import { parseBrowserRepoURL, toTreeURL } from '../../util/url'
 import { serviceKindDisplayNameAndIcon } from '../actions/GoToCodeHostAction'
 import { ToggleBlameAction } from '../actions/ToggleBlameAction'
-import { useBlameHunks } from '../blame/useBlameHunks'
-import { useBlameVisibility } from '../blame/useBlameVisibility'
-import { TryCodyWidget } from '../components/TryCodyWidget/TryCodyWidget'
+import { useBlameHunks, useBlameVisibility } from '../blame/hooks'
 import { FilePathBreadcrumbs } from '../FilePathBreadcrumbs'
 import { isPackageServiceType } from '../packages/isPackageServiceType'
 import type { HoverThresholdProps } from '../RepoContainer'
@@ -87,6 +87,8 @@ import { RenderedFile } from './RenderedFile'
 
 import styles from './BlobPage.module.scss'
 
+mermaid.mermaidAPI.initialize({ startOnLoad: false })
+
 const SEARCH_NOTEBOOK_FILE_EXTENSION = '.snb.md'
 const RenderedNotebookMarkdown = lazyComponent(() => import('./RenderedNotebookMarkdown'), 'RenderedNotebookMarkdown')
 
@@ -97,7 +99,7 @@ interface BlobPageProps
         SettingsCascadeProps,
         PlatformContextProps,
         TelemetryProps,
-        ExtensionsControllerProps,
+        TelemetryV2Props,
         HoverThresholdProps,
         BreadcrumbSetters,
         SearchStreamingProps,
@@ -115,7 +117,7 @@ interface BlobPageProps
 
     fetchHighlightedFileLineRanges: (parameters: FetchFileParameters, force?: boolean) => Observable<string[][]>
     className?: string
-    context: Pick<SourcegraphContext, 'authProviders'>
+    context: Pick<SourcegraphContext, 'externalURL'>
 }
 
 /**
@@ -142,15 +144,13 @@ export const BlobPage: React.FunctionComponent<BlobPageProps> = ({ className, co
     const [enableOwnershipPanels] = useFeatureFlag('enable-ownership-panels', true)
     const enableOwnershipPanel = enableOwnershipPanels && props.ownEnabled
 
-    const lineOrRange = useMemo(
-        () => parseQueryAndHash(location.search, location.hash),
-        [location.search, location.hash]
-    )
+    const { lineRange: lineOrRange, viewState } = useMemo(() => SourcegraphURL.from(location), [location])
 
     // Log view event whenever a new Blob, or a Blob with a different render mode, is visited.
     useEffect(() => {
         props.telemetryService.logViewEvent('Blob', { repoName, filePath })
-    }, [repoName, commitID, filePath, renderMode, props.telemetryService])
+        props.telemetryRecorder.recordEvent('repo.blob', 'view')
+    }, [repoName, commitID, filePath, renderMode, props.telemetryService, props.telemetryRecorder])
 
     useBreadcrumb(
         useMemo(() => {
@@ -170,10 +170,11 @@ export const BlobPage: React.FunctionComponent<BlobPageProps> = ({ className, co
                         filePath={filePath}
                         isDir={false}
                         telemetryService={props.telemetryService}
+                        telemetryRecorder={props.telemetryRecorder}
                     />
                 ),
             }
-        }, [filePath, revision, repoName, props.telemetryService])
+        }, [filePath, revision, repoName, props.telemetryService, props.telemetryRecorder])
     )
 
     const [indexIDsForSnapshotData] = useSessionStorage<{ [repoName: string]: string | undefined }>(
@@ -239,7 +240,7 @@ export const BlobPage: React.FunctionComponent<BlobPageProps> = ({ className, co
         useCallback(
             (clicks: Observable<void>) =>
                 clicks.pipe(
-                    mapTo(true),
+                    map(() => true),
                     startWith(false),
                     switchMap(disableTimeout =>
                         fetchBlob({
@@ -304,7 +305,7 @@ export const BlobPage: React.FunctionComponent<BlobPageProps> = ({ className, co
     }
 
     const [isBlameVisible] = useBlameVisibility(isPackage)
-    const blameHunks = useBlameHunks({ isPackage, repoName, revision, filePath }, props.platformContext.sourcegraphURL)
+    const blameHunks = useBlameHunks({ isPackage, repoName, revision, filePath })
 
     // OpenCodeGraph
     const [enableOpenCodeGraph] = useFeatureFlag('opencodegraph', false)
@@ -349,19 +350,25 @@ export const BlobPage: React.FunctionComponent<BlobPageProps> = ({ className, co
         }
     }, [isSearchNotebook, formattedBlobInfoOrError, renderMode, setEditorScope])
 
+    // Replace mermaid code blocks with rendered diagrams
+    const isLightTheme = useIsLightTheme()
+    const renderMermaid = (target: HTMLDivElement | null): void => {
+        if (!target) {
+            return
+        }
+        mermaid.mermaidAPI.initialize({ theme: isLightTheme ? 'default' : 'dark' })
+        const mermaidBlocks = target.querySelectorAll('pre:has(code.language-mermaid)')
+        for (const [i, mermaidBlock] of mermaidBlocks.entries()) {
+            mermaid.mermaidAPI.render(`mermaid-diagram-${i}`, mermaidBlock.textContent || '').then(({ svg }) => {
+                ReactDOM.render(createElement('div', { dangerouslySetInnerHTML: { __html: svg } }), mermaidBlock)
+            })
+        }
+    }
+
     // Always render these to avoid UI jitter during loading when switching to a new file.
     const alwaysRender = (
         <>
             <PageTitle title={getPageTitle()} />
-            {(props.isSourcegraphDotCom || isCodyEnabled()) && (
-                <TryCodyWidget
-                    telemetryService={props.telemetryService}
-                    type="blob"
-                    authenticatedUser={props.authenticatedUser}
-                    context={context}
-                    isSourcegraphDotCom={props.isSourcegraphDotCom}
-                />
-            )}
             {window.context.isAuthenticatedUser && (
                 <RepoHeaderContributionPortal
                     position="right"
@@ -375,6 +382,7 @@ export const BlobPage: React.FunctionComponent<BlobPageProps> = ({ className, co
                             externalServiceType={props.repoServiceType}
                             actionType={actionType}
                             source="repoHeader"
+                            telemetryRecorder={props.telemetryRecorder}
                         />
                     )}
                 </RepoHeaderContributionPortal>
@@ -391,6 +399,7 @@ export const BlobPage: React.FunctionComponent<BlobPageProps> = ({ className, co
                         source="repoHeader"
                         renderMode={renderMode}
                         isPackage={isPackage}
+                        telemetryRecorder={props.telemetryRecorder}
                     />
                 )}
             </RepoHeaderContributionPortal>
@@ -406,6 +415,7 @@ export const BlobPage: React.FunctionComponent<BlobPageProps> = ({ className, co
                             actionType={actionType}
                             source="repoHeader"
                             renderMode={renderMode}
+                            telemetryRecorder={props.telemetryRecorder}
                         />
                     )}
                 </RepoHeaderContributionPortal>
@@ -449,6 +459,7 @@ export const BlobPage: React.FunctionComponent<BlobPageProps> = ({ className, co
                     <GoToRawAction
                         {...context}
                         telemetryService={props.telemetryService}
+                        telemetryRecorder={props.telemetryRecorder}
                         key="raw-action"
                         repoName={repoName}
                         revision={props.revision}
@@ -462,8 +473,10 @@ export const BlobPage: React.FunctionComponent<BlobPageProps> = ({ className, co
                     revision={revision}
                     filePath={filePath}
                     enableOwnershipPanel={enableOwnershipPanel}
+                    telemetryRecorder={props.telemetryRecorder}
                 />
             )}
+            {isErrorLike(blameHunks) && <ErrorAlert error={blameHunks} />}
         </>
     )
 
@@ -569,11 +582,16 @@ export const BlobPage: React.FunctionComponent<BlobPageProps> = ({ className, co
                         onCopyNotebook={onCopyNotebook}
                         exportedFileName={basename(blobInfoOrError.filePath)}
                         className={styles.border}
+                        patternType={SearchPatternType.standard}
                     />
                 </React.Suspense>
             )}
             {!isSearchNotebook && blobInfoOrError.richHTML && renderMode === 'rendered' && (
-                <RenderedFile dangerousInnerHTML={blobInfoOrError.richHTML} className={styles.border} />
+                <RenderedFile
+                    ref={renderMermaid}
+                    dangerousInnerHTML={blobInfoOrError.richHTML}
+                    className={styles.border}
+                />
             )}
             {!blobInfoOrError.richHTML && blobInfoOrError.aborted && (
                 <div>
@@ -600,21 +618,19 @@ export const BlobPage: React.FunctionComponent<BlobPageProps> = ({ className, co
                         className={classNames(styles.blob, styles.border)}
                         blobInfo={{ ...blobInfoOrError, commitID }}
                         wrapCode={wrapCode}
-                        platformContext={props.platformContext}
-                        extensionsController={props.extensionsController}
-                        settingsCascade={props.settingsCascade}
                         onHoverShown={props.onHoverShown}
                         telemetryService={props.telemetryService}
+                        telemetryRecorder={props.telemetryRecorder}
                         role="region"
                         ariaLabel="File blob"
                         isBlameVisible={isBlameVisible}
-                        blameHunks={blameHunks}
+                        blameHunks={isErrorLike(blameHunks) ? undefined : blameHunks}
                         ocgVisibility={ocgVisibility}
                         overrideBrowserSearchKeybinding={true}
                     />
                 </TraceSpanProvider>
             )}
-            {parseQueryAndHash(location.search, location.hash).viewState &&
+            {viewState &&
                 createPortal(
                     <Panel
                         className={styles.panel}

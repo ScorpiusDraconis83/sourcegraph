@@ -1,4 +1,4 @@
-import React, { type FC, useEffect, useMemo } from 'react'
+import React, { useEffect, useMemo, type FC } from 'react'
 
 import {
     mdiAccount,
@@ -8,26 +8,26 @@ import {
     mdiHistory,
     mdiPackageVariantClosed,
     mdiSourceBranch,
+    mdiSourceCommit,
     mdiSourceFork,
     mdiSourceRepository,
     mdiTag,
-    mdiVectorPolyline,
 } from '@mdi/js'
 import classNames from 'classnames'
 import { Navigate } from 'react-router-dom'
 import { catchError } from 'rxjs/operators'
 
-import { asError, encodeURIPathComponent, type ErrorLike, isErrorLike, logger, basename } from '@sourcegraph/common'
+import { asError, basename, encodeURIPathComponent, isErrorLike, type ErrorLike } from '@sourcegraph/common'
 import { gql, useQuery } from '@sourcegraph/http-client'
 import { fetchTreeEntries } from '@sourcegraph/shared/src/backend/repo'
 import { displayRepoName } from '@sourcegraph/shared/src/components/RepoLink'
-import type { ExtensionsControllerProps } from '@sourcegraph/shared/src/extensions/controller'
 import type { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
 import type { Settings } from '@sourcegraph/shared/src/schema/settings.schema'
 import type { SearchContextProps } from '@sourcegraph/shared/src/search'
 import type { SettingsCascadeProps } from '@sourcegraph/shared/src/settings/settings'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
-import { toPrettyBlobURL, toURIWithPath } from '@sourcegraph/shared/src/util/url'
+import { toPrettyBlobURL } from '@sourcegraph/shared/src/util/url'
 import {
     Badge,
     Button,
@@ -46,15 +46,14 @@ import type { AuthenticatedUser } from '../../auth'
 import type { BatchChangesProps } from '../../batches'
 import { RepoBatchChangesButton } from '../../batches/RepoBatchChangesButton'
 import type { CodeIntelligenceProps } from '../../codeintel'
-import { isCodyEnabled } from '../../cody/isCodyEnabled'
 import type { BreadcrumbSetters } from '../../components/Breadcrumbs'
 import { PageTitle } from '../../components/PageTitle'
 import type { FileCommitsResult, FileCommitsVariables, RepositoryFields } from '../../graphql-operations'
 import type { SourcegraphContext } from '../../jscontext'
 import type { OwnConfigProps } from '../../own/OwnConfigProps'
-import { TryCodyWidget } from '../components/TryCodyWidget/TryCodyWidget'
 import { FilePathBreadcrumbs } from '../FilePathBreadcrumbs'
 import { isPackageServiceType } from '../packages/isPackageServiceType'
+import { RepoCommitsButton } from '../utils'
 
 import { TreePageContent } from './TreePageContent'
 import { treeHistoryFragment } from './TreePagePanels'
@@ -79,9 +78,9 @@ const FILE_COMMITS_QUERY = gql`
 `
 export interface Props
     extends SettingsCascadeProps<Settings>,
-        ExtensionsControllerProps,
         PlatformContextProps,
         TelemetryProps,
+        TelemetryV2Props,
         CodeIntelligenceProps,
         BatchChangesProps,
         Pick<SearchContextProps, 'selectedSearchContextSpec'>,
@@ -96,7 +95,7 @@ export interface Props
     isSourcegraphDotCom: boolean
     className?: string
     authenticatedUser: AuthenticatedUser | null
-    context: Pick<SourcegraphContext, 'authProviders'>
+    context: Pick<SourcegraphContext, 'externalURL'>
 }
 
 export const treePageRepositoryFragment = gql`
@@ -140,10 +139,12 @@ export const TreePage: FC<Props> = ({
     useEffect(() => {
         if (isRoot) {
             props.telemetryService.logViewEvent('Repository')
+            props.telemetryRecorder.recordEvent('repo', 'view')
         } else {
             props.telemetryService.logViewEvent('Tree')
+            props.telemetryRecorder.recordEvent('repo.tree', 'view')
         }
-    }, [isRoot, props.telemetryService])
+    }, [isRoot, props.telemetryService, props.telemetryRecorder])
 
     useBreadcrumb(
         useMemo(() => {
@@ -162,10 +163,11 @@ export const TreePage: FC<Props> = ({
                         filePath={filePath}
                         isDir={true}
                         telemetryService={props.telemetryService}
+                        telemetryRecorder={props.telemetryRecorder}
                     />
                 ),
             }
-        }, [isRoot, filePath, repoName, revision, props.telemetryService])
+        }, [isRoot, filePath, repoName, revision, props.telemetryService, props.telemetryRecorder])
     )
 
     const treeOrError = useObservable(
@@ -193,46 +195,7 @@ export const TreePage: FC<Props> = ({
     })
     const treeWithHistory = fileCommitData?.repository?.commit?.tree?.entries
 
-    const showCodeInsights =
-        !isErrorLike(settingsCascade.final) &&
-        !!settingsCascade.final?.experimentalFeatures?.codeInsights &&
-        settingsCascade.final['insights.displayLocation.directory'] === true
-
     const showOwnership = ownEnabled && !isSourcegraphDotCom
-
-    // Add DirectoryViewer
-    const uri = toURIWithPath({ repoName, commitID, filePath })
-
-    const { extensionsController } = props
-    useEffect(() => {
-        if (!showCodeInsights || extensionsController === null) {
-            return
-        }
-
-        const viewerIdPromise = extensionsController.extHostAPI
-            .then(extensionHostAPI =>
-                extensionHostAPI.addViewerIfNotExists({
-                    type: 'DirectoryViewer',
-                    isActive: true,
-                    resource: uri,
-                })
-            )
-            .catch(error => {
-                logger.error('Error adding viewer to extension host:', error)
-                return null
-            })
-
-        return () => {
-            Promise.all([extensionsController.extHostAPI, viewerIdPromise])
-                .then(([extensionHostAPI, viewerId]) => {
-                    if (viewerId) {
-                        return extensionHostAPI.removeViewer(viewerId)
-                    }
-                    return
-                })
-                .catch(error => logger.error('Error removing viewer from extension host:', error))
-        }
-    }, [uri, showCodeInsights, extensionsController])
 
     const getPageTitle = (): string => {
         const repoString = displayRepoName(repoName)
@@ -269,6 +232,14 @@ export const TreePage: FC<Props> = ({
             </div>
             <div className={styles.menu}>
                 <ButtonGroup>
+                    <RepoCommitsButton
+                        repoName={repo?.name || ''}
+                        repoType={repo?.sourceType || ''}
+                        revision={revision}
+                        filePath={filePath}
+                        svgPath={mdiSourceCommit}
+                        className={styles.text}
+                    />
                     {!isPackage && (
                         <Tooltip content="Git branches">
                             <Button
@@ -313,7 +284,8 @@ export const TreePage: FC<Props> = ({
                             <span className={styles.text}>Compare</span>
                         </Button>
                     </Tooltip>
-                    {codeIntelligenceEnabled && (
+                    {/** the code graph dashboard is only accessible to site admins */}
+                    {codeIntelligenceEnabled && authenticatedUser?.siteAdmin && (
                         <Tooltip content="Code graph data">
                             <Button
                                 className="flex-shrink-0"
@@ -324,20 +296,6 @@ export const TreePage: FC<Props> = ({
                             >
                                 <Icon aria-hidden={true} svgPath={mdiBrain} />{' '}
                                 <span className={styles.text}>Code graph data</span>
-                            </Button>
-                        </Tooltip>
-                    )}
-                    {window.context?.codyEnabled && window.context?.embeddingsEnabled && (
-                        <Tooltip content="Embeddings">
-                            <Button
-                                className="flex-shrink-0"
-                                to={`/${encodeURIPathComponent(repoName)}/-/embeddings`}
-                                variant="secondary"
-                                outline={true}
-                                as={Link}
-                            >
-                                <Icon aria-hidden={true} svgPath={mdiVectorPolyline} />{' '}
-                                <span className={styles.text}>Embeddings</span>
                             </Button>
                         </Tooltip>
                     )}
@@ -358,7 +316,10 @@ export const TreePage: FC<Props> = ({
                                 variant="secondary"
                                 outline={true}
                                 as={Link}
-                                onClick={() => props.telemetryService.log('repoPage:ownershipPage:clicked')}
+                                onClick={() => {
+                                    props.telemetryService.log('repoPage:ownershipPage:clicked')
+                                    props.telemetryRecorder.recordEvent('repo.ownershipButton', 'click')
+                                }}
                             >
                                 <Icon aria-hidden={true} svgPath={mdiAccount} />{' '}
                                 <span className={styles.text}>Ownership</span>
@@ -387,16 +348,6 @@ export const TreePage: FC<Props> = ({
 
     return (
         <div className={classNames(styles.treePage, className)}>
-            {(isSourcegraphDotCom || isCodyEnabled()) && (
-                <TryCodyWidget
-                    className="mb-2"
-                    telemetryService={props.telemetryService}
-                    type="repo"
-                    authenticatedUser={authenticatedUser}
-                    context={context}
-                    isSourcegraphDotCom={isSourcegraphDotCom}
-                />
-            )}
             <Container className={styles.container}>
                 <div className={classNames(styles.header)}>
                     <PageTitle title={getPageTitle()} />
@@ -435,6 +386,7 @@ export const TreePage: FC<Props> = ({
                             commitID={commitID}
                             isPackage={isPackage}
                             authenticatedUser={authenticatedUser}
+                            showOwnership={showOwnership}
                             {...props}
                         />
                     )}

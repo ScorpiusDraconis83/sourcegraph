@@ -16,12 +16,12 @@ type operations struct {
 	deleteSourcedCommits                *observation.Operation
 	updateSourcedCommits                *observation.Operation
 	getCommitsVisibleToUpload           *observation.Operation
-	getOldestCommitDate                 *observation.Operation
+	getCommitAndDateForOldestUpload     *observation.Operation
 	getCommitGraphMetadata              *observation.Operation
 	hasCommit                           *observation.Operation
 	repositoryIDsWithErrors             *observation.Operation
 	numRepositoriesWithCodeIntelligence *observation.Operation
-	getRecentIndexesSummary             *observation.Operation
+	getRecentAutoIndexJobsSummary       *observation.Operation
 
 	// Repositories
 	getRepositoriesForIndexScan             *observation.Operation
@@ -61,12 +61,12 @@ type operations struct {
 	markFailed                           *observation.Operation
 	deleteUploads                        *observation.Operation
 
-	// Dumps
-	findClosestDumps                   *observation.Operation
-	findClosestDumpsFromGraphFragment  *observation.Operation
-	getDumpsWithDefinitionsForMonikers *observation.Operation
-	getDumpsByIDs                      *observation.Operation
-	deleteOverlappingDumps             *observation.Operation
+	// Completed uploads
+	findClosestCompletedUploads                   *observation.Operation
+	findClosestCompletedUploadsFromGraphFragment  *observation.Operation
+	getCompletedUploadsWithDefinitionsForMonikers *observation.Operation
+	getCompletedUploadsByIDs                      *observation.Operation
+	deleteOverlappingCompletedUploads             *observation.Operation
 
 	// Packages
 	updatePackages *observation.Operation
@@ -85,13 +85,13 @@ type operations struct {
 	reindexUploadByID              *observation.Operation
 	deleteIndexesWithoutRepository *observation.Operation
 
-	getIndexes                 *observation.Operation
-	getIndexByID               *observation.Operation
-	getIndexesByIDs            *observation.Operation
-	deleteIndexByID            *observation.Operation
-	deleteIndexes              *observation.Operation
-	reindexIndexByID           *observation.Operation
-	reindexIndexes             *observation.Operation
+	getAutoIndexJobs           *observation.Operation
+	getAutoIndexJobByID        *observation.Operation
+	getAutoIndexJobsByIDs      *observation.Operation
+	deleteAutoIndexJobByID     *observation.Operation
+	deleteAutoIndexJobs        *observation.Operation
+	setRerunAutoIndexJobByID   *observation.Operation
+	setRerunAutoIndexJobs      *observation.Operation
 	processStaleSourcedCommits *observation.Operation
 	expireFailedRecords        *observation.Operation
 }
@@ -121,13 +121,13 @@ func newOperations(observationCtx *observation.Context) *operations {
 		list: op("List"),
 
 		// Commits
-		getCommitsVisibleToUpload: op("CommitsVisibleToUploads"),
-		getOldestCommitDate:       op("GetOldestCommitDate"),
-		getStaleSourcedCommits:    op("GetStaleSourcedCommits"),
-		getCommitGraphMetadata:    op("GetCommitGraphMetadata"),
-		deleteSourcedCommits:      op("DeleteSourcedCommits"),
-		updateSourcedCommits:      op("UpdateSourcedCommits"),
-		hasCommit:                 op("HasCommit"),
+		getCommitsVisibleToUpload:       op("CommitsVisibleToUploads"),
+		getCommitAndDateForOldestUpload: op("GetCommitAndDateForOldestUpload"),
+		getStaleSourcedCommits:          op("GetStaleSourcedCommits"),
+		getCommitGraphMetadata:          op("GetCommitGraphMetadata"),
+		deleteSourcedCommits:            op("DeleteSourcedCommits"),
+		updateSourcedCommits:            op("UpdateSourcedCommits"),
+		hasCommit:                       op("HasCommit"),
 
 		// Repositories
 		getRepositoriesForIndexScan:             op("GetRepositoriesForIndexScan"),
@@ -168,12 +168,12 @@ func newOperations(observationCtx *observation.Context) *operations {
 		persistNearestUploadsLinks: op("persistNearestUploadsLinks"),
 		persistUploadsVisibleAtTip: op("persistUploadsVisibleAtTip"),
 
-		// Dumps
-		findClosestDumps:                   op("FindClosestDumps"),
-		findClosestDumpsFromGraphFragment:  op("FindClosestDumpsFromGraphFragment"),
-		getDumpsWithDefinitionsForMonikers: op("GetUploadsWithDefinitionsForMonikers"),
-		getDumpsByIDs:                      op("GetDumpsByIDs"),
-		deleteOverlappingDumps:             op("DeleteOverlappingDumps"),
+		// Completed uploads
+		findClosestCompletedUploads:                   op("FindClosestCompletedUploads"),
+		findClosestCompletedUploadsFromGraphFragment:  op("FindClosestCompletedUploadsFromGraphFragment"),
+		getCompletedUploadsWithDefinitionsForMonikers: op("GetUploadsWithDefinitionsForMonikers"),
+		getCompletedUploadsByIDs:                      op("GetCompletedUploadsByIDs"),
+		deleteOverlappingCompletedUploads:             op("DeleteOverlappingCompletedUploads"),
 
 		// Packages
 		updatePackages: op("UpdatePackages"),
@@ -190,19 +190,19 @@ func newOperations(observationCtx *observation.Context) *operations {
 
 		reindexUploads:                 op("ReindexUploads"),
 		reindexUploadByID:              op("ReindexUploadByID"),
-		deleteIndexesWithoutRepository: op("DeleteIndexesWithoutRepository"),
+		deleteIndexesWithoutRepository: op("DeleteAutoIndexJobsWithoutRepository"),
 
-		getIndexes:                          op("GetIndexes"),
-		getIndexByID:                        op("GetIndexByID"),
-		getIndexesByIDs:                     op("GetIndexesByIDs"),
-		deleteIndexByID:                     op("DeleteIndexByID"),
-		deleteIndexes:                       op("DeleteIndexes"),
-		reindexIndexByID:                    op("ReindexIndexByID"),
-		reindexIndexes:                      op("ReindexIndexes"),
+		getAutoIndexJobs:                    op("GetAutoIndexJobs"),
+		getAutoIndexJobByID:                 op("GetAutoIndexJobByID"),
+		getAutoIndexJobsByIDs:               op("GetAutoIndexJobsByIDs"),
+		deleteAutoIndexJobByID:              op("DeleteAutoIndexJobByID"),
+		deleteAutoIndexJobs:                 op("DeleteAutoIndexJobs"),
+		setRerunAutoIndexJobByID:            op("SetRerunAutoIndexJobByID"),
+		setRerunAutoIndexJobs:               op("SetRerunAutoIndexJobs"),
 		processStaleSourcedCommits:          op("ProcessStaleSourcedCommits"),
 		expireFailedRecords:                 op("ExpireFailedRecords"),
 		repositoryIDsWithErrors:             op("RepositoryIDsWithErrors"),
 		numRepositoriesWithCodeIntelligence: op("NumRepositoriesWithCodeIntelligence"),
-		getRecentIndexesSummary:             op("GetRecentIndexesSummary"),
+		getRecentAutoIndexJobsSummary:       op("GetRecentAutoIndexJobsSummary"),
 	}
 }

@@ -1,18 +1,18 @@
 package permissions
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"golang.org/x/exp/slices"
 
 	"github.com/sourcegraph/log/logtest"
 
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/authz"
+	"github.com/sourcegraph/sourcegraph/internal/collections"
 	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbmocks"
@@ -22,6 +22,7 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/extsvc/bitbucketserver"
 	"github.com/sourcegraph/sourcegraph/internal/observation"
 	"github.com/sourcegraph/sourcegraph/internal/types"
+	dbworker "github.com/sourcegraph/sourcegraph/internal/workerutil/dbworker/store"
 	"github.com/sourcegraph/sourcegraph/schema"
 )
 
@@ -39,7 +40,7 @@ func TestStore(t *testing.T) {
 	require.NotZero(t, jobID)
 
 	store := createBitbucketProjectPermissionsStore(observation.TestContextTB(t), db, &config{})
-	count, err := store.QueuedCount(ctx, true)
+	count, err := store.CountByState(ctx, dbworker.StateQueued|dbworker.StateErrored|dbworker.StateProcessing)
 	require.NoError(t, err)
 	require.Equal(t, 1, count)
 }
@@ -183,7 +184,7 @@ func TestSetPermissionsForUsers(t *testing.T) {
 
 			err := perms.LoadUserPendingPermissions(ctx, userPerms)
 			require.NoError(t, err)
-			require.Equal(t, []int32{1, 2}, userPerms.IDs.Sorted(cmp.Less[int32]))
+			require.Equal(t, []int32{1, 2}, collections.SortedSetValues(userPerms.IDs))
 		}
 	}
 

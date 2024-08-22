@@ -20,32 +20,39 @@
     "serve:prod": "ts-node-transpile-only --project ./dev/tsconfig.json ./dev/server/production.server.ts",
     "generate": "pnpm -w run generate",
     "dev": "ts-node -T dev/esbuild/server.ts",
-    "build": "pnpm run generate && ts-node -T dev/esbuild/build.ts",
+    "build": "pnpm run generate && pnpm run clean && ts-node -T dev/esbuild/build.ts",
+    "clean": "rm -rf dist/chunks dist/main-* dist/embedMain-*",
     "watch": "WATCH=1 pnpm run --silent build",
     "lint": "pnpm lint:js && pnpm:lint:css",
     "lint:js": "NODE_OPTIONS=\"--max_old_space_size=16192\" eslint --cache '**/*.[tj]s?(x)'",
     "lint:css": "stylelint 'src/**/*.scss' --quiet",
-    "bundlesize": "pnpm exec bundlesize --config=./bundlesize.config.js",
-    "report-bundle-diff": "ts-node-transpile-only scripts/report-bundle-diff"
+    "bundlesize": "pnpm exec bundlesize --config=./bundlesize.config.js"
   },
   "devDependencies": {
+    "@bazel/concatjs": "^5.8.1",
+    "@bazel/runfiles": "^5.8.1",
     "@sourcegraph/build-config": "workspace:*",
     "@sourcegraph/extension-api-types": "workspace:*",
     "@sourcegraph/storybook": "workspace:*",
-    "@sourcegraph/testing": "workspace:*"
+    "@sourcegraph/testing": "workspace:*",
+    "@types/node": "^20.11.19",
+    "@types/tmp": "^0.2.6",
+    "tmp": "^0.2.3",
+    "true-case-path": "^2.2.1"
   },
   "dependencies": {
     "@sourcegraph/branded": "workspace:*",
     "@sourcegraph/client-api": "workspace:*",
     "@sourcegraph/codeintellify": "workspace:*",
-    "@sourcegraph/cody-shared": "^0.0.9",
-    "@sourcegraph/cody-ui": "^0.0.7",
+    "@sourcegraph/cody-shared": "workspace:*",
+    "@sourcegraph/cody-ui": "workspace:*",
     "@sourcegraph/common": "workspace:*",
     "@sourcegraph/http-client": "workspace:*",
     "@sourcegraph/observability-client": "workspace:*",
     "@sourcegraph/schema": "workspace:*",
     "@sourcegraph/shared": "workspace:*",
-    "@sourcegraph/telemetry": "^0.11.0",
-    "@sourcegraph/wildcard": "workspace:*"
+    "@sourcegraph/telemetry": "^0.16.0",
+    "@sourcegraph/wildcard": "workspace:*",
+    "mermaid": "^10.9.1"
   }
 }

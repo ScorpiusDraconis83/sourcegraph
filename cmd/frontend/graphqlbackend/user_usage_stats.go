@@ -11,25 +11,21 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/envvar"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/hubspot"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/hubspot/hubspotutil"
 	"github.com/sourcegraph/sourcegraph/internal/actor"
 	"github.com/sourcegraph/sourcegraph/internal/auth"
 	"github.com/sourcegraph/sourcegraph/internal/conf"
-	"github.com/sourcegraph/sourcegraph/internal/errcode"
+	"github.com/sourcegraph/sourcegraph/internal/dotcom"
 	"github.com/sourcegraph/sourcegraph/internal/featureflag"
 	"github.com/sourcegraph/sourcegraph/internal/trace"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 	"github.com/sourcegraph/sourcegraph/internal/usagestats"
-	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
 
 func (r *UserResolver) UsageStatistics(ctx context.Context) (*userUsageStatisticsResolver, error) {
-	if envvar.SourcegraphDotComMode() {
-		if err := auth.CheckSiteAdminOrSameUser(ctx, r.db, r.user.ID); err != nil {
-			return nil, err
-		}
+	if err := auth.CheckSiteAdminOrSameUser(ctx, r.db, r.user.ID); err != nil {
+		return nil, err
 	}
 
 	stats, err := usagestats.GetByUserID(ctx, r.db, r.user.ID)
@@ -129,7 +125,7 @@ func (r *schemaResolver) LogEvents(ctx context.Context, args *EventBatch) (*Empt
 
 	userID := actor.FromContext(ctx).UID
 	userPrimaryEmail := ""
-	if envvar.SourcegraphDotComMode() {
+	if dotcom.SourcegraphDotComMode() {
 		userPrimaryEmail, _, _ = r.db.UserEmails().GetPrimaryEmail(ctx, userID)
 	}
 
@@ -161,8 +157,8 @@ func (r *schemaResolver) LogEvents(ctx context.Context, args *EventBatch) (*Empt
 		}
 
 		// On Sourcegraph.com only, log a HubSpot event indicating when the user installed a Cody client.
-		// if envvar.SourcegraphDotComMode() && args.Event == "CodyInstalled" && userID != 0 && userPrimaryEmail != "" {
-		if envvar.SourcegraphDotComMode() && args.Event == "CodyInstalled" {
+		// if  dotcom.SourcegraphDotComMode() && args.Event == "CodyInstalled" && userID != 0 && userPrimaryEmail != "" {
+		if dotcom.SourcegraphDotComMode() && args.Event == "CodyInstalled" {
 			emailsEnabled := false
 
 			ide := getIdeFromEvent(&args)
@@ -185,11 +181,6 @@ func (r *schemaResolver) LogEvents(ctx context.Context, args *EventBatch) (*Empt
 					Ide:           ide,
 					EmailsEnabled: strconv.FormatBool(emailsEnabled),
 				})
-		}
-
-		// On Sourcegraph.com only, log a HubSpot event indicating when the user clicks button to downloads Cody App.
-		if envvar.SourcegraphDotComMode() && args.Event == "DownloadApp" && userID != 0 && userPrimaryEmail != "" {
-			hubspotutil.SyncUser(userPrimaryEmail, hubspotutil.AppDownloadButtonClickedEventID, &hubspot.ContactProperties{})
 		}
 
 		argumentPayload, err := decode(args.Argument)
@@ -339,42 +330,4 @@ func exportPrometheusSearchRanking(payload json.RawMessage) error {
 
 	searchRankingResultClicked.WithLabelValues(v.Type, resultsLength, ranked).Observe(v.Index)
 	return nil
-}
-
-type codySurveySubmissionForHubSpot struct {
-	Email         string `url:"email"`
-	IsForWork     bool   `url:"using_cody_for_work"`
-	IsForPersonal bool   `url:"using_cody_for_personal"`
-}
-
-func (r *schemaResolver) SubmitCodySurvey(ctx context.Context, args *struct {
-	IsForWork     bool
-	IsForPersonal bool
-}) (*EmptyResponse, error) {
-	if !envvar.SourcegraphDotComMode() {
-		return nil, errors.New("Cody survey is not supported outside sourcegraph.com")
-	}
-
-	// If user is authenticated, use their uid and overwrite the optional email field.
-	actor := actor.FromContext(ctx)
-	if !actor.IsAuthenticated() {
-		return nil, errors.New("user must be authenticated to submit a Cody survey")
-	}
-
-	email, _, err := r.db.UserEmails().GetPrimaryEmail(ctx, actor.UID)
-	if err != nil && !errcode.IsNotFound(err) {
-		return nil, err
-	}
-
-	// Submit form to HubSpot
-	if err := hubspotutil.Client().SubmitForm(hubspotutil.CodySurveyFormID, &codySurveySubmissionForHubSpot{
-		Email:         email,
-		IsForWork:     args.IsForWork,
-		IsForPersonal: args.IsForPersonal,
-	}); err != nil {
-		// Log an error, but don't return one if the only failure was in submitting survey results to HubSpot.
-		log15.Error("Unable to submit cody survey results to Sourcegraph remote", "error", err)
-	}
-
-	return &EmptyResponse{}, nil
 }

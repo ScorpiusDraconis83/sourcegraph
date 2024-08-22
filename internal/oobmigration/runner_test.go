@@ -8,6 +8,7 @@ import (
 
 	"github.com/derision-test/glock"
 	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/require"
 
 	"github.com/sourcegraph/log"
 	"github.com/sourcegraph/log/logtest"
@@ -25,7 +26,7 @@ func TestRunner(t *testing.T) {
 		{ID: 1, Progress: 0.5},
 	}, nil)
 
-	runner := newRunner(&observation.TestContext, store, refreshTicker)
+	runner := newRunner(observation.TestContextTB(t), store, refreshTicker)
 
 	migrator := NewMockMigrator()
 	migrator.ProgressFunc.SetDefaultReturn(0.5, nil)
@@ -36,7 +37,8 @@ func TestRunner(t *testing.T) {
 
 	go runner.startInternal(allowAll)
 	tickN(ticker, 3)
-	runner.Stop()
+	err := runner.Stop(context.Background())
+	require.NoError(t, err)
 
 	if callCount := len(migrator.UpFunc.History()); callCount != 3 {
 		t.Errorf("unexpected number of calls to Up. want=%d have=%d", 3, callCount)
@@ -55,7 +57,7 @@ func TestRunnerError(t *testing.T) {
 		{ID: 1, Progress: 0.5},
 	}, nil)
 
-	runner := newRunner(&observation.TestContext, store, refreshTicker)
+	runner := newRunner(observation.TestContextTB(t), store, refreshTicker)
 
 	migrator := NewMockMigrator()
 	migrator.ProgressFunc.SetDefaultReturn(0.5, nil)
@@ -67,7 +69,8 @@ func TestRunnerError(t *testing.T) {
 
 	go runner.startInternal(allowAll)
 	tickN(ticker, 1)
-	runner.Stop()
+	err := runner.Stop(context.Background())
+	require.NoError(t, err)
 
 	if calls := store.AddErrorFunc.history; len(calls) != 1 {
 		t.Fatalf("unexpected number of calls to AddError. want=%d have=%d", 1, len(calls))
@@ -94,7 +97,7 @@ func TestRunnerRemovesCompleted(t *testing.T) {
 		{ID: 3, Progress: 0.9},
 	}, nil)
 
-	runner := newRunner(&observation.TestContext, store, refreshTicker)
+	runner := newRunner(observation.TestContextTB(t), store, refreshTicker)
 
 	// Makes no progress
 	migrator1 := NewMockMigrator()
@@ -124,7 +127,8 @@ func TestRunnerRemovesCompleted(t *testing.T) {
 	tickN(ticker1, 5)
 	tickN(ticker2, 5)
 	tickN(ticker3, 5)
-	runner.Stop()
+	err := runner.Stop(context.Background())
+	require.NoError(t, err)
 
 	// not finished
 	if callCount := len(migrator1.UpFunc.History()); callCount != 5 {
@@ -330,7 +334,7 @@ func runMigratorWrapped(store storeIface, migrator Migrator, logger log.Logger, 
 
 // tickN advances the given ticker by one second n times with a guaranteed reader.
 func tickN(ticker *glock.MockTicker, n int) {
-	for i := 0; i < n; i++ {
+	for range n {
 		ticker.BlockingAdvance(time.Second)
 	}
 }
@@ -345,7 +349,7 @@ func TestRunnerValidate(t *testing.T) {
 		{ID: 1, Introduced: NewVersion(3, 13), Progress: 0},
 	}, nil)
 
-	runner := newRunner(&observation.TestContext, store, nil)
+	runner := newRunner(observation.TestContextTB(t), store, nil)
 	statusErr := runner.Validate(context.Background(), NewVersion(3, 12), NewVersion(0, 0))
 	if statusErr != nil {
 		t.Errorf("unexpected status error: %s ", statusErr)
@@ -358,7 +362,7 @@ func TestRunnerValidateUnfinishedUp(t *testing.T) {
 		{ID: 1, Introduced: NewVersion(3, 11), Progress: 0.65, Deprecated: newVersionPtr(3, 12)},
 	}, nil)
 
-	runner := newRunner(&observation.TestContext, store, nil)
+	runner := newRunner(observation.TestContextTB(t), store, nil)
 	statusErr := runner.Validate(context.Background(), NewVersion(3, 12), NewVersion(0, 0))
 
 	if diff := cmp.Diff(wrapMigrationErrors(newMigrationStatusError(1, 1, 0.65)).Error(), statusErr.Error()); diff != "" {
@@ -372,7 +376,7 @@ func TestRunnerValidateUnfinishedDown(t *testing.T) {
 		{ID: 1, Introduced: NewVersion(3, 13), Progress: 0.15, Deprecated: newVersionPtr(3, 15), ApplyReverse: true},
 	}, nil)
 
-	runner := newRunner(&observation.TestContext, store, nil)
+	runner := newRunner(observation.TestContextTB(t), store, nil)
 	statusErr := runner.Validate(context.Background(), NewVersion(3, 12), NewVersion(0, 0))
 
 	if diff := cmp.Diff(wrapMigrationErrors(newMigrationStatusError(1, 0, 0.15)).Error(), statusErr.Error()); diff != "" {
@@ -394,7 +398,7 @@ func TestRunnerBoundsFilter(t *testing.T) {
 		{ID: 3, Progress: 0.5, Introduced: NewVersion(3, 6), Deprecated: &d3},
 	}, nil)
 
-	runner := newRunner(&observation.TestContext, store, refreshTicker)
+	runner := newRunner(observation.TestContextTB(t), store, refreshTicker)
 
 	migrator1 := NewMockMigrator()
 	migrator1.ProgressFunc.SetDefaultReturn(0.5, nil)
@@ -417,7 +421,8 @@ func TestRunnerBoundsFilter(t *testing.T) {
 		return m.ID != 2
 	})
 	tickN(ticker, 64)
-	runner.Stop()
+	err := runner.Stop(context.Background())
+	require.NoError(t, err)
 
 	// not called
 	if callCount := len(migrator2.UpFunc.History()); callCount != 0 {

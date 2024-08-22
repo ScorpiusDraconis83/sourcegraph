@@ -10,7 +10,6 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/envvar"
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	edb "github.com/sourcegraph/sourcegraph/internal/database"
@@ -98,7 +97,6 @@ func GetBackgroundJobs(ctx context.Context, logger log.Logger, mainAppDB databas
 			AllRepoIterator: discovery.NewAllReposIterator(
 				mainAppDB.Repos(),
 				time.Now,
-				envvar.SourcegraphDotComMode(),
 				15*time.Minute,
 				&prometheus.CounterOpts{
 					Namespace: "src",
@@ -133,12 +131,12 @@ func GetBackgroundQueryRunnerJob(ctx context.Context, logger log.Logger, mainApp
 	queryRunnerWorkerMetrics, queryRunnerResetterMetrics := newWorkerMetrics(observationCtx, "query_runner_worker")
 
 	workerStore := queryrunner.CreateDBWorkerStore(observationCtx, workerBaseStore)
-	seachQueryLimiter := limiter.SearchQueryRate()
+	searchQueryLimiter := limiter.SearchQueryRate()
 
 	return []goroutine.BackgroundRoutine{
 		// Register the query-runner worker and resetter, which executes search queries and records
 		// results to the insights DB.
-		queryrunner.NewWorker(ctx, logger.Scoped("queryrunner.Worker"), workerStore, insightsStore, repoStore, queryRunnerWorkerMetrics, seachQueryLimiter),
+		queryrunner.NewWorker(ctx, logger.Scoped("queryrunner.Worker"), workerStore, insightsStore, repoStore, queryRunnerWorkerMetrics, searchQueryLimiter),
 		queryrunner.NewResetter(ctx, logger.Scoped("queryrunner.Resetter"), workerStore, queryRunnerResetterMetrics),
 		queryrunner.NewCleaner(ctx, observationCtx, workerBaseStore),
 	}

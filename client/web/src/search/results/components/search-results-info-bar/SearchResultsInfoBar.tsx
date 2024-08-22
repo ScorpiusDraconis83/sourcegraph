@@ -1,16 +1,17 @@
-import { FC, useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState, type FC } from 'react'
 
-import { mdiChevronDoubleDown, mdiChevronDoubleUp, mdiOpenInNew, mdiThumbDown, mdiThumbUp } from '@mdi/js'
+import { mdiChevronDoubleDown, mdiChevronDoubleUp } from '@mdi/js'
 import classNames from 'classnames'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 
 import { SearchPatternType } from '@sourcegraph/shared/src/graphql-operations'
 import type { CaseSensitivityProps, SearchPatternTypeProps } from '@sourcegraph/shared/src/search'
 import { FilterKind, findFilter } from '@sourcegraph/shared/src/search/query/query'
 import type { AggregateStreamingSearchResults, StreamSearchOptions } from '@sourcegraph/shared/src/search/stream'
 import { useExperimentalFeatures } from '@sourcegraph/shared/src/settings/settings'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
-import { Alert, Button, Icon, Link, Text, useSessionStorage } from '@sourcegraph/wildcard'
+import { Button, Icon } from '@sourcegraph/wildcard'
 
 import type { AuthenticatedUser } from '../../../../auth'
 import {
@@ -19,24 +20,23 @@ import {
     NO_ACCESS_SOURCEGRAPH_COM,
 } from '../../../../batches/utils'
 import { SavedSearchModal } from '../../../../savedSearches/SavedSearchModal'
-import { eventLogger } from '../../../../tracking/eventLogger'
-import { DOTCOM_URL } from '../../../../tracking/util'
 import { SearchResultsCsvExportModal } from '../../export/SearchResultsCsvExportModal'
 import { AggregationUIMode, useAggregationUIMode } from '../aggregation'
 import { SearchActionsMenu } from '../SearchActionsMenu'
 
 import {
-    type CreateAction,
     getBatchChangeCreateAction,
     getCodeMonitoringCreateAction,
     getInsightsCreateAction,
     getSearchContextCreateAction,
+    type CreateAction,
 } from './createActions'
 
 import styles from './SearchResultsInfoBar.module.scss'
 
 export interface SearchResultsInfoBarProps
     extends TelemetryProps,
+        TelemetryV2Props,
         SearchPatternTypeProps,
         Pick<CaseSensitivityProps, 'caseSensitive'> {
     /** The currently authenticated user or null */
@@ -73,6 +73,8 @@ export interface SearchResultsInfoBarProps
     isSourcegraphDotCom: boolean
     patternType: SearchPatternType
     sourcegraphURL: string
+
+    onTogglePatternType: (patternType: SearchPatternType) => void
 }
 
 /**
@@ -80,7 +82,16 @@ export interface SearchResultsInfoBarProps
  * and a few actions like expand all and save query
  */
 export const SearchResultsInfoBar: FC<SearchResultsInfoBarProps> = props => {
-    const { query, patternType, authenticatedUser, results, options, sourcegraphURL, telemetryService } = props
+    const {
+        query,
+        patternType,
+        authenticatedUser,
+        results,
+        options,
+        sourcegraphURL,
+        telemetryService,
+        telemetryRecorder,
+    } = props
 
     const navigate = useNavigate()
     const newFiltersEnabled = useExperimentalFeatures(features => features.newSearchResultFiltersPanel)
@@ -148,30 +159,11 @@ export const SearchResultsInfoBar: FC<SearchResultsInfoBarProps> = props => {
         props.onShowMobileFiltersChanged?.(newShowFilters)
     }
 
-    const location = useLocation()
-    const isPrivateInstance = window.location.host !== DOTCOM_URL.href
-    const refFromCodySearch = new URLSearchParams(location.search).get('ref') === 'cody-search'
-    const [codySearchInputString] = useSessionStorage<string>('cody-search-input', '')
-    const codySearchInput: { input?: string; translatedQuery?: string } = JSON.parse(codySearchInputString || '{}')
-    const [codyFeedback, setCodyFeedback] = useState<null | boolean>(null)
-
-    const collectCodyFeedback = (positive: boolean): void => {
-        if (codyFeedback !== null) {
-            return
-        }
-
-        eventLogger.log(
-            'web:codySearch:feedbackSubmitted',
-            !isPrivateInstance ? { ...codySearchInput, positive } : null,
-            !isPrivateInstance ? { ...codySearchInput, positive } : null
-        )
-        setCodyFeedback(positive)
-    }
-
     const onSaveQueryModalClose = useCallback(() => {
         setShowSavedSearchModal(false)
         telemetryService.log('SavedQueriesToggleCreating', { queries: { creating: false } })
-    }, [telemetryService])
+        telemetryRecorder.recordEvent('search.resultsInfoBar.savedQueriesModal', 'close')
+    }, [telemetryService, telemetryRecorder])
 
     return (
         <aside
@@ -180,53 +172,10 @@ export const SearchResultsInfoBar: FC<SearchResultsInfoBarProps> = props => {
             className={classNames(props.className, styles.searchResultsInfoBar)}
             data-testid="results-info-bar"
         >
-            {refFromCodySearch && codySearchInput.input && codySearchInput.translatedQuery === props.query ? (
-                <Alert variant="info" className={styles.codyFeedbackAlert}>
-                    Sourcegraph converted "<strong>{codySearchInput.input}</strong>" to "
-                    <strong>{codySearchInput.translatedQuery}</strong>".{' '}
-                    <small>
-                        <Link target="blank" to="/help/code_search/reference/queries">
-                            Complete query reference{' '}
-                            <Icon role="img" aria-label="Open in a new tab" svgPath={mdiOpenInNew} />
-                        </Link>
-                    </small>
-                    {codyFeedback === null ? (
-                        <>
-                            <Text className="my-2">Was this helpful?</Text>
-                            <div>
-                                <Button
-                                    variant="secondary"
-                                    outline={true}
-                                    size="sm"
-                                    onClick={() => collectCodyFeedback(true)}
-                                >
-                                    <Icon aria-hidden={true} className="mr-1" svgPath={mdiThumbUp} />
-                                    Yes
-                                </Button>
-                                <Button
-                                    className="ml-2"
-                                    variant="secondary"
-                                    outline={true}
-                                    size="sm"
-                                    onClick={() => collectCodyFeedback(false)}
-                                >
-                                    <Icon aria-hidden={true} className="mr-1" svgPath={mdiThumbDown} />
-                                    No
-                                </Button>
-                            </div>
-                        </>
-                    ) : (
-                        <Text className="my-2">
-                            <strong>Thanks for your feedback!</strong>
-                        </Text>
-                    )}
-                </Alert>
-            ) : null}
             <div className={styles.row}>
                 {props.stats}
 
                 <div className={styles.expander} />
-
                 <ul className="nav align-items-center">
                     <SearchActionsMenu
                         authenticatedUser={props.authenticatedUser}
@@ -304,6 +253,7 @@ export const SearchResultsInfoBar: FC<SearchResultsInfoBarProps> = props => {
                     query={query}
                     authenticatedUser={authenticatedUser}
                     onDidCancel={onSaveQueryModalClose}
+                    telemetryRecorder={telemetryRecorder}
                 />
             )}
             {showCsvExportModal && (
@@ -313,6 +263,7 @@ export const SearchResultsInfoBar: FC<SearchResultsInfoBarProps> = props => {
                     results={results}
                     sourcegraphURL={sourcegraphURL}
                     telemetryService={telemetryService}
+                    telemetryRecorder={telemetryRecorder}
                     onClose={() => setShowCsvExportModal(false)}
                 />
             )}

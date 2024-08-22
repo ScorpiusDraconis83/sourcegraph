@@ -14,6 +14,8 @@ import type {
     DeleteBatchChangesCredentialVariables,
     GlobalBatchChangesCodeHostsResult,
     GlobalBatchChangesCodeHostsVariables,
+    RefreshGitHubAppResult,
+    RefreshGitHubAppVariables,
     Scalars,
     UserBatchChangesCodeHostsResult,
     UserBatchChangesCodeHostsVariables,
@@ -24,6 +26,14 @@ export const CREDENTIAL_FIELDS_FRAGMENT = gql`
         id
         sshPublicKey
         isSiteCredential
+        gitHubApp {
+            id
+            appID
+            name
+            appURL
+            baseURL
+            logo
+        }
     }
 `
 
@@ -129,8 +139,6 @@ export const useUserBatchChangesCodeHostConnection = (
         query: USER_CODE_HOSTS,
         variables: {
             user,
-            after: null,
-            first: 15,
         },
         options: {
             fetchPolicy: 'network-only',
@@ -169,12 +177,8 @@ export const useGlobalBatchChangesCodeHostConnection = (): UseShowMorePagination
         BatchChangesCodeHostFields
     >({
         query: GLOBAL_CODE_HOSTS,
-        variables: {
-            after: null,
-            first: 30,
-        },
+        variables: {},
         options: {
-            useURL: true,
             fetchPolicy: 'network-only',
         },
         getConnection: result => {
@@ -191,3 +195,14 @@ export const CHECK_BATCH_CHANGES_CREDENTIAL = gql`
         }
     }
 `
+
+export const REFRESH_GITHUB_APP = gql`
+    mutation RefreshGitHubApp($gitHubApp: ID!) {
+        refreshGitHubApp(gitHubApp: $gitHubApp) {
+            alwaysNil
+        }
+    }
+`
+
+export const useRefreshGitHubApp = (): MutationTuple<RefreshGitHubAppResult, RefreshGitHubAppVariables> =>
+    useMutation(REFRESH_GITHUB_APP)

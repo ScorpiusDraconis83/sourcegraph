@@ -9,9 +9,8 @@ import (
 	"github.com/graph-gophers/graphql-go"
 	"github.com/graph-gophers/graphql-go/relay"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/backend"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/backend"
 	"github.com/sourcegraph/sourcegraph/internal/auth"
 	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/database"
@@ -30,22 +29,27 @@ const (
 var _ graphqlbackend.WebhooksResolver = &webhooksResolver{}
 
 type webhooksResolver struct {
-	db database.DB
+	db  database.DB
+	svc backend.WebhookService
 }
 
 func NewWebhooksResolver(db database.DB) graphqlbackend.WebhooksResolver {
-	return &webhooksResolver{db: db}
+	return &webhooksResolver{
+		db:  db,
+		svc: backend.NewWebhookService(db, keyring.Default()),
+	}
 }
 
 func (r *webhooksResolver) CreateWebhook(ctx context.Context, args *graphqlbackend.CreateWebhookArgs) (graphqlbackend.WebhookResolver, error) {
 	if auth.CheckCurrentUserIsSiteAdmin(ctx, r.db) != nil {
 		return nil, auth.ErrMustBeSiteAdmin
 	}
-	ws := backend.NewWebhookService(r.db, keyring.Default())
-	webhook, err := ws.CreateWebhook(ctx, args.Name, args.CodeHostKind, args.CodeHostURN, args.Secret)
+
+	webhook, err := r.svc.CreateWebhook(ctx, args.Name, args.CodeHostKind, args.CodeHostURN, args.Secret)
 	if err != nil {
 		return nil, err
 	}
+
 	return &webhookResolver{hook: webhook, db: r.db}, nil
 }
 
@@ -58,8 +62,8 @@ func (r *webhooksResolver) DeleteWebhook(ctx context.Context, args *graphqlbacke
 	if err != nil {
 		return nil, err
 	}
-	ws := backend.NewWebhookService(r.db, keyring.Default())
-	err = ws.DeleteWebhook(ctx, id)
+
+	err = r.svc.DeleteWebhook(ctx, id)
 	if err != nil {
 		return nil, errors.Wrap(err, "delete webhook")
 	}
@@ -76,7 +80,6 @@ func (r *webhooksResolver) UpdateWebhook(ctx context.Context, args *graphqlbacke
 		return nil, err
 	}
 
-	ws := backend.NewWebhookService(r.db, keyring.Default())
 	var name string
 	if args.Name != nil {
 		name = *args.Name
@@ -90,7 +93,7 @@ func (r *webhooksResolver) UpdateWebhook(ctx context.Context, args *graphqlbacke
 		codeHostURN = *args.CodeHostURN
 	}
 
-	webhook, err := ws.UpdateWebhook(ctx, whID, name, codeHostKind, codeHostURN, args.Secret)
+	webhook, err := r.svc.UpdateWebhook(ctx, whID, name, codeHostKind, codeHostURN, args.Secret)
 	if err != nil {
 		return nil, errors.Wrap(err, "update webhook")
 	}
@@ -193,16 +196,16 @@ func (c *webhooksConnectionResolver) TotalCount(ctx context.Context) (int32, err
 	return int32(count), nil
 }
 
-func (c *webhooksConnectionResolver) PageInfo(ctx context.Context) (*graphqlutil.PageInfo, error) {
+func (c *webhooksConnectionResolver) PageInfo(ctx context.Context) (*gqlutil.PageInfo, error) {
 	_, next, err := c.compute(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if next == 0 {
-		return graphqlutil.HasNextPage(false), nil
+		return gqlutil.HasNextPage(false), nil
 	}
 
-	return graphqlutil.NextPageCursor(MarshalWebhookCursor(
+	return gqlutil.NextPageCursor(MarshalWebhookCursor(
 		&types.Cursor{
 			Column:    c.opt.Cursor.Column,
 			Value:     fmt.Sprintf("%d", next),
@@ -286,6 +289,7 @@ func (r *webhookResolver) CodeHostKind() string {
 
 func (r *webhookResolver) Secret(ctx context.Context) (*string, error) {
 	// Secret is optional
+	// TODO: Verify this is nil and not "" after creation from the webapp.
 	if r.hook.Secret == nil {
 		return nil, nil
 	}

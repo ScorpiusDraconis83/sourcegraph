@@ -11,6 +11,7 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/dependencies"
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/uploads/shared"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
+	dbworkermocks "github.com/sourcegraph/sourcegraph/internal/workerutil/dbworker/store/mocks"
 	"github.com/sourcegraph/sourcegraph/lib/codeintel/precise"
 )
 
@@ -19,7 +20,7 @@ func init() {
 }
 
 func TestDependencySyncSchedulerJVM(t *testing.T) {
-	mockWorkerStore := NewMockWorkerStore[dependencySyncingJob]()
+	mockWorkerStore := dbworkermocks.NewMockStore[dependencySyncingJob]()
 	mockUploadsSvc := NewMockUploadService()
 	mockDepedenciesSvc := NewMockDependenciesService()
 	mockStore := NewMockStore()
@@ -27,7 +28,7 @@ func TestDependencySyncSchedulerJVM(t *testing.T) {
 	mockScanner := NewMockPackageReferenceScanner()
 	mockUploadsSvc.ReferencesForUploadFunc.SetDefaultReturn(mockScanner, nil)
 	mockUploadsSvc.GetUploadByIDFunc.SetDefaultReturn(shared.Upload{ID: 42, RepositoryID: 50, Indexer: "scip-java"}, true, nil)
-	mockScanner.NextFunc.PushReturn(shared.PackageReference{Package: shared.Package{DumpID: 42, Scheme: dependencies.JVMPackagesScheme, Name: "name1", Version: "v2.2.0"}}, true, nil)
+	mockScanner.NextFunc.PushReturn(shared.PackageReference{Package: shared.Package{UploadID: 42, Scheme: dependencies.JVMPackagesScheme, Name: "name1", Version: "v2.2.0"}}, true, nil)
 
 	handler := dependencySyncSchedulerHandler{
 		uploadsSvc:  mockUploadsSvc,
@@ -70,7 +71,7 @@ func TestDependencySyncSchedulerJVM(t *testing.T) {
 
 func TestDependencySyncSchedulerGomod(t *testing.T) {
 	t.Skip()
-	mockWorkerStore := NewMockWorkerStore[dependencySyncingJob]()
+	mockWorkerStore := dbworkermocks.NewMockStore[dependencySyncingJob]()
 	mockUploadsSvc := NewMockUploadService()
 	mockDepedenciesSvc := NewMockDependenciesService()
 	mockStore := NewMockStore()
@@ -78,7 +79,7 @@ func TestDependencySyncSchedulerGomod(t *testing.T) {
 	mockScanner := NewMockPackageReferenceScanner()
 	mockUploadsSvc.ReferencesForUploadFunc.SetDefaultReturn(mockScanner, nil)
 	mockUploadsSvc.GetUploadByIDFunc.SetDefaultReturn(shared.Upload{ID: 42, RepositoryID: 50, Indexer: "lsif-go"}, true, nil)
-	mockScanner.NextFunc.PushReturn(shared.PackageReference{Package: shared.Package{DumpID: 42, Scheme: "gomod", Name: "name1", Version: "v2.2.0"}}, true, nil)
+	mockScanner.NextFunc.PushReturn(shared.PackageReference{Package: shared.Package{UploadID: 42, Scheme: "gomod", Name: "name1", Version: "v2.2.0"}}, true, nil)
 
 	handler := dependencySyncSchedulerHandler{
 		uploadsSvc:  mockUploadsSvc,

@@ -7,10 +7,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/envvar"
 	"github.com/sourcegraph/sourcegraph/internal/actor"
 	"github.com/sourcegraph/sourcegraph/internal/api"
+	"github.com/sourcegraph/sourcegraph/internal/auth"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbmocks"
+	"github.com/sourcegraph/sourcegraph/internal/dotcom"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 )
@@ -119,9 +120,7 @@ func TestSettingsMutation(t *testing.T) {
 		users := dbmocks.NewMockUserStore()
 		db.UsersFunc.SetDefaultReturn(users)
 
-		orig := envvar.SourcegraphDotComMode()
-		envvar.MockSourcegraphDotComMode(true)
-		defer envvar.MockSourcegraphDotComMode(orig) // reset
+		dotcom.MockSourcegraphDotComMode(t, true)
 
 		tests := []struct {
 			name  string
@@ -144,21 +143,12 @@ func TestSettingsMutation(t *testing.T) {
 					})
 				},
 			},
-			{
-				name: "site admin",
-				ctx:  actor.WithActor(context.Background(), &actor.Actor{UID: 2}),
-				setup: func() {
-					users.GetByIDFunc.SetDefaultHook(func(ctx context.Context, id int32) (*types.User, error) {
-						return &types.User{ID: id, SiteAdmin: true}, nil
-					})
-				},
-			},
 		}
 		for _, test := range tests {
 			t.Run(test.name, func(t *testing.T) {
 				test.setup()
 
-				_, err := newSchemaResolver(db, gitserver.NewTestClient(t)).SettingsMutation(
+				_, err := newSchemaResolver(db, gitserver.NewTestClient(t), nil).SettingsMutation(
 					test.ctx,
 					&settingsMutationArgs{
 						Input: &settingsMutationGroupInput{
@@ -167,7 +157,7 @@ func TestSettingsMutation(t *testing.T) {
 					},
 				)
 				got := fmt.Sprintf("%v", err)
-				want := "must be authenticated as user with id 1"
+				want := auth.ErrMustBeSiteAdminOrSameUser.Error()
 				assert.Equal(t, want, got)
 			})
 		}

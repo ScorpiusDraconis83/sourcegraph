@@ -8,11 +8,11 @@ import (
 	"github.com/graph-gophers/graphql-go"
 	"github.com/graph-gophers/graphql-go/relay"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/actor"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/deviceid"
 	"github.com/sourcegraph/sourcegraph/internal/featureflag"
+	"github.com/sourcegraph/sourcegraph/internal/gqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/rbac"
 	"github.com/sourcegraph/sourcegraph/internal/usagestats"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
@@ -188,10 +188,10 @@ func (r *schemaResolver) RepoMeta(ctx context.Context) (*repoMetaResolver, error
 
 type RepoMetadataKeysArgs struct {
 	database.RepoKVPListKeysOptions
-	graphqlutil.ConnectionResolverArgs
+	gqlutil.ConnectionResolverArgs
 }
 
-func (r *repoMetaResolver) Keys(ctx context.Context, args *RepoMetadataKeysArgs) (*graphqlutil.ConnectionResolver[string], error) {
+func (r *repoMetaResolver) Keys(ctx context.Context, args *RepoMetadataKeysArgs) (*gqlutil.ConnectionResolver[string], error) {
 	if err := rbac.CheckCurrentUserHasPermission(ctx, r.db, rbac.RepoMetadataWritePermission); err != nil {
 		return nil, err
 	}
@@ -201,21 +201,18 @@ func (r *repoMetaResolver) Keys(ctx context.Context, args *RepoMetadataKeysArgs)
 	}
 
 	listOptions := &args.RepoKVPListKeysOptions
-	if listOptions == nil {
-		listOptions = &database.RepoKVPListKeysOptions{}
-	}
 	connectionStore := &repoMetaKeysConnectionStore{
 		db:          r.db,
 		listOptions: *listOptions,
 	}
 
 	reverse := false
-	connectionOptions := graphqlutil.ConnectionResolverOptions{
+	connectionOptions := gqlutil.ConnectionResolverOptions{
 		Reverse:   &reverse,
 		OrderBy:   database.OrderBy{{Field: string(database.RepoKVPListKeyColumn)}},
 		Ascending: true,
 	}
-	return graphqlutil.NewConnectionResolver[string](connectionStore, &args.ConnectionResolverArgs, &connectionOptions)
+	return gqlutil.NewConnectionResolver[string](connectionStore, &args.ConnectionResolverArgs, &connectionOptions)
 }
 
 type repoMetaKeysConnectionStore struct {
@@ -261,10 +258,10 @@ type repoMetaKeyResolver struct {
 
 type RepoMetadataValuesArgs struct {
 	Query *string
-	graphqlutil.ConnectionResolverArgs
+	gqlutil.ConnectionResolverArgs
 }
 
-func (r *repoMetaKeyResolver) Values(ctx context.Context, args *RepoMetadataValuesArgs) (*graphqlutil.ConnectionResolver[string], error) {
+func (r *repoMetaKeyResolver) Values(ctx context.Context, args *RepoMetadataValuesArgs) (*gqlutil.ConnectionResolver[string], error) {
 	if err := rbac.CheckCurrentUserHasPermission(ctx, r.db, rbac.RepoMetadataWritePermission); err != nil {
 		return nil, err
 	}
@@ -282,12 +279,12 @@ func (r *repoMetaKeyResolver) Values(ctx context.Context, args *RepoMetadataValu
 	}
 
 	reverse := false
-	connectionOptions := graphqlutil.ConnectionResolverOptions{
+	connectionOptions := gqlutil.ConnectionResolverOptions{
 		Reverse:   &reverse,
 		OrderBy:   database.OrderBy{{Field: string(database.RepoKVPListValueColumn)}},
 		Ascending: true,
 	}
-	return graphqlutil.NewConnectionResolver[string](connectionStore, &args.ConnectionResolverArgs, &connectionOptions)
+	return gqlutil.NewConnectionResolver[string](connectionStore, &args.ConnectionResolverArgs, &connectionOptions)
 }
 
 type repoMetaValuesConnectionStore struct {

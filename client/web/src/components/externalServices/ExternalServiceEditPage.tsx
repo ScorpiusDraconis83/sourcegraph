@@ -2,6 +2,7 @@ import React, { type FC, useEffect, useState, useCallback, useMemo } from 'react
 
 import { useNavigate, useParams } from 'react-router-dom'
 
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { Container, ErrorAlert, PageHeader, ButtonLink } from '@sourcegraph/wildcard'
 
@@ -19,9 +20,8 @@ import {
 import { getBreadCrumbs } from './breadCrumbs'
 import { ExternalServiceForm } from './ExternalServiceForm'
 import { resolveExternalServiceCategory } from './externalServices'
-import { ExternalServiceWebhook } from './ExternalServiceWebhook'
 
-interface Props extends TelemetryProps {
+interface Props extends TelemetryProps, TelemetryV2Props {
     externalServicesFromFile: boolean
     allowEditExternalServicesWithFile: boolean
 
@@ -34,13 +34,15 @@ export const ExternalServiceEditPage: FC<Props> = ({
     externalServicesFromFile,
     allowEditExternalServicesWithFile,
     autoFocusForm,
+    telemetryRecorder,
 }) => {
     const { externalServiceID } = useParams()
     const navigate = useNavigate()
 
     useEffect(() => {
         telemetryService.logViewEvent('SiteAdminExternalService')
-    }, [telemetryService])
+        telemetryRecorder.recordEvent('admin.codeHostConnection.edit', 'view')
+    }, [telemetryService, telemetryRecorder])
 
     const [externalService, setExternalService] = useState<ExternalServiceFieldsWithConfig>()
 
@@ -111,7 +113,9 @@ export const ExternalServiceEditPage: FC<Props> = ({
                         <CreatedByAndUpdatedByInfoByline
                             createdAt={externalService.createdAt}
                             updatedAt={externalService.updatedAt}
-                            noAuthor={true}
+                            createdBy={externalService.creator}
+                            updatedBy={externalService.lastUpdater}
+                            type={externalService.__typename}
                         />
                     }
                     className="mb-3"
@@ -142,9 +146,9 @@ export const ExternalServiceEditPage: FC<Props> = ({
                         externalServicesFromFile={externalServicesFromFile}
                         allowEditExternalServicesWithFile={allowEditExternalServicesWithFile}
                         additionalFormComponent={externalServiceCategory.additionalFormComponent}
+                        telemetryRecorder={telemetryRecorder}
                     />
                 )}
-                <ExternalServiceWebhook externalService={externalService} className="mt-3" />
             </Container>
         )
     }

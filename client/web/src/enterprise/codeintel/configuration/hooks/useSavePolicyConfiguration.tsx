@@ -15,9 +15,9 @@ const CREATE_POLICY_CONFIGURATION = gql`
         $retentionDurationHours: Int
         $retainIntermediateCommits: Boolean!
         $indexingEnabled: Boolean!
+        $syntacticIndexingEnabled: Boolean!
         $indexCommitMaxAgeHours: Int
         $indexIntermediateCommits: Boolean!
-        $embeddingsEnabled: Boolean!
     ) {
         createCodeIntelligenceConfigurationPolicy(
             repository: $repositoryId
@@ -29,9 +29,9 @@ const CREATE_POLICY_CONFIGURATION = gql`
             retentionDurationHours: $retentionDurationHours
             retainIntermediateCommits: $retainIntermediateCommits
             indexingEnabled: $indexingEnabled
+            syntacticIndexingEnabled: $syntacticIndexingEnabled
             indexCommitMaxAgeHours: $indexCommitMaxAgeHours
             indexIntermediateCommits: $indexIntermediateCommits
-            embeddingsEnabled: $embeddingsEnabled
         ) {
             id
         }
@@ -49,9 +49,9 @@ const UPDATE_POLICY_CONFIGURATION = gql`
         $retentionDurationHours: Int
         $retainIntermediateCommits: Boolean!
         $indexingEnabled: Boolean!
+        $syntacticIndexingEnabled: Boolean!
         $indexCommitMaxAgeHours: Int
         $indexIntermediateCommits: Boolean!
-        $embeddingsEnabled: Boolean!
     ) {
         updateCodeIntelligenceConfigurationPolicy(
             id: $id
@@ -63,9 +63,9 @@ const UPDATE_POLICY_CONFIGURATION = gql`
             retentionDurationHours: $retentionDurationHours
             retainIntermediateCommits: $retainIntermediateCommits
             indexingEnabled: $indexingEnabled
+            syntacticIndexingEnabled: $syntacticIndexingEnabled
             indexCommitMaxAgeHours: $indexCommitMaxAgeHours
             indexIntermediateCommits: $indexIntermediateCommits
-            embeddingsEnabled: $embeddingsEnabled
         ) {
             alwaysNil
         }

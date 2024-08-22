@@ -8,6 +8,7 @@ go_library(
         "README.md",
         "config.lua",
         "embed.go",
+        "dotnet.lua",
         "go.lua",
         "indexes.lua",
         "java.lua",
@@ -24,5 +25,6 @@ go_library(
         "BUILD.bazel",
     ],
     importpath = "github.com/sourcegraph/sourcegraph/internal/codeintel/autoindexing/internal/inference/lua",
+    tags = [TAG_PLATFORM_GRAPH],
     visibility = ["//:__subpackages__"],
 )

@@ -1,5 +1,7 @@
 import type { Decorator, StoryFn, Meta } from '@storybook/react'
 
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
+
 import { WebStory } from '../../../components/WebStory'
 import { MultiSelectContextProvider } from '../MultiSelectContext'
 
@@ -10,11 +12,7 @@ const decorator: Decorator = story => <div className="p-3 container">{story()}</
 const config: Meta = {
     title: 'web/batches/preview/CreateUpdateBatchChangeAlert',
     decorators: [decorator],
-    parameters: {
-        chromatic: {
-            viewports: [320, 576, 978, 1440],
-        },
-    },
+    parameters: {},
     argTypes: {
         viewerCanAdminister: {
             control: { type: 'boolean' },
@@ -36,6 +34,7 @@ export const Create: StoryFn = args => (
                 toBeArchived={18}
                 batchChange={null}
                 viewerCanAdminister={args.viewerCanAdminister}
+                telemetryRecorder={noOpTelemetryRecorder}
             />
         )}
     </WebStory>
@@ -50,6 +49,7 @@ export const Update: StoryFn = args => (
                 toBeArchived={199}
                 batchChange={{ id: '123', name: 'awesome-batch-change', url: 'http://test.test/awesome' }}
                 viewerCanAdminister={args.viewerCanAdminister}
+                telemetryRecorder={noOpTelemetryRecorder}
             />
         )}
     </WebStory>
@@ -65,6 +65,7 @@ export const Disabled: StoryFn = args => (
                     toBeArchived={199}
                     batchChange={{ id: '123', name: 'awesome-batch-change', url: 'http://test.test/awesome' }}
                     viewerCanAdminister={args.viewerCanAdminister}
+                    telemetryRecorder={noOpTelemetryRecorder}
                 />
             </MultiSelectContextProvider>
         )}

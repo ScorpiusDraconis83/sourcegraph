@@ -16,9 +16,9 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/env"
 	"github.com/sourcegraph/sourcegraph/internal/grpc/chunk"
 	"github.com/sourcegraph/sourcegraph/internal/grpc/defaults"
-	telemetrygatewayv1 "github.com/sourcegraph/sourcegraph/internal/telemetrygateway/v1"
 	"github.com/sourcegraph/sourcegraph/internal/trace"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
+	telemetrygatewayv1 "github.com/sourcegraph/sourcegraph/lib/telemetrygateway/v1"
 )
 
 type Exporter interface {
@@ -46,6 +46,7 @@ func NewExporter(
 	} else {
 		opts = defaults.ExternalDialOptions(logger)
 	}
+	//lint:ignore SA1019 DialContext will be supported throughout 1.x
 	conn, err := grpc.DialContext(ctx, exportURL.Host, opts...)
 	if err != nil {
 		return nil, errors.Wrap(err, "dialing telemetry gateway")

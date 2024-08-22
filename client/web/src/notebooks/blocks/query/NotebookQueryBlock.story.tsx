@@ -2,8 +2,10 @@ import type { Decorator, StoryFn, Meta } from '@storybook/react'
 import { noop } from 'lodash'
 import { of } from 'rxjs'
 
+import { SearchPatternType } from '@sourcegraph/shared/src/graphql-operations'
 import type { AggregateStreamingSearchResults } from '@sourcegraph/shared/src/search/stream'
 import { EMPTY_SETTINGS_CASCADE } from '@sourcegraph/shared/src/settings/settings'
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { NOOP_TELEMETRY_SERVICE } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import {
     HIGHLIGHTED_FILE_LINES_LONG,
@@ -63,9 +65,11 @@ export const Default: StoryFn = () => (
                 searchContextsEnabled={true}
                 ownEnabled={true}
                 telemetryService={NOOP_TELEMETRY_SERVICE}
-                fetchHighlightedFileLineRanges={() => of(HIGHLIGHTED_FILE_LINES_LONG)}
+                telemetryRecorder={noOpTelemetryRecorder}
+                fetchHighlightedFileLineRanges={() => of([HIGHLIGHTED_FILE_LINES_LONG])}
                 settingsCascade={EMPTY_SETTINGS_CASCADE}
                 platformContext={NOOP_PLATFORM_CONTEXT}
+                patternType={SearchPatternType.standard}
             />
         )}
     </WebStory>
@@ -87,10 +91,12 @@ export const Selected: StoryFn = () => (
                 searchContextsEnabled={true}
                 ownEnabled={true}
                 telemetryService={NOOP_TELEMETRY_SERVICE}
-                fetchHighlightedFileLineRanges={() => of(HIGHLIGHTED_FILE_LINES_LONG)}
+                telemetryRecorder={noOpTelemetryRecorder}
+                fetchHighlightedFileLineRanges={() => of([HIGHLIGHTED_FILE_LINES_LONG])}
                 settingsCascade={EMPTY_SETTINGS_CASCADE}
                 authenticatedUser={null}
                 platformContext={NOOP_PLATFORM_CONTEXT}
+                patternType={SearchPatternType.standard}
             />
         )}
     </WebStory>
@@ -112,10 +118,12 @@ export const ReadOnlySelected: StoryFn = () => (
                 searchContextsEnabled={true}
                 ownEnabled={true}
                 telemetryService={NOOP_TELEMETRY_SERVICE}
-                fetchHighlightedFileLineRanges={() => of(HIGHLIGHTED_FILE_LINES_LONG)}
+                telemetryRecorder={noOpTelemetryRecorder}
+                fetchHighlightedFileLineRanges={() => of([HIGHLIGHTED_FILE_LINES_LONG])}
                 settingsCascade={EMPTY_SETTINGS_CASCADE}
                 authenticatedUser={null}
                 platformContext={NOOP_PLATFORM_CONTEXT}
+                patternType={SearchPatternType.standard}
             />
         )}
     </WebStory>

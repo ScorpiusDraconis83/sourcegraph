@@ -14,13 +14,12 @@ import (
 	"github.com/graph-gophers/graphql-go"
 	"github.com/graph-gophers/graphql-go/relay"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/envvar"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/globals"
 	sgactor "github.com/sourcegraph/sourcegraph/internal/actor"
 	"github.com/sourcegraph/sourcegraph/internal/auth"
 	"github.com/sourcegraph/sourcegraph/internal/authz/permssync"
 	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/database"
+	"github.com/sourcegraph/sourcegraph/internal/dotcom"
 	"github.com/sourcegraph/sourcegraph/internal/errcode"
 	"github.com/sourcegraph/sourcegraph/internal/txemail"
 	"github.com/sourcegraph/sourcegraph/internal/txemail/txtypes"
@@ -52,7 +51,7 @@ func getUserToInviteToOrganization(ctx context.Context, db database.DB, username
 
 	if _, err := db.OrgMembers().GetByOrgIDAndUserID(ctx, orgID, userToInvite.ID); err == nil {
 		return nil, "", errors.New("user is already a member of the organization")
-	} else if !errors.HasType(err, &database.ErrOrgMemberNotFound{}) {
+	} else if !errors.HasType[*database.ErrOrgMemberNotFound](err) {
 		return nil, "", err
 	}
 	return userToInvite, userEmailAddress, nil
@@ -305,7 +304,7 @@ func orgInvitationURLLegacy(org *types.Org, relative bool) string {
 	if relative {
 		return path
 	}
-	return globals.ExternalURL().ResolveReference(&url.URL{Path: path}).String()
+	return conf.ExternalURLParsed().ResolveReference(&url.URL{Path: path}).String()
 }
 
 func orgInvitationURL(invitation database.OrgInvitation, relative bool) (string, error) {
@@ -320,7 +319,7 @@ func orgInvitationURL(invitation database.OrgInvitation, relative bool) (string,
 	if relative {
 		return path, nil
 	}
-	return globals.ExternalURL().ResolveReference(&url.URL{Path: path}).String(), nil
+	return conf.ExternalURLParsed().ResolveReference(&url.URL{Path: path}).String(), nil
 }
 
 func createInvitationJWT(orgID int32, invitationID int64, senderID int32, expiryTime time.Time) (string, error) {
@@ -331,7 +330,7 @@ func createInvitationJWT(orgID int32, invitationID int64, senderID int32, expiry
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS512, &orgInvitationClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    globals.ExternalURL().String(),
+			Issuer:    conf.ExternalURLParsed().String(),
 			ExpiresAt: jwt.NewNumericDate(expiryTime),
 			Subject:   strconv.FormatInt(int64(orgID), 10),
 		},
@@ -355,7 +354,7 @@ func createInvitationJWT(orgID int32, invitationID int64, senderID int32, expiry
 // respond to the invitation. Callers should check conf.CanSendEmail() if they want to return a nice
 // error if sending email is not enabled.
 func sendOrgInvitationNotification(ctx context.Context, db database.DB, org *types.Org, sender *types.User, recipientEmail string, invitationURL string, expiryTime time.Time) error {
-	if envvar.SourcegraphDotComMode() {
+	if dotcom.SourcegraphDotComMode() {
 		// Basic abuse prevention for Sourcegraph.com.
 
 		// Only allow email-verified users to send invites.

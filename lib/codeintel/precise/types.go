@@ -119,7 +119,10 @@ type DocumentPathRangeID struct {
 // Loocation represents a range within a particular document relative to its
 // containing bundle.
 type LocationData struct {
-	URI            string
+	// DocumentPath is currently used as an UploadRelPath elsewhere
+	// in the code, but not refactoring this because this type is used in a lot
+	// of places.
+	DocumentPath   string
 	StartLine      int
 	StartCharacter int
 	EndLine        int
@@ -204,7 +207,7 @@ type DocumentationMapping struct {
 type DocumentationSearchResult struct {
 	ID        int64
 	RepoID    int32
-	DumpID    int32
+	UploadID  int32
 	DumpRoot  string
 	PathID    string
 	Detail    string

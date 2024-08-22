@@ -10,8 +10,8 @@ import (
 
 	"github.com/sourcegraph/log"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/envvar"
 	"github.com/sourcegraph/sourcegraph/internal/conf"
+	"github.com/sourcegraph/sourcegraph/internal/dotcom"
 	"github.com/sourcegraph/sourcegraph/internal/search"
 	"github.com/sourcegraph/sourcegraph/internal/search/client"
 	"github.com/sourcegraph/sourcegraph/internal/search/job"
@@ -26,7 +26,6 @@ func run(w io.Writer, args []string) error {
 
 	version := fs.String("version", "V3", "the version of the search API to use")
 	patternType := fs.String("pattern_type", "", "optionally specify query.PatternType (regex, literal, ...)")
-	smartSearch := fs.Bool("smart_search", false, "enable smart search mode instead of precise")
 	dotCom := fs.Bool("dotcom", false, "enable sourcegraph.com parsing rules")
 
 	fs.Parse(args[1:])
@@ -37,13 +36,10 @@ func run(w io.Writer, args []string) error {
 	// Further argument parsing
 	query := fs.Arg(0)
 	mode := search.Precise
-	if *smartSearch {
-		mode = search.SmartSearch
-	}
 
 	// Sourcegraph infra we need
 	conf.Mock(&conf.Unified{})
-	envvar.MockSourcegraphDotComMode(*dotCom)
+	dotcom.MockSourcegraphDotComMode(fakeTB{}, *dotCom)
 	logger := log.Scoped("search-plan")
 
 	cli := client.Mocked(job.RuntimeClients{Logger: logger})
@@ -72,6 +68,10 @@ func run(w io.Writer, args []string) error {
 
 	return nil
 }
+
+type fakeTB struct{}
+
+func (fakeTB) Cleanup(func()) {}
 
 func main() {
 	liblog := log.Init(log.Resource{Name: "search-plan"})

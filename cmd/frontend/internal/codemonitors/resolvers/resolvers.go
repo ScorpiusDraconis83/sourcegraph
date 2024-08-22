@@ -3,19 +3,19 @@ package resolvers
 import (
 	"context"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/graph-gophers/graphql-go"
 	"github.com/graph-gophers/graphql-go/relay"
 	"github.com/sourcegraph/log"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/envvar"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/auth"
 	"github.com/sourcegraph/sourcegraph/internal/codemonitors"
 	"github.com/sourcegraph/sourcegraph/internal/codemonitors/background"
 	"github.com/sourcegraph/sourcegraph/internal/database"
+	"github.com/sourcegraph/sourcegraph/internal/dotcom"
 	"github.com/sourcegraph/sourcegraph/internal/gqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/httpcli"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
@@ -32,13 +32,23 @@ type Resolver struct {
 	db     database.DB
 }
 
-func (r *Resolver) Now() time.Time {
+func (r *Resolver) now() time.Time {
 	return r.db.CodeMonitors().Now()
+}
+
+func (r *Resolver) isEnabled() error {
+	if !codemonitors.IsEnabled() {
+		return errors.New("code monitoring is not enabled")
+	}
+	return nil
 }
 
 func (r *Resolver) NodeResolvers() map[string]graphqlbackend.NodeByIDFunc {
 	return map[string]graphqlbackend.NodeByIDFunc{
 		MonitorKind: func(ctx context.Context, id graphql.ID) (graphqlbackend.Node, error) {
+			if err := r.isEnabled(); err != nil {
+				return nil, err
+			}
 			return r.MonitorByID(ctx, id)
 		},
 		// TODO: These kinds are currently not implemented, but need a node resolver.
@@ -67,16 +77,19 @@ func (r *Resolver) Monitors(ctx context.Context, userID *int32, args *graphqlbac
 		return nil, err
 	}
 
-	ms, err := r.db.CodeMonitors().ListMonitors(ctx, database.ListMonitorsOpts{
-		UserID: userID,
-		First:  pointers.Ptr(int(newArgs.First)),
-		After:  intPtrToInt64Ptr(after),
-	})
+	listOpts := database.ListMonitorsOpts{
+		UserID:       userID,
+		First:        pointers.Ptr(int(newArgs.First)),
+		After:        intPtrToInt64Ptr(after),
+		SkipOrphaned: true,
+	}
+
+	ms, err := r.db.CodeMonitors().ListMonitors(ctx, listOpts)
 	if err != nil {
 		return nil, err
 	}
 
-	totalCount, err := r.db.CodeMonitors().CountMonitors(ctx, userID)
+	totalCount, err := r.db.CodeMonitors().CountMonitors(ctx, listOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +135,7 @@ func (r *Resolver) CreateCodeMonitor(ctx context.Context, args *graphqlbackend.C
 		return nil, err
 	}
 
-	userID, orgID, err := graphqlbackend.UnmarshalNamespaceToIDs(args.Monitor.Namespace)
+	namespace, err := graphqlbackend.UnmarshalNamespaceToIDs(args.Monitor.Namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -142,8 +155,8 @@ func (r *Resolver) CreateCodeMonitor(ctx context.Context, args *graphqlbackend.C
 		m, err := tx.db.CodeMonitors().CreateMonitor(ctx, database.MonitorArgs{
 			Description:     args.Monitor.Description,
 			Enabled:         args.Monitor.Enabled,
-			NamespaceUserID: userID,
-			NamespaceOrgID:  orgID,
+			NamespaceUserID: namespace.User,
+			NamespaceOrgID:  namespace.Org,
 		})
 		if err != nil {
 			return err
@@ -344,12 +357,12 @@ func (r *Resolver) deleteActions(ctx context.Context, monitorID int64, ids []gra
 
 func (r *Resolver) createRecipients(ctx context.Context, emailID int64, recipients []graphql.ID) error {
 	for _, recipient := range recipients {
-		userID, orgID, err := graphqlbackend.UnmarshalNamespaceToIDs(recipient)
+		namespace, err := graphqlbackend.UnmarshalNamespaceToIDs(recipient)
 		if err != nil {
 			return errors.Wrap(err, "UnmarshalNamespaceID")
 		}
 
-		_, err = r.db.CodeMonitors().CreateRecipient(ctx, emailID, userID, orgID)
+		_, err = r.db.CodeMonitors().CreateRecipient(ctx, emailID, namespace.User, namespace.Org)
 		if err != nil {
 			return err
 		}
@@ -523,7 +536,7 @@ func (r *Resolver) updateCodeMonitor(ctx context.Context, rawDB database.DB, arg
 		return nil, err
 	}
 
-	userID, orgID, err := graphqlbackend.UnmarshalNamespaceToIDs(args.Monitor.Update.Namespace)
+	namespace, err := graphqlbackend.UnmarshalNamespaceToIDs(args.Monitor.Update.Namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -531,8 +544,8 @@ func (r *Resolver) updateCodeMonitor(ctx context.Context, rawDB database.DB, arg
 	mo, err := r.db.CodeMonitors().UpdateMonitor(ctx, monitorID, database.MonitorArgs{
 		Description:     args.Monitor.Update.Description,
 		Enabled:         args.Monitor.Update.Enabled,
-		NamespaceUserID: userID,
-		NamespaceOrgID:  orgID,
+		NamespaceUserID: namespace.User,
+		NamespaceOrgID:  namespace.Org,
 	})
 	if err != nil {
 		return nil, err
@@ -658,7 +671,7 @@ func (r *Resolver) withTransact(ctx context.Context, f func(*Resolver) error) er
 
 // isAllowedToEdit checks whether an actor is allowed to edit a given monitor.
 func (r *Resolver) isAllowedToEdit(ctx context.Context, id graphql.ID) error {
-	if envvar.SourcegraphDotComMode() {
+	if dotcom.SourcegraphDotComMode() {
 		return errors.New("Code Monitors are disabled on sourcegraph.com")
 	}
 	monitorID, err := unmarshalMonitorID(id)
@@ -679,9 +692,6 @@ func (r *Resolver) isAllowedToEdit(ctx context.Context, id graphql.ID) error {
 // - she is a member of the organization which is the owner of the monitor
 // - she is a site-admin
 func (r *Resolver) isAllowedToCreate(ctx context.Context, owner graphql.ID) error {
-	if envvar.SourcegraphDotComMode() {
-		return errors.New("Code Monitors are disabled on sourcegraph.com")
-	}
 	var ownerInt32 int32
 	err := relay.UnmarshalSpec(owner, &ownerInt32)
 	if err != nil {
@@ -722,11 +732,11 @@ func (m *monitorConnection) TotalCount() int32 {
 	return m.totalCount
 }
 
-func (m *monitorConnection) PageInfo() *graphqlutil.PageInfo {
+func (m *monitorConnection) PageInfo() *gqlutil.PageInfo {
 	if len(m.monitors) == 0 || !m.hasNextPage {
-		return graphqlutil.HasNextPage(false)
+		return gqlutil.HasNextPage(false)
 	}
-	return graphqlutil.NextPageCursor(string(m.monitors[len(m.monitors)-1].ID()))
+	return gqlutil.NextPageCursor(string(m.monitors[len(m.monitors)-1].ID()))
 }
 
 const (
@@ -943,11 +953,11 @@ func (a *monitorTriggerEventConnection) TotalCount() int32 {
 	return a.totalCount
 }
 
-func (a *monitorTriggerEventConnection) PageInfo() *graphqlutil.PageInfo {
+func (a *monitorTriggerEventConnection) PageInfo() *gqlutil.PageInfo {
 	if len(a.events) == 0 {
-		return graphqlutil.HasNextPage(false)
+		return gqlutil.HasNextPage(false)
 	}
-	return graphqlutil.NextPageCursor(string(a.events[len(a.events)-1].ID()))
+	return gqlutil.NextPageCursor(string(a.events[len(a.events)-1].ID()))
 }
 
 // MonitorTriggerEvent
@@ -991,7 +1001,16 @@ func (m *monitorTriggerEvent) ResultCount() int32 {
 }
 
 func (m *monitorTriggerEvent) Message() *string {
-	return m.FailureMessage
+	// Print failure message first
+	var msg string
+	if m.FailureMessage != nil {
+		msg = *m.FailureMessage + "\n"
+	}
+	for _, log := range m.Logs {
+		msg += log.Message + "\n"
+	}
+	msg = strings.TrimSpace(msg)
+	return &msg
 }
 
 func (m *monitorTriggerEvent) Timestamp() (gqlutil.DateTime, error) {
@@ -1019,13 +1038,13 @@ func (a *monitorActionConnection) TotalCount() int32 {
 	return a.totalCount
 }
 
-func (a *monitorActionConnection) PageInfo() *graphqlutil.PageInfo {
+func (a *monitorActionConnection) PageInfo() *gqlutil.PageInfo {
 	if len(a.actions) == 0 {
-		return graphqlutil.HasNextPage(false)
+		return gqlutil.HasNextPage(false)
 	}
 	last := a.actions[len(a.actions)-1]
 	if email, ok := last.ToMonitorEmail(); ok {
-		return graphqlutil.NextPageCursor(string(email.ID()))
+		return gqlutil.NextPageCursor(string(email.ID()))
 	}
 	panic("found non-email monitor action")
 }
@@ -1300,11 +1319,11 @@ func (a *monitorActionEmailRecipientsConnection) TotalCount() int32 {
 	return a.totalCount
 }
 
-func (a *monitorActionEmailRecipientsConnection) PageInfo() *graphqlutil.PageInfo {
+func (a *monitorActionEmailRecipientsConnection) PageInfo() *gqlutil.PageInfo {
 	if len(a.recipients) == 0 {
-		return graphqlutil.HasNextPage(false)
+		return gqlutil.HasNextPage(false)
 	}
-	return graphqlutil.NextPageCursor(a.nextPageCursor)
+	return gqlutil.NextPageCursor(a.nextPageCursor)
 }
 
 // MonitorActionEventConnection
@@ -1321,11 +1340,11 @@ func (a *monitorActionEventConnection) TotalCount() int32 {
 	return a.totalCount
 }
 
-func (a *monitorActionEventConnection) PageInfo() *graphqlutil.PageInfo {
+func (a *monitorActionEventConnection) PageInfo() *gqlutil.PageInfo {
 	if len(a.events) == 0 {
-		return graphqlutil.HasNextPage(false)
+		return gqlutil.HasNextPage(false)
 	}
-	return graphqlutil.NextPageCursor(string(a.events[len(a.events)-1].ID()))
+	return gqlutil.NextPageCursor(string(a.events[len(a.events)-1].ID()))
 }
 
 // MonitorEvent

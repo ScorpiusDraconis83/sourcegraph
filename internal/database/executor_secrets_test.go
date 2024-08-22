@@ -45,7 +45,7 @@ func TestEnsureActorHasNamespaceWriteAccess(t *testing.T) {
 			// Is a member.
 			return &types.OrgMembership{}, nil
 		}
-		return nil, nil
+		return nil, &database.ErrOrgMemberNotFound{}
 	})
 	db.OrgMembersFunc.SetDefaultReturn(om)
 
@@ -430,6 +430,12 @@ func TestExecutorSecrets_GetListCount(t *testing.T) {
 	createSecret := func(secret *database.ExecutorSecret) *database.ExecutorSecret {
 		secret.CreatorID = user.ID
 		if err := store.Create(internalCtx, database.ExecutorSecretScopeBatches, secret, secretVal); err != nil {
+			t.Fatal(err)
+		}
+		otherSecret := *secret
+		// We generate a second version of the secret in a separate scope (namespace)
+		// to test that they're properly isolated.
+		if err := store.Create(internalCtx, database.ExecutorSecretScopeCodeIntel, &otherSecret, secretVal); err != nil {
 			t.Fatal(err)
 		}
 		return secret

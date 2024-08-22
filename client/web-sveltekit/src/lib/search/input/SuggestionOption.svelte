@@ -7,10 +7,12 @@
 </script>
 
 <script lang="ts">
-    import Icon from '$lib/Icon.svelte'
     import { type Option, type Action, RenderAs } from '$lib/branded'
-    import SyntaxHighlightedQuery from '../SyntaxHighlightedQuery.svelte'
+    import { SearchPatternType } from '$lib/graphql-types'
+    import SVGIcon from '$lib/SVGIcon.svelte'
+
     import EmphasizedLabel from '../EmphasizedLabel.svelte'
+    import SyntaxHighlightedQuery from '../SyntaxHighlightedQuery.svelte'
 
     export let option: Option
     export let groupIndex: number
@@ -39,12 +41,12 @@
 
 <li role="row" id="{groupIndex}x{rowIndex}" aria-selected={selected}>
     {#if option.icon}
-        <div class="pr-1 align-self-start">
-            <Icon svgPath={option.icon} aria-hidden="true" inline />
+        <div class="icon">
+            <SVGIcon svgPath={option.icon} aria-hidden="true" inline />
         </div>
     {/if}
     <div class="inner-row">
-        <div class="d-flex flex-wrap">
+        <div class="content">
             <div role="gridcell" class="label test-option-label">
                 {#if field}
                     <span class="filter-option">
@@ -63,7 +65,15 @@
                         {/if}
                     </span>
                 {:else if option.render === RenderAs.QUERY}
-                    <SyntaxHighlightedQuery query={option.label} matches={option.matches} />
+                    <!--
+                        The keyword pattern type is the default pattern type.
+                        It will match most queries.
+                    -->
+                    <SyntaxHighlightedQuery
+                        query={option.label}
+                        matches={option.matches}
+                        patternType={SearchPatternType.keyword}
+                    />
                 {:else}
                     <EmphasizedLabel label={option.label} matches={option.matches} />
                 {/if}
@@ -89,15 +99,14 @@
 
 <style lang="scss">
     [role='row'] {
-        --color: var(icon-color);
-
         display: flex;
         align-items: center;
         padding: 0.25rem 0.5rem;
         border-radius: var(--border-radius);
         font-family: var(--code-font-family);
-        font-size: 0.75rem;
+        font-size: var(--code-font-size);
         min-height: 1.5rem;
+        gap: 0.25rem;
 
         &[aria-selected='true'] {
             background-color: var(--subtle-bg);
@@ -107,6 +116,10 @@
         &:hover {
             background-color: var(--color-bg-2);
             cursor: pointer;
+        }
+
+        .icon {
+            align-self: start;
         }
 
         // Used to make label and actions wrappable
@@ -120,6 +133,11 @@
                 align-items: start;
                 gap: 0.25rem;
             }
+        }
+
+        .content {
+            display: flex;
+            flex-wrap: wrap;
         }
 
         .label {
@@ -164,7 +182,7 @@
 
     .filter-option {
         font-family: var(--code-font-family);
-        font-size: 0.75rem;
+        font-size: var(--code-font-size);
         display: flex; // to remove whitespace around the filter parts
 
         .separator {

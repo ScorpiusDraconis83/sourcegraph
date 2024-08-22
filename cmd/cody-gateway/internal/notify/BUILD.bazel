@@ -5,9 +5,11 @@ go_library(
     name = "notify",
     srcs = ["rate_limit.go"],
     importpath = "github.com/sourcegraph/sourcegraph/cmd/cody-gateway/internal/notify",
+    tags = [TAG_CODY_PRIME],
     visibility = ["//cmd/cody-gateway:__subpackages__"],
     deps = [
         "//internal/codygateway",
+        "//internal/codygateway/codygatewayactor",
         "//internal/redislock",
         "//internal/redispool",
         "//internal/trace",
@@ -25,8 +27,10 @@ go_test(
     name = "notify_test",
     srcs = ["rate_limit_test.go"],
     embed = [":notify"],
+    tags = [TAG_CODY_PRIME],
     deps = [
         "//internal/codygateway",
+        "//internal/codygateway/codygatewayactor",
         "//internal/redispool",
         "@com_github_hexops_autogold_v2//:autogold",
         "@com_github_slack_go_slack//:slack",

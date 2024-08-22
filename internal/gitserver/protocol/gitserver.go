@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"time"
 
-	"go.opentelemetry.io/otel/attribute"
-	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/sourcegraph/sourcegraph/internal/api"
@@ -17,7 +15,7 @@ import (
 
 type SearchRequest struct {
 	Repo                 api.RepoName
-	Revisions            []RevisionSpecifier
+	Revisions            []string
 	Query                Node
 	IncludeDiff          bool
 	Limit                int
@@ -27,7 +25,7 @@ type SearchRequest struct {
 func (r *SearchRequest) ToProto() *proto.SearchRequest {
 	revs := make([]*proto.RevisionSpecifier, 0, len(r.Revisions))
 	for _, rev := range r.Revisions {
-		revs = append(revs, rev.ToProto())
+		revs = append(revs, &proto.RevisionSpecifier{RevSpec: rev})
 	}
 	return &proto.SearchRequest{
 		Repo:                 string(r.Repo),
@@ -45,9 +43,9 @@ func SearchRequestFromProto(p *proto.SearchRequest) (*SearchRequest, error) {
 		return nil, err
 	}
 
-	revisions := make([]RevisionSpecifier, 0, len(p.GetRevisions()))
+	revisions := make([]string, 0, len(p.GetRevisions()))
 	for _, rev := range p.GetRevisions() {
-		revisions = append(revisions, RevisionSpecifierFromProto(rev))
+		revisions = append(revisions, rev.GetRevSpec())
 	}
 
 	return &SearchRequest{
@@ -60,36 +58,6 @@ func SearchRequestFromProto(p *proto.SearchRequest) (*SearchRequest, error) {
 	}, nil
 }
 
-type RevisionSpecifier struct {
-	// RevSpec is a revision range specifier suitable for passing to git. See
-	// the manpage gitrevisions(7).
-	RevSpec string
-
-	// RefGlob is a reference glob to pass to git. See the documentation for
-	// "--glob" in git-log.
-	RefGlob string
-
-	// ExcludeRefGlob is a glob for references to exclude. See the
-	// documentation for "--exclude" in git-log.
-	ExcludeRefGlob string
-}
-
-func (r *RevisionSpecifier) ToProto() *proto.RevisionSpecifier {
-	return &proto.RevisionSpecifier{
-		RevSpec:        r.RevSpec,
-		RefGlob:        r.RefGlob,
-		ExcludeRefGlob: r.ExcludeRefGlob,
-	}
-}
-
-func RevisionSpecifierFromProto(p *proto.RevisionSpecifier) RevisionSpecifier {
-	return RevisionSpecifier{
-		RevSpec:        p.GetRevSpec(),
-		RefGlob:        p.GetRefGlob(),
-		ExcludeRefGlob: p.GetExcludeRefGlob(),
-	}
-}
-
 type SearchEventMatches []CommitMatch
 
 type SearchEventDone struct {
@@ -100,7 +68,7 @@ type SearchEventDone struct {
 func (s SearchEventDone) Err() error {
 	if s.Error != "" {
 		var e gitdomain.RepoNotExistError
-		if err := json.Unmarshal([]byte(s.Error), &e); err != nil {
+		if err := json.Unmarshal([]byte(s.Error), &e); err == nil {
 			return &e
 		}
 		return errors.New(s.Error)
@@ -252,215 +220,7 @@ func SignatureFromProto(p *proto.CommitMatch_Signature) Signature {
 // be reconciled in both places.
 type ExecRequest struct {
 	Repo api.RepoName `json:"repo"`
-
-	// ensureRevision is the revision to ensure is present in the repository before running the git command.
-	//
-	// 🚨Warning🚨: EnsureRevision might not be a utf 8 encoded string.
-	EnsureRevision string   `json:"ensureRevision"`
-	Args           []string `json:"args"`
-	Stdin          []byte   `json:"stdin,omitempty"`
-	NoTimeout      bool     `json:"noTimeout"`
-}
-
-// BatchLogRequest is a request to execute a `git log` command inside a set of
-// git repositories present on the target shard.
-type BatchLogRequest struct {
-	RepoCommits []api.RepoCommit `json:"repoCommits"`
-
-	// Format is the entire `--format=<format>` argument to git log. This value
-	// is expected to be non-empty.
-	Format string `json:"format"`
-}
-
-func (bl *BatchLogRequest) ToProto() *proto.BatchLogRequest {
-	repoCommits := make([]*proto.RepoCommit, 0, len(bl.RepoCommits))
-	for _, rc := range bl.RepoCommits {
-		repoCommits = append(repoCommits, rc.ToProto())
-	}
-	return &proto.BatchLogRequest{
-		RepoCommits: repoCommits,
-		Format:      bl.Format,
-	}
-}
-
-func (bl *BatchLogRequest) FromProto(p *proto.BatchLogRequest) {
-	repoCommits := make([]api.RepoCommit, 0, len(p.GetRepoCommits()))
-	for _, protoRc := range p.GetRepoCommits() {
-		var rc api.RepoCommit
-		rc.FromProto(protoRc)
-		repoCommits = append(repoCommits, rc)
-	}
-	bl.RepoCommits = repoCommits
-	bl.Format = p.GetFormat()
-}
-
-func (req BatchLogRequest) SpanAttributes() []attribute.KeyValue {
-	return []attribute.KeyValue{
-		attribute.Int("numRepoCommits", len(req.RepoCommits)),
-		attribute.String("format", req.Format),
-	}
-}
-
-type BatchLogResponse struct {
-	Results []BatchLogResult `json:"results"`
-}
-
-func (bl *BatchLogResponse) ToProto() *proto.BatchLogResponse {
-	results := make([]*proto.BatchLogResult, 0, len(bl.Results))
-	for _, r := range bl.Results {
-		results = append(results, r.ToProto())
-	}
-	return &proto.BatchLogResponse{
-		Results: results,
-	}
-}
-
-func (bl *BatchLogResponse) FromProto(p *proto.BatchLogResponse) {
-	results := make([]BatchLogResult, 0, len(p.GetResults()))
-	for _, protoR := range p.GetResults() {
-		var r BatchLogResult
-		r.FromProto(protoR)
-		results = append(results, r)
-	}
-	*bl = BatchLogResponse{
-		Results: results,
-	}
-}
-
-// BatchLogResult associates a repository and commit pair from the input of a BatchLog
-// request with the result of the associated git log command.
-type BatchLogResult struct {
-	RepoCommit    api.RepoCommit `json:"repoCommit"`
-	CommandOutput string         `json:"output"`
-	CommandError  string         `json:"error,omitempty"`
-}
-
-func (bl *BatchLogResult) ToProto() *proto.BatchLogResult {
-	result := &proto.BatchLogResult{
-		RepoCommit:    bl.RepoCommit.ToProto(),
-		CommandOutput: bl.CommandOutput,
-	}
-
-	var cmdErr string
-
-	if bl.CommandError != "" {
-		cmdErr = bl.CommandError
-		result.CommandError = &cmdErr
-	}
-
-	return result
-
-}
-
-func (bl *BatchLogResult) FromProto(p *proto.BatchLogResult) {
-	var rc api.RepoCommit
-	rc.FromProto(p.GetRepoCommit())
-
-	*bl = BatchLogResult{
-		RepoCommit:    rc,
-		CommandOutput: p.GetCommandOutput(),
-		CommandError:  p.GetCommandError(),
-	}
-}
-
-// RepoUpdateRequest is a request to update the contents of a given repo, or clone it if it doesn't exist.
-type RepoUpdateRequest struct {
-	// Repo identifies URL for repo.
-	Repo api.RepoName `json:"repo"`
-	// Since is a debounce interval for queries, used only with request-repo-update.
-	Since time.Duration `json:"since"`
-}
-
-func (r *RepoUpdateRequest) ToProto() *proto.RepoUpdateRequest {
-	return &proto.RepoUpdateRequest{
-		Repo:  string(r.Repo),
-		Since: durationpb.New(r.Since),
-	}
-}
-
-func (r *RepoUpdateRequest) FromProto(p *proto.RepoUpdateRequest) {
-	*r = RepoUpdateRequest{
-		Repo:  api.RepoName(p.GetRepo()),
-		Since: p.GetSince().AsDuration(),
-	}
-}
-
-// RepoUpdateResponse returns meta information of the repo enqueued for update.
-type RepoUpdateResponse struct {
-	LastFetched *time.Time `json:",omitempty"`
-	LastChanged *time.Time `json:",omitempty"`
-
-	// Error is an error reported by the update operation, and not a network protocol error.
-	Error string `json:",omitempty"`
-}
-
-func (r *RepoUpdateResponse) ToProto() *proto.RepoUpdateResponse {
-	var lastFetched, lastChanged *timestamppb.Timestamp
-	if r.LastFetched != nil {
-		lastFetched = timestamppb.New(*r.LastFetched)
-	}
-
-	if r.LastChanged != nil {
-		lastChanged = timestamppb.New(*r.LastChanged)
-	}
-
-	return &proto.RepoUpdateResponse{
-		LastFetched: timestamppb.New(lastFetched.AsTime()),
-		LastChanged: timestamppb.New(lastChanged.AsTime()),
-		Error:       r.Error,
-	}
-}
-
-func (r *RepoUpdateResponse) FromProto(p *proto.RepoUpdateResponse) {
-	var lastFetched, lastChanged time.Time
-	if p.GetLastFetched() != nil {
-		lf := p.GetLastFetched().AsTime()
-		lastFetched = lf
-	} else {
-		lastFetched = time.Time{}
-	}
-
-	if p.GetLastChanged() != nil {
-		lc := p.GetLastChanged().AsTime()
-		lastChanged = lc
-	} else {
-		lastChanged = time.Time{}
-	}
-
-	*r = RepoUpdateResponse{
-		LastFetched: &lastFetched,
-		LastChanged: &lastChanged,
-		Error:       p.GetError(),
-	}
-}
-
-// RepoCloneRequest is a request to clone a repository asynchronously.
-type RepoCloneRequest struct {
-	Repo api.RepoName `json:"repo"`
-}
-
-// RepoCloneResponse returns an error if the repo clone request failed.
-type RepoCloneResponse struct {
-	Error string `json:",omitempty"`
-}
-
-func (r *RepoCloneResponse) ToProto() *proto.RepoCloneResponse {
-	return &proto.RepoCloneResponse{
-		Error: r.Error,
-	}
-}
-
-func (r *RepoCloneResponse) FromProto(p *proto.RepoCloneResponse) {
-	*r = RepoCloneResponse{
-		Error: p.GetError(),
-	}
-}
-
-type NotFoundPayload struct {
-	CloneInProgress bool `json:"cloneInProgress"` // If true, exec returned with noop because clone is in progress.
-
-	// CloneProgress is a progress message from the running clone command.
-	CloneProgress string `json:"cloneProgress,omitempty"`
+	Args []string     `json:"args"`
 }
 
 // IsRepoCloneableRequest is a request to determine if a repo is cloneable.
@@ -492,18 +252,6 @@ func (i *IsRepoCloneableResponse) FromProto(p *proto.IsRepoCloneableResponse) {
 	}
 }
 
-// RepoDeleteRequest is a request to delete a repository clone on gitserver
-type RepoDeleteRequest struct {
-	// Repo is the repository to delete.
-	Repo api.RepoName
-}
-
-// RepoCloneProgressRequest is a request for information about the clone progress of multiple
-// repositories on gitserver.
-type RepoCloneProgressRequest struct {
-	Repos []api.RepoName
-}
-
 // RepoCloneProgress is information about the clone progress of a repo
 type RepoCloneProgress struct {
 	CloneInProgress bool   // whether the repository is currently being cloned
@@ -511,53 +259,19 @@ type RepoCloneProgress struct {
 	Cloned          bool   // whether the repository has been cloned successfully
 }
 
-func (r *RepoCloneProgress) ToProto() *proto.RepoCloneProgress {
-	return &proto.RepoCloneProgress{
+func (r *RepoCloneProgress) ToProto() *proto.RepoCloneProgressResponse {
+	return &proto.RepoCloneProgressResponse{
 		CloneInProgress: r.CloneInProgress,
 		CloneProgress:   r.CloneProgress,
 		Cloned:          r.Cloned,
 	}
 }
 
-func (r *RepoCloneProgress) FromProto(p *proto.RepoCloneProgress) {
+func (r *RepoCloneProgress) FromProto(p *proto.RepoCloneProgressResponse) {
 	*r = RepoCloneProgress{
 		CloneInProgress: p.GetCloneInProgress(),
 		CloneProgress:   p.GetCloneProgress(),
 		Cloned:          p.GetCloned(),
-	}
-}
-
-// RepoCloneProgressResponse is the response to a repository clone progress request
-// for multiple repositories at the same time.
-type RepoCloneProgressResponse struct {
-	Results map[api.RepoName]*RepoCloneProgress
-}
-
-func (r *RepoCloneProgressResponse) ToProto() *proto.RepoCloneProgressResponse {
-	results := make(map[string]*proto.RepoCloneProgress, len(r.Results))
-	for k, v := range r.Results {
-		results[string(k)] = &proto.RepoCloneProgress{
-			CloneInProgress: v.CloneInProgress,
-			CloneProgress:   v.CloneProgress,
-			Cloned:          v.Cloned,
-		}
-	}
-	return &proto.RepoCloneProgressResponse{
-		Results: results,
-	}
-}
-
-func (r *RepoCloneProgressResponse) FromProto(p *proto.RepoCloneProgressResponse) {
-	results := make(map[api.RepoName]*RepoCloneProgress, len(p.GetResults()))
-	for k, v := range p.GetResults() {
-		results[api.RepoName(k)] = &RepoCloneProgress{
-			CloneInProgress: v.GetCloneInProgress(),
-			CloneProgress:   v.GetCloneProgress(),
-			Cloned:          v.GetCloned(),
-		}
-	}
-	*r = RepoCloneProgressResponse{
-		Results: results,
 	}
 }
 
@@ -570,31 +284,28 @@ type CreateCommitFromPatchRequest struct {
 	BaseCommit api.CommitID
 	// Patch is the diff contents to be used to create the staging area revision
 	Patch []byte
+	// PatchFilenamesNoPrefix indicates that the filenames in patch are not prefixed
+	// with the usual a/ and b/ prefixes.
+	PatchFilenamesNoPrefix bool
 	// TargetRef is the ref that will be created for this patch
 	TargetRef string
-	// If set to true and the TargetRef already exists, an unique number will be appended to the end (ie TargetRef-{#}). The generated ref will be returned.
-	UniqueRef bool
 	// CommitInfo is the information that will be used when creating the commit from a patch
 	CommitInfo PatchCommitInfo
 	// Push specifies whether the target ref will be pushed to the code host: if
 	// nil, no push will be attempted, if non-nil, a push will be attempted.
 	Push *PushConfig
-	// GitApplyArgs are the arguments that will be passed to `git apply` along
-	// with `--cached`.
-	GitApplyArgs []string
 	// If specified, the changes will be pushed to this ref as opposed to TargetRef.
 	PushRef *string
 }
 
 func (c *CreateCommitFromPatchRequest) ToMetadataProto() *proto.CreateCommitFromPatchBinaryRequest_Metadata {
 	cc := &proto.CreateCommitFromPatchBinaryRequest_Metadata{
-		Repo:         string(c.Repo),
-		BaseCommit:   string(c.BaseCommit),
-		TargetRef:    c.TargetRef,
-		UniqueRef:    c.UniqueRef,
-		CommitInfo:   c.CommitInfo.ToProto(),
-		GitApplyArgs: c.GitApplyArgs,
-		PushRef:      c.PushRef,
+		Repo:                   string(c.Repo),
+		BaseCommit:             string(c.BaseCommit),
+		TargetRef:              c.TargetRef,
+		CommitInfo:             c.CommitInfo.ToProto(),
+		PushRef:                c.PushRef,
+		PatchFilenamesNoPrefix: c.PatchFilenamesNoPrefix,
 	}
 
 	if c.Push != nil {
@@ -604,7 +315,7 @@ func (c *CreateCommitFromPatchRequest) ToMetadataProto() *proto.CreateCommitFrom
 	return cc
 }
 
-func (c *CreateCommitFromPatchRequest) FromProto(p *proto.CreateCommitFromPatchBinaryRequest_Metadata, patch []byte) {
+func (c *CreateCommitFromPatchRequest) FromProto(p *proto.CreateCommitFromPatchBinaryRequest_Metadata) {
 	gp := p.GetPush()
 	var pushConfig *PushConfig
 	if gp != nil {
@@ -613,14 +324,12 @@ func (c *CreateCommitFromPatchRequest) FromProto(p *proto.CreateCommitFromPatchB
 	}
 
 	*c = CreateCommitFromPatchRequest{
-		Repo:         api.RepoName(p.GetRepo()),
-		BaseCommit:   api.CommitID(p.GetBaseCommit()),
-		TargetRef:    p.GetTargetRef(),
-		UniqueRef:    p.GetUniqueRef(),
-		Patch:        patch,
-		CommitInfo:   PatchCommitInfoFromProto(p.GetCommitInfo()),
-		Push:         pushConfig,
-		GitApplyArgs: p.GetGitApplyArgs(),
+		Repo:                   api.RepoName(p.GetRepo()),
+		BaseCommit:             api.CommitID(p.GetBaseCommit()),
+		TargetRef:              p.GetTargetRef(),
+		CommitInfo:             PatchCommitInfoFromProto(p.GetCommitInfo()),
+		Push:                   pushConfig,
+		PatchFilenamesNoPrefix: p.GetPatchFilenamesNoPrefix(),
 	}
 
 	if p != nil {
@@ -744,11 +453,11 @@ func (r *CreateCommitFromPatchResponse) FromProto(res *proto.CreateCommitFromPat
 }
 
 // SetError adds the supplied error related details to e.
-func (e *CreateCommitFromPatchResponse) SetError(repo, command, out string, err error) {
+func (e *CreateCommitFromPatchResponse) SetError(repo api.RepoName, command, out string, err error) {
 	if e.Error == nil {
 		e.Error = &CreateCommitFromPatchError{}
 	}
-	e.Error.RepositoryName = repo
+	e.Error.RepositoryName = string(repo)
 	e.Error.Command = command
 	e.Error.CombinedOutput = out
 	e.Error.InternalError = err.Error()
@@ -829,7 +538,6 @@ func (r *GetObjectResponse) FromProto(p *proto.GetObjectResponse) {
 	*r = GetObjectResponse{
 		Object: gitObj,
 	}
-
 }
 
 // IsPerforcePathCloneableRequest is the request to check if a Perforce path is cloneable.

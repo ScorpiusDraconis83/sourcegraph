@@ -39,9 +39,9 @@ const emptyPolicy: CodeIntelligenceConfigurationPolicyFields = {
     retentionDurationHours: null,
     retainIntermediateCommits: false,
     indexingEnabled: false,
+    syntacticIndexingEnabled: false,
     indexCommitMaxAgeHours: null,
     indexIntermediateCommits: false,
-    embeddingsEnabled: false,
 }
 
 export const usePolicyConfigurationByID = (id: string): UsePolicyConfigResult => {

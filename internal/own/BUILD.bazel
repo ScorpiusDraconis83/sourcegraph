@@ -4,24 +4,27 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "own",
     srcs = [
+        "conf.go",
         "ownref.go",
         "service.go",
     ],
     importpath = "github.com/sourcegraph/sourcegraph/internal/own",
+    tags = [TAG_SEARCHSUITE],
     visibility = ["//:__subpackages__"],
     deps = [
         "//internal/api",
-        "//internal/auth/providers",
         "//internal/collections",
         "//internal/database",
         "//internal/errcode",
         "//internal/extsvc",
+        "//internal/extsvc/azuredevops",
+        "//internal/extsvc/bitbucketcloud",
+        "//internal/extsvc/github",
+        "//internal/extsvc/gitlab",
         "//internal/gitserver",
         "//internal/own/codeowners",
         "//internal/types",
         "//lib/errors",
-        "@com_github_prometheus_client_golang//prometheus",
-        "@com_github_prometheus_client_golang//prometheus/promauto",
     ],
 )
 
@@ -34,11 +37,11 @@ go_test(
     ],
     embed = [":own"],
     tags = [
+        TAG_SEARCHSUITE,
         "requires-network",
     ],
     deps = [
         "//internal/api",
-        "//internal/auth/providers",
         "//internal/database",
         "//internal/database/dbmocks",
         "//internal/database/dbtest",

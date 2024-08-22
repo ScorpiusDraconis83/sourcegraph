@@ -6,8 +6,8 @@ import (
 
 	"github.com/inconshreveable/log15" //nolint:logging // TODO move all logging to sourcegraph/log
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/envvar"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/hubspot"
+	"github.com/sourcegraph/sourcegraph/internal/dotcom"
 	"github.com/sourcegraph/sourcegraph/internal/env"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
@@ -45,9 +45,6 @@ var CodyClientInstalledEventID = "000018021981"
 // CodyClientInstalledV3EventID is the HubSpot ID for the new event which support custom properties.
 var CodyClientInstalledV3EventID = "pe2762526_codyinstall"
 
-// AppDownloadButtonClickedEventID is the HubSpot Event ID for when a user clicks on a button to download Cody App.
-var AppDownloadButtonClickedEventID = "000019179879"
-
 var client *hubspot.Client
 
 // HasAPIKey returns true if a HubspotAPI key is present. A subset of requests require a HubSpot API key.
@@ -76,7 +73,7 @@ func SyncUser(email, eventID string, contactParams *hubspot.ContactProperties) {
 		}
 	}()
 	// If the user no API token present or on-prem environment, don't do any tracking
-	if !HasAPIKey() || !envvar.SourcegraphDotComMode() {
+	if !HasAPIKey() || !dotcom.SourcegraphDotComMode() {
 		return
 	}
 
@@ -84,7 +81,7 @@ func SyncUser(email, eventID string, contactParams *hubspot.ContactProperties) {
 	// contact independent of the request lifecycle.
 	err := syncHubSpotContact(context.Background(), email, eventID, contactParams)
 	if err != nil {
-		log15.Warn("syncHubSpotContact: failed to create or update HubSpot contact", "source", "HubSpot", "error", err)
+		log15.Warn("syncHubSpotContact: failed to create or update HubSpot contact", "source", "HubSpot", "eventID", eventID, "error", err)
 	}
 }
 
@@ -98,7 +95,7 @@ func SyncUserWithV3Event(email, eventName string, contactParams *hubspot.Contact
 	}()
 
 	// If the user no API token present or on-prem environment, don't do any tracking
-	if !HasAPIKey() || !envvar.SourcegraphDotComMode() {
+	if !HasAPIKey() || !dotcom.SourcegraphDotComMode() {
 		return
 	}
 
@@ -106,7 +103,7 @@ func SyncUserWithV3Event(email, eventName string, contactParams *hubspot.Contact
 	// contact independent of the request lifecycle.
 	err := syncHubSpotContact(context.Background(), email, "", contactParams)
 	if err != nil {
-		log15.Warn("syncHubSpotContact: failed to create or update HubSpot contact", "source", "HubSpot", "error", err)
+		log15.Warn("syncHubSpotContact: failed to create or update HubSpot contact", "source", "HubSpot", "eventName", eventName, "error", err)
 	}
 
 	// Log the V3 event

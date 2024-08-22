@@ -1,8 +1,9 @@
-import type { Decorator, StoryFn, Meta } from '@storybook/react'
-import { WildcardMockLink, MATCH_ANY_PARAMETERS } from 'wildcard-mock-link'
+import type { Decorator, Meta, StoryFn } from '@storybook/react'
+import { MATCH_ANY_PARAMETERS, WildcardMockLink } from 'wildcard-mock-link'
 
 import { getDocumentNode } from '@sourcegraph/http-client'
 import { EMPTY_SETTINGS_CASCADE } from '@sourcegraph/shared/src/settings/settings'
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { MockedTestProvider } from '@sourcegraph/shared/src/testing/apollo'
 import { updateJSContextBatchChangesLicense } from '@sourcegraph/shared/src/testing/batches'
 
@@ -10,10 +11,10 @@ import { WebStory } from '../../../components/WebStory'
 import type { GlobalChangesetsStatsResult } from '../../../graphql-operations'
 
 import {
-    GLOBAL_CHANGESETS_STATS,
     BATCH_CHANGES,
     BATCH_CHANGES_BY_NAMESPACE,
     GET_LICENSE_AND_USAGE_INFO,
+    GLOBAL_CHANGESETS_STATS,
 } from './backend'
 import { BatchChangeListPage } from './BatchChangeListPage'
 import {
@@ -29,12 +30,7 @@ const config: Meta = {
     title: 'web/batches/list/BatchChangeListPage',
     decorators: [decorator],
 
-    parameters: {
-        chromatic: {
-            viewports: [320, 576, 978, 1440],
-            disableSnapshot: false,
-        },
-    },
+    parameters: {},
 }
 
 export default config
@@ -102,8 +98,8 @@ export const ListOfBatchChanges: StoryFn<Args> = args => {
                         headingElement="h1"
                         canCreate={args.canCreate || "You don't have permission to create batch changes"}
                         settingsCascade={EMPTY_SETTINGS_CASCADE}
-                        isSourcegraphDotCom={args.isDotCom}
                         authenticatedUser={null}
+                        telemetryRecorder={noOpTelemetryRecorder}
                     />
                 </MockedTestProvider>
             )}
@@ -140,8 +136,8 @@ export const ListOfBatchChangesSpecificNamespace: StoryFn = () => {
                         canCreate={true}
                         namespaceID="test-12345"
                         settingsCascade={EMPTY_SETTINGS_CASCADE}
-                        isSourcegraphDotCom={false}
                         authenticatedUser={null}
+                        telemetryRecorder={noOpTelemetryRecorder}
                     />
                 </MockedTestProvider>
             )}
@@ -168,8 +164,8 @@ export const ListOfBatchChangesServerSideExecutionEnabled: StoryFn = () => {
                                 experimentalFeatures: { batchChangesExecution: true },
                             },
                         }}
-                        isSourcegraphDotCom={false}
                         authenticatedUser={null}
+                        telemetryRecorder={noOpTelemetryRecorder}
                     />
                 </MockedTestProvider>
             )}
@@ -191,8 +187,8 @@ export const LicensingNotEnforced: StoryFn = () => {
                         headingElement="h1"
                         canCreate={true}
                         settingsCascade={EMPTY_SETTINGS_CASCADE}
-                        isSourcegraphDotCom={false}
                         authenticatedUser={null}
+                        telemetryRecorder={noOpTelemetryRecorder}
                     />
                 </MockedTestProvider>
             )}
@@ -214,8 +210,8 @@ export const NoBatchChanges: StoryFn = () => {
                         headingElement="h1"
                         canCreate={true}
                         settingsCascade={EMPTY_SETTINGS_CASCADE}
-                        isSourcegraphDotCom={false}
                         authenticatedUser={null}
+                        telemetryRecorder={noOpTelemetryRecorder}
                     />
                 </MockedTestProvider>
             )}
@@ -238,8 +234,8 @@ export const AllBatchChangesTabEmpty: StoryFn = () => {
                         canCreate={true}
                         openTab="batchChanges"
                         settingsCascade={EMPTY_SETTINGS_CASCADE}
-                        isSourcegraphDotCom={false}
                         authenticatedUser={null}
+                        telemetryRecorder={noOpTelemetryRecorder}
                     />
                 </MockedTestProvider>
             )}

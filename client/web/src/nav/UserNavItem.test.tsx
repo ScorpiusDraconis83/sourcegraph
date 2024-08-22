@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import sinon from 'sinon'
-import { afterAll, beforeAll, describe, expect, test } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest'
 
 import { NOOP_TELEMETRY_SERVICE } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { MockedTestProvider } from '@sourcegraph/shared/src/testing/apollo'
@@ -12,6 +12,16 @@ import { renderWithBrandedContext } from '@sourcegraph/wildcard/src/testing'
 import { UserNavItem, type UserNavItemProps } from './UserNavItem'
 
 describe('UserNavItem', () => {
+    const origCodyEnabledForCurrentUser = window.context?.codyEnabledForCurrentUser ?? true
+    const reset = () => {
+        if (!window.context) {
+            window.context = {} as any
+        }
+        window.context.codyEnabledForCurrentUser = origCodyEnabledForCurrentUser
+    }
+    beforeEach(reset)
+    afterEach(reset)
+
     beforeAll(() => {
         setLinkComponent(RouterLink)
     })
@@ -33,7 +43,6 @@ describe('UserNavItem', () => {
                     __typename: 'Org',
                     id: '0',
                     name: 'acme',
-                    displayName: 'Acme Corp',
                     url: '/organizations/acme',
                     settingsURL: '/organizations/acme/settings',
                 },
@@ -41,7 +50,6 @@ describe('UserNavItem', () => {
                     __typename: 'Org',
                     id: '1',
                     name: 'beta',
-                    displayName: 'Beta Inc',
                     url: '/organizations/beta',
                     settingsURL: '/organizations/beta/settings',
                 },

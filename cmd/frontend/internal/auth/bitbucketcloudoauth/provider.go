@@ -13,8 +13,8 @@ import (
 	"github.com/sourcegraph/log"
 
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/auth"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/external/session"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/auth/oauth"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/auth/session"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
 	"github.com/sourcegraph/sourcegraph/internal/lazyregexp"
@@ -68,6 +68,7 @@ func parseProvider(logger log.Logger, p *schema.BitbucketCloudAuthProvider, db d
 			return bitbucket.CallbackHandler(
 				&oauth2Cfg,
 				oauth.SessionIssuer(logger, db, &sessionIssuerHelper{
+					logger:      logger.Scoped("sessionIssuerHelper"),
 					baseURL:     parsedURL,
 					db:          db,
 					clientKey:   p.ClientKey,

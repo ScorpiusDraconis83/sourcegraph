@@ -10,10 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sourcegraph/run"
 	"github.com/urfave/cli/v2"
 
+	"github.com/sourcegraph/run"
+
 	"github.com/sourcegraph/sourcegraph/dev/sg/internal/category"
+	"github.com/sourcegraph/sourcegraph/dev/sg/internal/cloud"
 	"github.com/sourcegraph/sourcegraph/dev/sg/internal/std"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 	"github.com/sourcegraph/sourcegraph/lib/output"
@@ -24,7 +26,7 @@ var cloudCommand = &cli.Command{
 	Usage: "Install and work with Sourcegraph Cloud tools",
 	Description: `Learn more about Sourcegraph Cloud:
 
-- Product: https://docs.sourcegraph.com/cloud
+- Product: https://sourcegraph.com/docs/cloud
 - Handbook: https://handbook.sourcegraph.com/departments/cloud/
 `,
 	Category: category.Company,
@@ -43,6 +45,7 @@ var cloudCommand = &cli.Command{
 				return nil
 			},
 		},
+		&cloud.EphemeralCommand,
 	},
 }
 

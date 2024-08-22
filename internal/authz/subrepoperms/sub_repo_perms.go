@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/RoaringBitmap/roaring"
 	"github.com/gobwas/glob"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/prometheus/client_golang/prometheus"
@@ -22,8 +24,8 @@ import (
 
 // SubRepoPermissionsGetter allows getting sub repository permissions.
 type SubRepoPermissionsGetter interface {
-	// GetByUser returns the sub repository permissions rules known for a user.
-	GetByUser(ctx context.Context, userID int32) (map[api.RepoName]authz.SubRepoPermissions, error)
+	// GetByUserWithIPs returns the sub repository permissions rules known for a user.
+	GetByUserWithIPs(ctx context.Context, userID int32, backfillWithWildcardIP bool) (map[api.RepoName]authz.SubRepoPermissionsWithIPs, error)
 
 	// RepoIDSupported returns true if repo with the given ID has sub-repo permissions.
 	RepoIDSupported(ctx context.Context, repoID api.RepoID) (bool, error)
@@ -39,14 +41,22 @@ type SubRepoPermsClient struct {
 	clock             func() time.Time
 	since             func(time.Time) time.Duration
 
-	group   *singleflight.Group
-	cache   *lru.Cache[int32, cachedRules]
-	enabled *atomic.Bool
+	group            *singleflight.Group
+	cache            *lru.Cache[int32, cachedRules]
+	enabled          *atomic.Bool
+	repoEnabledCache repoEnabledCache
 }
 
 const (
 	defaultCacheSize = 1000
 	defaultCacheTTL  = 10 * time.Second
+
+	// We maintain a relatively high TTL for the repo enabled cache
+	// because it only stores whether the repo is a perforce repo and
+	// whether the repo is private. These properties should not change
+	// frequently, and are notably not updated when repo permissions
+	// are enabled/disabled.
+	defaultRepoEnabledCacheTTL = time.Hour
 )
 
 // cachedRules caches the perms rules known for a particular user by repo.
@@ -128,6 +138,7 @@ func NewSubRepoPermsClient(permissionsGetter SubRepoPermissionsGetter) *SubRepoP
 		group:             &singleflight.Group{},
 		cache:             cache,
 		enabled:           enabled,
+		repoEnabledCache:  newRepoEnabledCache(defaultRepoEnabledCacheTTL),
 	}
 }
 
@@ -261,7 +272,7 @@ func (s *SubRepoPermsClient) getCompiledRules(ctx context.Context, userID int32)
 	// work
 	groupKey := strconv.FormatInt(int64(userID), 10)
 	result, err, _ := s.group.Do(groupKey, func() (any, error) {
-		repoPerms, err := s.permissionsGetter.GetByUser(ctx, userID)
+		repoPerms, err := s.permissionsGetter.GetByUserWithIPs(ctx, userID, true) // TODO@ggilmore: (Once IP configuration option is in place, don't hardcode true)
 		if err != nil {
 			return nil, errors.Wrap(err, "fetching rules")
 		}
@@ -270,7 +281,8 @@ func (s *SubRepoPermsClient) getCompiledRules(ctx context.Context, userID int32)
 		}
 		for repo, perms := range repoPerms {
 			paths := make([]path, 0, len(perms.Paths))
-			for _, rule := range perms.Paths {
+			for _, p := range perms.Paths {
+				rule := p.Path // TODO@ggilmore: Adapt this logic to thread through ip information
 				exclusion := strings.HasPrefix(rule, "-")
 				rule = strings.TrimPrefix(rule, "-")
 
@@ -291,19 +303,13 @@ func (s *SubRepoPermsClient) getCompiledRules(ctx context.Context, userID int32)
 				// around this we add an extra rule to cover this case.
 				if strings.HasPrefix(rule, "/**/") {
 					trimmed := rule
-					for {
-						trimmed = strings.TrimPrefix(trimmed, "/**")
-						if strings.HasPrefix(trimmed, "/**/") {
-							// Keep trimming
-							continue
-						}
-						g, err := glob.Compile(trimmed, '/')
-						if err != nil {
-							return nil, errors.Wrap(err, "building include matcher")
-						}
-						paths = append(paths, path{globPath: g, exclusion: exclusion, original: trimmed})
-						break
+					for ; strings.HasPrefix(trimmed, "/**/"); trimmed = strings.TrimPrefix(trimmed, "/**") {
 					}
+					g, err := glob.Compile(trimmed, '/')
+					if err != nil {
+						return nil, errors.Wrap(err, "building include matcher")
+					}
+					paths = append(paths, path{globPath: g, exclusion: exclusion, original: trimmed})
 				}
 
 				// We should include all directories above an include rule so that we can browse
@@ -340,14 +346,32 @@ func (s *SubRepoPermsClient) getCompiledRules(ctx context.Context, userID int32)
 }
 
 func (s *SubRepoPermsClient) Enabled() bool {
+	if s == nil {
+		return false
+	}
 	return s.enabled.Load()
 }
 
 func (s *SubRepoPermsClient) EnabledForRepoID(ctx context.Context, id api.RepoID) (bool, error) {
-	return s.permissionsGetter.RepoIDSupported(ctx, id)
+	enabled, hit := s.repoEnabledCache.RepoIsEnabled(id)
+	if hit {
+		return enabled, nil
+	}
+
+	// TODO(camdencheek): Ideally, refreshing the cache could be handled in a background goroutine so it never blocks a caller
+	enabled, err := s.permissionsGetter.RepoIDSupported(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	s.repoEnabledCache.SetRepoIsEnabled(id, enabled)
+
+	return enabled, nil
 }
 
 func (s *SubRepoPermsClient) EnabledForRepo(ctx context.Context, repo api.RepoName) (bool, error) {
+	if !s.Enabled() {
+		return false, nil
+	}
 	return s.permissionsGetter.RepoSupported(ctx, repo)
 }
 
@@ -388,16 +412,63 @@ func expandDirs(rule string) []string {
 // NewSimpleChecker is exposed for testing and allows creation of a simple
 // checker based on the rules provided. The rules are expected to be in glob
 // format.
-func NewSimpleChecker(repo api.RepoName, paths []string) authz.SubRepoPermissionChecker {
+func NewSimpleChecker(repo api.RepoName, pathsWithIps []authz.PathWithIP) authz.SubRepoPermissionChecker {
 	getter := NewMockSubRepoPermissionsGetter()
-	getter.GetByUserFunc.SetDefaultHook(func(ctx context.Context, i int32) (map[api.RepoName]authz.SubRepoPermissions, error) {
-		return map[api.RepoName]authz.SubRepoPermissions{
+	getter.GetByUserWithIPsFunc.SetDefaultHook(func(ctx context.Context, i int32, _ bool) (map[api.RepoName]authz.SubRepoPermissionsWithIPs, error) {
+		return map[api.RepoName]authz.SubRepoPermissionsWithIPs{
 			repo: {
-				Paths: paths,
+				Paths: pathsWithIps,
 			},
 		}, nil
 	})
 	getter.RepoSupportedFunc.SetDefaultReturn(true, nil)
 	getter.RepoIDSupportedFunc.SetDefaultReturn(true, nil)
 	return NewSubRepoPermsClient(getter)
+}
+
+type repoEnabledCache struct {
+	mu        sync.Mutex
+	ttl       time.Duration
+	lastReset time.Time
+	enabled   *roaring.Bitmap
+	valid     *roaring.Bitmap
+}
+
+func newRepoEnabledCache(ttl time.Duration) repoEnabledCache {
+	return repoEnabledCache{
+		ttl:       ttl,
+		lastReset: time.Now(),
+		enabled:   roaring.NewBitmap(),
+		valid:     roaring.NewBitmap(),
+	}
+}
+
+func (r *repoEnabledCache) RepoIsEnabled(repoID api.RepoID) (enabled bool, hit bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.resetIfExpired()
+
+	return r.enabled.Contains(uint32(repoID)), r.valid.Contains(uint32(repoID))
+}
+
+func (r *repoEnabledCache) SetRepoIsEnabled(repoID api.RepoID, enabled bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.resetIfExpired()
+
+	r.valid.Add(uint32(repoID))
+	if enabled {
+		r.enabled.Add(uint32(repoID))
+	}
+}
+
+// r.mu must be held to safely call this method
+func (r *repoEnabledCache) resetIfExpired() {
+	if time.Since(r.lastReset) >= r.ttl {
+		r.valid.Clear()
+		r.enabled.Clear()
+	}
+	r.lastReset = time.Now()
 }

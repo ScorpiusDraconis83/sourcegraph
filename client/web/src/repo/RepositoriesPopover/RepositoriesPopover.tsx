@@ -3,7 +3,9 @@ import React, { useEffect, useState } from 'react'
 import { createAggregateError } from '@sourcegraph/common'
 import { gql } from '@sourcegraph/http-client'
 import type { Scalars } from '@sourcegraph/shared/src/graphql-operations'
+import { type TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
+import { EVENT_LOGGER } from '@sourcegraph/shared/src/telemetry/web/eventLogger'
 import { useDebounce } from '@sourcegraph/wildcard'
 
 import { useShowMorePagination } from '../../components/FilteredConnection/hooks/useShowMorePagination'
@@ -19,7 +21,6 @@ import type {
     RepositoriesForPopoverVariables,
     RepositoryPopoverFields,
 } from '../../graphql-operations'
-import { eventLogger } from '../../tracking/eventLogger'
 import {
     ConnectionPopover,
     ConnectionPopoverContainer,
@@ -49,7 +50,7 @@ export const REPOSITORIES_FOR_POPOVER = gql`
     }
 `
 
-export interface RepositoriesPopoverProps extends TelemetryProps {
+export interface RepositoriesPopoverProps extends TelemetryProps, TelemetryV2Props {
     /**
      * The current repository (shown as selected in the list), if any.
      */
@@ -64,14 +65,16 @@ export const BATCH_COUNT = 10
 export const RepositoriesPopover: React.FunctionComponent<React.PropsWithChildren<RepositoriesPopoverProps>> = ({
     currentRepo,
     telemetryService,
+    telemetryRecorder,
 }) => {
     const [searchValue, setSearchValue] = useState('')
     const query = useDebounce(searchValue, 200)
 
     useEffect(() => {
-        eventLogger.logViewEvent('RepositoriesPopover')
+        EVENT_LOGGER.logViewEvent('RepositoriesPopover')
         telemetryService.log('RepositoriesPopover')
-    }, [telemetryService])
+        telemetryRecorder.recordEvent('reposPopover', 'view')
+    }, [telemetryService, telemetryRecorder])
 
     const { connection, loading, error, hasNextPage, fetchMore } = useShowMorePagination<
         RepositoriesForPopoverResult,
@@ -79,7 +82,7 @@ export const RepositoriesPopover: React.FunctionComponent<React.PropsWithChildre
         RepositoryPopoverFields
     >({
         query: REPOSITORIES_FOR_POPOVER,
-        variables: { first: BATCH_COUNT, after: null, query },
+        variables: { query },
         getConnection: ({ data, errors }) => {
             if (!data?.repositories) {
                 throw createAggregateError(errors)
@@ -87,6 +90,7 @@ export const RepositoriesPopover: React.FunctionComponent<React.PropsWithChildre
             return data.repositories
         },
         options: {
+            pageSize: BATCH_COUNT,
             fetchPolicy: 'cache-first',
         },
     })
@@ -94,7 +98,6 @@ export const RepositoriesPopover: React.FunctionComponent<React.PropsWithChildre
     const summary = connection && (
         <ConnectionSummary
             connection={connection}
-            first={BATCH_COUNT}
             noun="repository"
             pluralNoun="repositories"
             hasNextPage={hasNextPage}

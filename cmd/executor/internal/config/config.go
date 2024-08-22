@@ -26,6 +26,7 @@ type Config struct {
 
 	FrontendURL                                    string
 	FrontendAuthorizationToken                     string
+	EnableJobAuditLogging                          bool
 	QueueName                                      string
 	QueueNamesStr                                  string
 	QueueNames                                     []string
@@ -113,6 +114,7 @@ type Config struct {
 func (c *Config) Load() {
 	c.FrontendURL = c.Get("EXECUTOR_FRONTEND_URL", "", "The external URL of the sourcegraph instance.")
 	c.FrontendAuthorizationToken = c.Get("EXECUTOR_FRONTEND_PASSWORD", c.defaultFrontendPassword, "The authorization token supplied to the frontend.")
+	c.EnableJobAuditLogging = c.GetBool("EXECUTOR_ENABLE_JOB_AUDIT_LOGGING", "false", "Enables logging of the job payload to the executor logs. Note that this mode might contain secret information and logs very verbosely.")
 	c.QueueName = c.GetOptional("EXECUTOR_QUEUE_NAME", "The name of the queue to listen to.")
 	c.QueueNamesStr = c.GetOptional("EXECUTOR_QUEUE_NAMES", "The names of multiple queues to listen to, comma-separated.")
 	c.QueuePollInterval = c.GetInterval("EXECUTOR_QUEUE_POLL_INTERVAL", "1s", "Interval between dequeue requests.")
@@ -158,7 +160,7 @@ func (c *Config) Load() {
 	c.KubernetesSecurityContextRunAsUser = c.GetInt("KUBERNETES_RUN_AS_USER", "-1", "The user ID to run Kubernetes jobs as.")
 	c.KubernetesSecurityContextRunAsGroup = c.GetInt("KUBERNETES_RUN_AS_GROUP", "-1", "The group ID to run Kubernetes jobs as.")
 	c.KubernetesSecurityContextFSGroup = c.GetInt("KUBERNETES_FS_GROUP", "1000", "The group ID to run all containers in the Kubernetes jobs as. Defaults to 1000, the group ID of the docker group in the executor container.")
-	c.KubernetesSingleJobPod = c.GetBool("KUBERNETES_SINGLE_JOB_POD", "false", "Determine if a single Job Pod should be used to process a workspace")
+	c.KubernetesSingleJobPod = c.GetBool("KUBERNETES_SINGLE_JOB_POD", "true", "Determine if a single Job Pod should be used to process a workspace")
 	c.KubernetesJobVolumeType = c.Get("KUBERNETES_JOB_VOLUME_TYPE", "emptyDir", "Determines the type of volume to use with the single job. Options are 'emptyDir' and 'pvc'.")
 	c.KubernetesJobVolumeSize = c.Get("KUBERNETES_JOB_VOLUME_SIZE", "5Gi", "Determines the size of the job volume.")
 	c.kubernetesAdditionalJobVolumes = c.GetOptional("KUBERNETES_ADDITIONAL_JOB_VOLUMES", "Additional volumes to associate with the Jobs. e.g. [{\"name\": \"my-volume\", \"configMap\": {\"name\": \"cluster-volume\"}}]")

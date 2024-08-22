@@ -6,6 +6,9 @@ import (
 
 	logger "github.com/sourcegraph/log"
 
+	"github.com/sourcegraph/sourcegraph/internal/api"
+	"github.com/sourcegraph/sourcegraph/internal/codeintel/core"
+	"github.com/sourcegraph/sourcegraph/internal/codeintel/uploads/internal/commitgraph"
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/uploads/shared"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/database/basestore"
@@ -22,54 +25,58 @@ type Store interface {
 	// Upload records
 	GetUploads(ctx context.Context, opts shared.GetUploadsOptions) ([]shared.Upload, int, error)
 	GetUploadByID(ctx context.Context, id int) (shared.Upload, bool, error)
-	GetDumpsByIDs(ctx context.Context, ids []int) ([]shared.Dump, error)
+	GetCompletedUploadsByIDs(ctx context.Context, ids []int) ([]shared.CompletedUpload, error)
 	GetUploadsByIDs(ctx context.Context, ids ...int) ([]shared.Upload, error)
 	GetUploadsByIDsAllowDeleted(ctx context.Context, ids ...int) ([]shared.Upload, error)
 	GetUploadIDsWithReferences(ctx context.Context, orderedMonikers []precise.QualifiedMonikerData, ignoreIDs []int, repositoryID int, commit string, limit int, offset int, trace observation.TraceLogger) ([]int, int, int, error)
 	GetVisibleUploadsMatchingMonikers(ctx context.Context, repositoryID int, commit string, orderedMonikers []precise.QualifiedMonikerData, limit, offset int) (shared.PackageReferenceScanner, int, error)
-	GetDumpsWithDefinitionsForMonikers(ctx context.Context, monikers []precise.QualifiedMonikerData) ([]shared.Dump, error)
+	GetCompletedUploadsWithDefinitionsForMonikers(ctx context.Context, monikers []precise.QualifiedMonikerData) ([]shared.CompletedUpload, error)
 	GetAuditLogsForUpload(ctx context.Context, uploadID int) ([]shared.UploadLog, error)
 	DeleteUploads(ctx context.Context, opts shared.DeleteUploadsOptions) error
 	DeleteUploadByID(ctx context.Context, id int) (bool, error)
 	ReindexUploads(ctx context.Context, opts shared.ReindexUploadsOptions) error
 	ReindexUploadByID(ctx context.Context, id int) error
 
-	// Index records
-	GetIndexes(ctx context.Context, opts shared.GetIndexesOptions) ([]shared.Index, int, error)
-	GetIndexByID(ctx context.Context, id int) (shared.Index, bool, error)
-	GetIndexesByIDs(ctx context.Context, ids ...int) ([]shared.Index, error)
-	DeleteIndexByID(ctx context.Context, id int) (bool, error)
-	DeleteIndexes(ctx context.Context, opts shared.DeleteIndexesOptions) error
-	ReindexIndexByID(ctx context.Context, id int) error
-	ReindexIndexes(ctx context.Context, opts shared.ReindexIndexesOptions) error
+	// AutoIndexJob records
+	GetAutoIndexJobs(ctx context.Context, opts shared.GetAutoIndexJobsOptions) ([]shared.AutoIndexJob, int, error)
+	GetAutoIndexJobByID(ctx context.Context, id int) (shared.AutoIndexJob, bool, error)
+	GetAutoIndexJobsByIDs(ctx context.Context, ids ...int) ([]shared.AutoIndexJob, error)
+	DeleteAutoIndexJobByID(ctx context.Context, id int) (bool, error)
+	DeleteAutoIndexJobs(ctx context.Context, opts shared.DeleteAutoIndexJobsOptions) error
+	SetRerunAutoIndexJobByID(ctx context.Context, id int) error
+	SetRerunAutoIndexJobs(ctx context.Context, opts shared.SetRerunAutoIndexJobsOptions) error
 
 	// Upload record insertion + processing
 	InsertUpload(ctx context.Context, upload shared.Upload) (int, error)
 	AddUploadPart(ctx context.Context, uploadID, partIndex int) error
 	MarkQueued(ctx context.Context, id int, uploadSize *int64) error
 	MarkFailed(ctx context.Context, id int, reason string) error
-	DeleteOverlappingDumps(ctx context.Context, repositoryID int, commit, root, indexer string) error
+	DeleteOverlappingCompletedUploads(ctx context.Context, repositoryID int, commit, root, indexer string) error
 	WorkerutilStore(observationCtx *observation.Context) dbworkerstore.Store[shared.Upload]
 
 	// Dependencies
 	ReferencesForUpload(ctx context.Context, uploadID int) (shared.PackageReferenceScanner, error)
-	UpdatePackages(ctx context.Context, dumpID int, packages []precise.Package) error
-	UpdatePackageReferences(ctx context.Context, dumpID int, references []precise.PackageReference) error
+	UpdatePackages(ctx context.Context, uploadID int, packages []precise.Package) error
+	UpdatePackageReferences(ctx context.Context, uploadID int, references []precise.PackageReference) error
 
 	// Summary
 	GetIndexers(ctx context.Context, opts shared.GetIndexersOptions) ([]string, error)
 	GetRecentUploadsSummary(ctx context.Context, repositoryID int) ([]shared.UploadsWithRepositoryNamespace, error)
-	GetRecentIndexesSummary(ctx context.Context, repositoryID int) ([]shared.IndexesWithRepositoryNamespace, error)
+	GetRecentAutoIndexJobsSummary(ctx context.Context, repositoryID int) ([]shared.GroupedAutoIndexJobs, error)
 	RepositoryIDsWithErrors(ctx context.Context, offset, limit int) ([]shared.RepositoryWithCount, int, error)
 	NumRepositoriesWithCodeIntelligence(ctx context.Context) (int, error)
 
 	// Commit graph
 	SetRepositoryAsDirty(ctx context.Context, repositoryID int) error
 	GetDirtyRepositories(ctx context.Context) ([]shared.DirtyRepository, error)
-	UpdateUploadsVisibleToCommits(ctx context.Context, repositoryID int, graph *gitdomain.CommitGraph, refDescriptions map[string][]gitdomain.RefDescription, maxAgeForNonStaleBranches, maxAgeForNonStaleTags time.Duration, dirtyToken int, now time.Time) error
+	UpdateUploadsVisibleToCommits(ctx context.Context, repositoryID int, graph *commitgraph.CommitGraph, refs map[string][]gitdomain.Ref, maxAgeForNonStaleBranches, maxAgeForNonStaleTags time.Duration, dirtyToken int, now time.Time) error
 	GetCommitsVisibleToUpload(ctx context.Context, uploadID, limit int, token *string) ([]string, *string, error)
-	FindClosestDumps(ctx context.Context, repositoryID int, commit, path string, rootMustEnclosePath bool, indexer string) ([]shared.Dump, error)
-	FindClosestDumpsFromGraphFragment(ctx context.Context, repositoryID int, commit, path string, rootMustEnclosePath bool, indexer string, commitGraph *gitdomain.CommitGraph) ([]shared.Dump, error)
+	// The resulting uploads are guaranteed to be unique per (indexer, root) pair,
+	// see NOTE(id: closest-uploads-postcondition).
+	FindClosestCompletedUploads(context.Context, shared.UploadMatchingOptions) ([]shared.CompletedUpload, error)
+	// The resulting uploads are guaranteed to be unique per (indexer, root) pair,
+	// see NOTE(id: closest-uploads-postcondition).
+	FindClosestCompletedUploadsFromGraphFragment(_ context.Context, _ shared.UploadMatchingOptions, commitGraph *commitgraph.CommitGraph) ([]shared.CompletedUpload, error)
 	GetRepositoriesMaxStaleAge(ctx context.Context) (time.Duration, error)
 	GetCommitGraphMetadata(ctx context.Context, repositoryID int) (stale bool, updatedAt *time.Time, _ error)
 
@@ -81,7 +88,7 @@ type Store interface {
 	SoftDeleteExpiredUploadsViaTraversal(ctx context.Context, maxTraversal int) (int, int, error)
 
 	// Commit date
-	GetOldestCommitDate(ctx context.Context, repositoryID int) (time.Time, bool, error)
+	GetCommitAndDateForOldestUpload(ctx context.Context, repositoryID int) (core.Option[CommitWithDate], error)
 	UpdateCommittedAt(ctx context.Context, repositoryID int, commit, commitDateString string) error
 	SourcedCommitsWithoutCommittedAt(ctx context.Context, batchSize int) ([]SourcedCommits, error)
 
@@ -92,13 +99,13 @@ type Store interface {
 	DeleteOldAuditLogs(ctx context.Context, maxAge time.Duration, now time.Time) (numRecordsScanned, numRecordsAltered int, _ error)
 	ReconcileCandidates(ctx context.Context, batchSize int) ([]int, error)
 	ProcessStaleSourcedCommits(ctx context.Context, minimumTimeSinceLastCheck time.Duration, commitResolverBatchSize int, commitResolverMaximumCommitLag time.Duration, shouldDelete func(ctx context.Context, repositoryID int, repositoryName, commit string) (bool, error)) (int, int, error)
-	DeleteIndexesWithoutRepository(ctx context.Context, now time.Time) (int, int, error)
+	DeleteAutoIndexJobsWithoutRepository(ctx context.Context, now time.Time) (int, int, error)
 	ExpireFailedRecords(ctx context.Context, batchSize int, failedIndexMaxAge time.Duration, now time.Time) (int, int, error)
 	ProcessSourcedCommits(ctx context.Context, minimumTimeSinceLastCheck time.Duration, commitResolverMaximumCommitLag time.Duration, limit int, f func(ctx context.Context, repositoryID int, repositoryName, commit string) (bool, error), now time.Time) (int, int, error)
 
 	// Misc
-	HasRepository(ctx context.Context, repositoryID int) (bool, error)
-	HasCommit(ctx context.Context, repositoryID int, commit string) (bool, error)
+	HasRepository(ctx context.Context, repositoryID api.RepoID) (bool, error)
+	HasCommit(ctx context.Context, repositoryID api.RepoID, commit api.CommitID) (bool, error)
 	InsertDependencySyncingJob(ctx context.Context, uploadID int) (int, error)
 }
 

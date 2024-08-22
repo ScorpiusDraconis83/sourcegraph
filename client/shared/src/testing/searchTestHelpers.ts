@@ -9,6 +9,7 @@ import type { Controller } from '../extensions/controller'
 import type { PlatformContext } from '../platform/context'
 import type { AggregateStreamingSearchResults, ContentMatch, RepositoryMatch } from '../search/stream'
 import type { SettingsCascade } from '../settings/settings'
+import { noOpTelemetryRecorder } from '../telemetry'
 
 export const CHUNK_MATCH_RESULT: ContentMatch = {
     type: 'content',
@@ -336,13 +337,13 @@ export const SEARCH_RESULT: AggregateStreamingSearchResults = {
         skipped: [],
     },
     filters: [
-        { value: 'file:\\.yml$', label: 'YAML', count: 1, limitHit: false, kind: 'file' },
-        { value: 'case:yes', label: 'Make search case sensitive', count: 0, limitHit: false, kind: 'utility' },
+        { value: 'file:\\.yml$', label: 'YAML', count: 1, exhaustive: true, kind: 'file' },
+        { value: 'case:yes', label: 'Make search case sensitive', count: 0, exhaustive: true, kind: 'utility' },
         {
             value: 'repo:^github\\.com/golang/oauth2$',
             label: 'github.com/golang/oauth2',
             count: 1,
-            limitHit: false,
+            exhaustive: true,
             kind: 'repo',
         },
     ],
@@ -643,10 +644,11 @@ export const extensionsController: Controller = {
 
 export const NOOP_PLATFORM_CONTEXT: Pick<
     PlatformContext,
-    'sourcegraphURL' | 'requestGraphQL' | 'urlToFile' | 'settings'
+    'sourcegraphURL' | 'requestGraphQL' | 'urlToFile' | 'settings' | 'telemetryRecorder'
 > = {
     requestGraphQL: () => EMPTY,
     urlToFile: () => '',
     settings: of(NOOP_SETTINGS_CASCADE),
     sourcegraphURL: '',
+    telemetryRecorder: noOpTelemetryRecorder,
 }

@@ -11,6 +11,7 @@ import { dataOrThrowErrors, gql } from '@sourcegraph/http-client'
 import { UserAvatar } from '@sourcegraph/shared/src/components/UserAvatar'
 import { SearchJobsOrderBy, SearchJobState, SearchPatternType } from '@sourcegraph/shared/src/graphql-operations'
 import { detectPatternType } from '@sourcegraph/shared/src/search/query/scanner'
+import { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { useIsLightTheme } from '@sourcegraph/shared/src/theme'
 import {
@@ -120,12 +121,12 @@ export const SEARCH_JOBS_QUERY = gql`
     }
 `
 
-interface SearchJobsPageProps extends TelemetryProps {
+interface SearchJobsPageProps extends TelemetryProps, TelemetryV2Props {
     isAdmin: boolean
 }
 
 export const SearchJobsPage: FC<SearchJobsPageProps> = props => {
-    const { isAdmin, telemetryService } = props
+    const { isAdmin, telemetryService, telemetryRecorder } = props
 
     const [searchTerm, setSearchTerm] = useState<string>('')
     const [searchStateTerm, setSearchStateTerm] = useState('')
@@ -154,7 +155,6 @@ export const SearchJobsPage: FC<SearchJobsPageProps> = props => {
         options: {
             pollInterval: 5000,
             fetchPolicy: 'cache-and-network',
-            pageSize: 15,
         },
         getConnection: result => {
             const data = dataOrThrowErrors(result)
@@ -165,7 +165,8 @@ export const SearchJobsPage: FC<SearchJobsPageProps> = props => {
 
     useEffect(() => {
         telemetryService.logViewEvent('SearchJobsListPage')
-    }, [telemetryService])
+        telemetryRecorder.recordEvent('searchJobs.list', 'view')
+    }, [telemetryService, telemetryRecorder])
 
     const handleSearchJobCreate = (): void => {
         setJobToRestart(null)
@@ -181,15 +182,22 @@ export const SearchJobsPage: FC<SearchJobsPageProps> = props => {
         <Page>
             <PageTitle title="Search jobs" />
             <PageHeader
-                annotation={<FeedbackBadge status="experimental" feedback={{ mailto: 'support@sourcegraph.com' }} />}
+                annotation={<FeedbackBadge status="beta" feedback={{ mailto: 'support@sourcegraph.com' }} />}
                 path={[{ icon: LayersSearchOutlineIcon, text: 'Search Jobs' }]}
                 description={
                     <>
-                        Manage Sourcegraph queries that have been run exhaustively to return all results.{' '}
-                        <Link to="/help/code_search/how-to/search-jobs" target="_blank" rel="noopener noreferrer">
-                            Learn more
-                        </Link>{' '}
-                        about search jobs.
+                        <Text>Manage Sourcegraph queries that have been run in the background.</Text>
+                        <Text>
+                            Use search jobs if your goal is to obtain an exhaustive list of results from a large corpus.
+                            Search jobs prioritize completeness over quick response times and results ranking.{' '}
+                            <Link
+                                to="/help/code-search/types/search-jobs#using-search-jobs"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                            >
+                                Learn how to create a search job.
+                            </Link>
+                        </Text>
                     </>
                 }
             />
@@ -262,7 +270,7 @@ export const SearchJobsPage: FC<SearchJobsPageProps> = props => {
                     <ul className={styles.jobs}>
                         {connection.nodes.length === 0 && (
                             <SearchJobsZeroState
-                                searchTerm={searchTerm}
+                                searchTerm={debouncedSearchTerm}
                                 selectedUsers={selectedUsers}
                                 selectedStates={selectedStates}
                             />
@@ -274,6 +282,7 @@ export const SearchJobsPage: FC<SearchJobsPageProps> = props => {
                                 job={searchJob}
                                 withCreatorColumn={isAdmin}
                                 telemetryService={telemetryService}
+                                telemetryRecorder={telemetryRecorder}
                                 onRerun={setJobToRestart}
                                 onCancel={setJobToCancel}
                                 onDelete={setJobToDelete}
@@ -304,7 +313,7 @@ export const SearchJobsPage: FC<SearchJobsPageProps> = props => {
 const formatDate = timeFormat('%Y-%m-%d %H:%M:%S')
 const formatDateSlim = timeFormat('%Y-%m-%d')
 
-interface SearchJobProps extends TelemetryProps {
+interface SearchJobProps extends TelemetryProps, TelemetryV2Props {
     job: SearchJobNode
     withCreatorColumn: boolean
     onRerun: (job: SearchJobNode) => void
@@ -326,7 +335,7 @@ const SyntaxHighlightedSearchQueryCodeMirror: FC<{ query: string; patternType?: 
 )
 
 const SearchJob: FC<SearchJobProps> = props => {
-    const { job, withCreatorColumn, telemetryService, onRerun, onCancel, onDelete } = props
+    const { job, withCreatorColumn, telemetryService, telemetryRecorder, onRerun, onCancel, onDelete } = props
     const { repoStats } = job
 
     const startDate = useMemo(() => (job.startedAt ? formatDateSlim(new Date(job.startedAt)) : ''), [job.startedAt])
@@ -342,7 +351,7 @@ const SearchJob: FC<SearchJobProps> = props => {
             </span>
 
             <span className={styles.jobQuery}>
-                {job.state !== SearchJobState.COMPLETED && (
+                {job.state === SearchJobState.PROCESSING && (
                     <Text className="m-0 text-muted">
                         {repoStats.completed} out of {repoStats.total} tasks
                     </Text>
@@ -367,6 +376,7 @@ const SearchJob: FC<SearchJobProps> = props => {
                     className={styles.jobViewLogs}
                     onClick={() => {
                         telemetryService.log('SearchJobsResultViewLogsClick', {}, {})
+                        telemetryRecorder.recordEvent('searchJobs.result.viewLogs', 'click')
                     }}
                 >
                     View logs
@@ -421,6 +431,7 @@ const SearchJob: FC<SearchJobProps> = props => {
                     className={styles.jobDownload}
                     onClick={() => {
                         telemetryService.log('SearchJobsResultDownloadClick', {}, {})
+                        telemetryRecorder.recordEvent('searchJobs.result.download', 'click')
                     }}
                 >
                     <Icon svgPath={mdiDownload} aria-hidden={true} />

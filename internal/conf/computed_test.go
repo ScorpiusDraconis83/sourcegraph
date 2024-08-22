@@ -1,6 +1,8 @@
 package conf
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -302,6 +304,23 @@ func TestCodyEnabled(t *testing.T) {
 			sc:   schema.SiteConfiguration{Completions: &schema.Completions{Enabled: pointers.Ptr(true), Model: "foobar"}},
 			want: true,
 		},
+		{
+			// Having the ModelConfiguration explicitly set will not be sufficient. The
+			// cody.enabled setting is still required.
+			name: "cody.enabled not set, modelconfig supplied",
+			sc: schema.SiteConfiguration{
+				ModelConfiguration: &schema.SiteModelConfiguration{},
+			},
+			want: false,
+		},
+		{
+			name: "cody.enabled not set, modelconfig supplied",
+			sc: schema.SiteConfiguration{
+				CodyEnabled:        pointers.Ptr(true),
+				ModelConfiguration: &schema.SiteModelConfiguration{},
+			},
+			want: true,
+		},
 	}
 
 	for _, test := range tests {
@@ -317,11 +336,13 @@ func TestGetCompletionsConfig(t *testing.T) {
 	licenseKey := "theasdfkey"
 	licenseAccessToken := license.GenerateLicenseKeyBasedAccessToken(licenseKey)
 	zeroConfigDefaultWithLicense := &conftypes.CompletionsConfig{
-		ChatModel:                "anthropic/claude-2.0",
+		ChatModel:                "anthropic/claude-3-sonnet-20240229",
 		ChatModelMaxTokens:       12000,
-		FastChatModel:            "anthropic/claude-instant-1",
-		FastChatModelMaxTokens:   9000,
-		CompletionModel:          "anthropic/claude-instant-1",
+		SmartContextWindow:       "enabled",
+		DisableClientConfigAPI:   false,
+		FastChatModel:            "anthropic/claude-3-haiku-20240307",
+		FastChatModelMaxTokens:   12000,
+		CompletionModel:          "fireworks/starcoder",
 		CompletionModelMaxTokens: 9000,
 		AccessToken:              licenseAccessToken,
 		Provider:                 "sourcegraph",
@@ -395,7 +416,7 @@ func TestGetCompletionsConfig(t *testing.T) {
 			wantDisabled: true,
 		},
 		{
-			name: "anthropic completions",
+			name: "anthropic completion defaults",
 			siteConfig: schema.SiteConfiguration{
 				CodyEnabled: pointers.Ptr(true),
 				LicenseKey:  licenseKey,
@@ -406,40 +427,46 @@ func TestGetCompletionsConfig(t *testing.T) {
 				},
 			},
 			wantConfig: &conftypes.CompletionsConfig{
-				ChatModel:                "claude-2.0",
+				ChatModel:                "claude-3-sonnet-20240229",
 				ChatModelMaxTokens:       12000,
-				FastChatModel:            "claude-instant-1",
-				FastChatModelMaxTokens:   9000,
-				CompletionModel:          "claude-instant-1",
-				CompletionModelMaxTokens: 9000,
+				SmartContextWindow:       "enabled",
+				DisableClientConfigAPI:   false,
+				FastChatModel:            "claude-3-haiku-20240307",
+				FastChatModelMaxTokens:   12000,
+				CompletionModel:          "claude-3-haiku-20240307",
+				CompletionModelMaxTokens: 12000,
 				AccessToken:              "asdf",
 				Provider:                 "anthropic",
-				Endpoint:                 "https://api.anthropic.com/v1/complete",
+				Endpoint:                 "https://api.anthropic.com/v1/messages",
 			},
 		},
 		{
-			name: "anthropic completions, with only completions.enabled",
+			name: "anthropic completions, with overwrites",
 			siteConfig: schema.SiteConfiguration{
 				CodyEnabled: pointers.Ptr(true),
 				LicenseKey:  licenseKey,
 				Completions: &schema.Completions{
-					Enabled:         pointers.Ptr(true),
-					Provider:        "anthropic",
-					AccessToken:     "asdf",
-					ChatModel:       "claude-v1",
-					CompletionModel: "claude-instant-1",
+					Enabled:                pointers.Ptr(true),
+					Provider:               "anthropic",
+					AccessToken:            "asdf",
+					ChatModel:              "claude-3-opus-20240229",
+					SmartContextWindow:     "disabled",
+					DisableClientConfigAPI: pointers.Ptr(false),
+					CompletionModel:        "claude-instant-1.2",
 				},
 			},
 			wantConfig: &conftypes.CompletionsConfig{
-				ChatModel:                "claude-v1",
-				ChatModelMaxTokens:       9000,
-				FastChatModel:            "claude-instant-1",
-				FastChatModelMaxTokens:   9000,
-				CompletionModel:          "claude-instant-1",
+				ChatModel:                "claude-3-opus-20240229",
+				ChatModelMaxTokens:       12000,
+				SmartContextWindow:       "disabled",
+				DisableClientConfigAPI:   false,
+				FastChatModel:            "claude-3-haiku-20240307",
+				FastChatModelMaxTokens:   12000,
+				CompletionModel:          "claude-instant-1.2",
 				CompletionModelMaxTokens: 9000,
 				AccessToken:              "asdf",
 				Provider:                 "anthropic",
-				Endpoint:                 "https://api.anthropic.com/v1/complete",
+				Endpoint:                 "https://api.anthropic.com/v1/messages",
 			},
 		},
 		{
@@ -465,9 +492,11 @@ func TestGetCompletionsConfig(t *testing.T) {
 			},
 			wantConfig: &conftypes.CompletionsConfig{
 				ChatModel:                "gpt-4",
-				ChatModelMaxTokens:       7500,
+				ChatModelMaxTokens:       7000,
+				SmartContextWindow:       "enabled",
+				DisableClientConfigAPI:   false,
 				FastChatModel:            "gpt-3.5-turbo",
-				FastChatModelMaxTokens:   4000,
+				FastChatModelMaxTokens:   16000,
 				CompletionModel:          "gpt-3.5-turbo-instruct",
 				CompletionModelMaxTokens: 4000,
 				AccessToken:              "asdf",
@@ -481,21 +510,25 @@ func TestGetCompletionsConfig(t *testing.T) {
 				CodyEnabled: pointers.Ptr(true),
 				LicenseKey:  licenseKey,
 				Completions: &schema.Completions{
-					Provider:        "azure-openai",
-					AccessToken:     "asdf",
-					Endpoint:        "https://acmecorp.openai.azure.com",
-					ChatModel:       "gpt4-deployment",
-					FastChatModel:   "gpt35-turbo-deployment",
-					CompletionModel: "gpt35-turbo-deployment",
+					Provider:               "azure-openai",
+					AccessToken:            "asdf",
+					Endpoint:               "https://acmecorp.openai.azure.com",
+					ChatModel:              "gpt4-deployment",
+					SmartContextWindow:     "disabled",
+					DisableClientConfigAPI: pointers.Ptr(false),
+					FastChatModel:          "gpt35-turbo-deployment",
+					CompletionModel:        "gpt35-turbo-deployment",
 				},
 			},
 			wantConfig: &conftypes.CompletionsConfig{
 				ChatModel:                "gpt4-deployment",
-				ChatModelMaxTokens:       7500,
+				ChatModelMaxTokens:       7000,
+				SmartContextWindow:       "disabled",
+				DisableClientConfigAPI:   false,
 				FastChatModel:            "gpt35-turbo-deployment",
-				FastChatModelMaxTokens:   7500,
+				FastChatModelMaxTokens:   7000,
 				CompletionModel:          "gpt35-turbo-deployment",
-				CompletionModelMaxTokens: 7500,
+				CompletionModelMaxTokens: 7000,
 				AccessToken:              "asdf",
 				Provider:                 "azure-openai",
 				Endpoint:                 "https://acmecorp.openai.azure.com",
@@ -514,9 +547,11 @@ func TestGetCompletionsConfig(t *testing.T) {
 			wantConfig: &conftypes.CompletionsConfig{
 				ChatModel:                "accounts/fireworks/models/llama-v2-7b",
 				ChatModelMaxTokens:       3000,
+				SmartContextWindow:       "enabled",
+				DisableClientConfigAPI:   false,
 				FastChatModel:            "accounts/fireworks/models/llama-v2-7b",
 				FastChatModelMaxTokens:   3000,
-				CompletionModel:          "accounts/fireworks/models/starcoder-7b-w8a16",
+				CompletionModel:          "starcoder",
 				CompletionModelMaxTokens: 6000,
 				AccessToken:              "asdf",
 				Provider:                 "fireworks",
@@ -536,8 +571,36 @@ func TestGetCompletionsConfig(t *testing.T) {
 			wantConfig: &conftypes.CompletionsConfig{
 				ChatModel:                "anthropic.claude-v2",
 				ChatModelMaxTokens:       12000,
+				SmartContextWindow:       "enabled",
+				DisableClientConfigAPI:   false,
 				FastChatModel:            "anthropic.claude-instant-v1",
 				FastChatModelMaxTokens:   9000,
+				CompletionModel:          "anthropic.claude-instant-v1",
+				CompletionModelMaxTokens: 9000,
+				AccessToken:              "",
+				Provider:                 "aws-bedrock",
+				Endpoint:                 "us-west-2",
+			},
+		},
+		{
+			name: "AWS Bedrock completions with Provisioned Throughput for some of the models",
+			siteConfig: schema.SiteConfiguration{
+				CodyEnabled: pointers.Ptr(true),
+				LicenseKey:  licenseKey,
+				Completions: &schema.Completions{
+					Provider:      "aws-bedrock",
+					Endpoint:      "us-west-2",
+					ChatModel:     "anthropic.claude-3-haiku-20240307-v1:0-100k/arn:aws:bedrock:us-west-2:012345678901:provisioned-model/abcdefghijkl",
+					FastChatModel: "anthropic.claude-v2",
+				},
+			},
+			wantConfig: &conftypes.CompletionsConfig{
+				ChatModel:                "anthropic.claude-3-haiku-20240307-v1:0-100k/arn:aws:bedrock:us-west-2:012345678901:provisioned-model/abcdefghijkl",
+				ChatModelMaxTokens:       100_000,
+				SmartContextWindow:       "enabled",
+				DisableClientConfigAPI:   false,
+				FastChatModel:            "anthropic.claude-v2",
+				FastChatModelMaxTokens:   12000,
 				CompletionModel:          "anthropic.claude-instant-v1",
 				CompletionModelMaxTokens: 9000,
 				AccessToken:              "",
@@ -575,6 +638,8 @@ func TestGetCompletionsConfig(t *testing.T) {
 			wantConfig: &conftypes.CompletionsConfig{
 				ChatModel:                "anthropic/claude-v1.3",
 				ChatModelMaxTokens:       9000,
+				SmartContextWindow:       "enabled",
+				DisableClientConfigAPI:   false,
 				FastChatModel:            "anthropic/claude-instant-1.3",
 				FastChatModelMaxTokens:   9000,
 				CompletionModel:          "anthropic/claude-instant-1.3",
@@ -633,22 +698,138 @@ func TestGetCompletionsConfig(t *testing.T) {
 	}
 }
 
+func TestGetFeaturesConfig(t *testing.T) {
+	zeroConfigDefaultWithLicense := &conftypes.ConfigFeatures{
+		Chat:         true,
+		AutoComplete: true,
+		Commands:     true,
+	}
+
+	testCases := []struct {
+		name         string
+		siteConfig   schema.SiteConfiguration
+		deployType   string
+		wantConfig   *conftypes.ConfigFeatures
+		wantDisabled bool
+	}{
+		{
+			name: "Only Chat enabled",
+			siteConfig: schema.SiteConfiguration{
+				CodyEnabled: pointers.Ptr(true),
+				ConfigFeatures: &schema.ConfigFeatures{
+					Chat: true,
+				},
+			},
+			wantConfig: &conftypes.ConfigFeatures{
+				Chat:         true,
+				AutoComplete: false,
+				Commands:     false,
+			},
+		},
+		{
+			name: "Only AutoComplete enabled",
+			siteConfig: schema.SiteConfiguration{
+				CodyEnabled: pointers.Ptr(true),
+				ConfigFeatures: &schema.ConfigFeatures{
+					AutoComplete: true,
+				},
+			},
+			wantConfig: &conftypes.ConfigFeatures{
+				Chat:         false,
+				AutoComplete: true,
+				Commands:     false,
+			},
+		},
+		{
+			name: "Only Commands enabled",
+			siteConfig: schema.SiteConfiguration{
+				CodyEnabled: pointers.Ptr(true),
+				ConfigFeatures: &schema.ConfigFeatures{
+					Commands: true,
+				},
+			},
+			wantConfig: &conftypes.ConfigFeatures{
+				Chat:         false,
+				AutoComplete: false,
+				Commands:     true,
+			},
+		},
+		{
+			name: "No config given",
+			siteConfig: schema.SiteConfiguration{
+				CodyEnabled:    pointers.Ptr(true),
+				ConfigFeatures: nil,
+			},
+			wantConfig: &conftypes.ConfigFeatures{
+				Chat:         true,
+				AutoComplete: true,
+				Commands:     true,
+			},
+		},
+		{
+			name: "All Config Enabled",
+			siteConfig: schema.SiteConfiguration{
+				CodyEnabled: pointers.Ptr(true),
+				ConfigFeatures: &schema.ConfigFeatures{
+					Commands:     true,
+					Chat:         true,
+					AutoComplete: true,
+				},
+			},
+			wantConfig: &conftypes.ConfigFeatures{
+				Chat:         true,
+				AutoComplete: true,
+				Commands:     true,
+			},
+		},
+		{
+			name: "Commands and Autocomplete Enabled",
+			siteConfig: schema.SiteConfiguration{
+				CodyEnabled: pointers.Ptr(true),
+				ConfigFeatures: &schema.ConfigFeatures{
+					Commands:     true,
+					Chat:         false,
+					AutoComplete: true,
+				},
+			},
+			wantConfig: &conftypes.ConfigFeatures{
+				Chat:         false,
+				AutoComplete: true,
+				Commands:     true,
+			},
+		},
+	}
+	fmt.Println(testCases, zeroConfigDefaultWithLicense, "what is love")
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			defaultDeploy := deploy.Type()
+			if tc.deployType != "" {
+				deploy.Mock(tc.deployType)
+			}
+			t.Cleanup(func() {
+				deploy.Mock(defaultDeploy)
+			})
+			conf := GetConfigFeatures(tc.siteConfig)
+			if tc.wantDisabled {
+				if conf != nil {
+					t.Fatalf("expected nil config but got non-nil: %+v", conf)
+				}
+			} else {
+				if conf == nil {
+					t.Fatal("unexpected nil config returned")
+				}
+				if diff := cmp.Diff(tc.wantConfig, conf); diff != "" {
+					t.Fatalf("unexpected config computed: %s", diff)
+				}
+			}
+		})
+	}
+}
+
 func TestGetEmbeddingsConfig(t *testing.T) {
 	licenseKey := "theasdfkey"
 	licenseAccessToken := license.GenerateLicenseKeyBasedAccessToken(licenseKey)
-	defaultQdrantConfig := conftypes.QdrantConfig{
-		QdrantHNSWConfig: conftypes.QdrantHNSWConfig{
-			OnDisk: true,
-		},
-		QdrantOptimizersConfig: conftypes.QdrantOptimizersConfig{
-			IndexingThreshold: 0,
-			MemmapThreshold:   100,
-		},
-		QdrantQuantizationConfig: conftypes.QdrantQuantizationConfig{
-			Enabled:  true,
-			Quantile: 0.98,
-		},
-	}
 	zeroConfigDefaultWithLicense := &conftypes.EmbeddingsConfig{
 		Provider:                   "sourcegraph",
 		AccessToken:                licenseAccessToken,
@@ -664,18 +845,18 @@ func TestGetEmbeddingsConfig(t *testing.T) {
 			MaxFileSizeBytes: 1000000,
 		},
 		ExcludeChunkOnError: true,
-		Qdrant:              defaultQdrantConfig,
 	}
 
 	testCases := []struct {
-		name         string
-		siteConfig   schema.SiteConfiguration
-		deployType   string
-		wantConfig   *conftypes.EmbeddingsConfig
-		wantDisabled bool
+		name            string
+		siteConfig      schema.SiteConfiguration
+		deployType      string
+		wantConfig      *conftypes.EmbeddingsConfig
+		allowEmbeddings bool
+		wantDisabled    bool
 	}{
 		{
-			name: "Embeddings disabled",
+			name: "Embeddings explicitly disabled",
 			siteConfig: schema.SiteConfiguration{
 				CodyEnabled: pointers.Ptr(true),
 				LicenseKey:  licenseKey,
@@ -683,35 +864,39 @@ func TestGetEmbeddingsConfig(t *testing.T) {
 					Enabled: pointers.Ptr(false),
 				},
 			},
-			wantDisabled: true,
+			allowEmbeddings: true,
+			wantDisabled:    true,
 		},
 		{
-			name: "cody.enabled and empty embeddings object",
+			name: "Cody.enabled and empty embeddings object",
 			siteConfig: schema.SiteConfiguration{
 				CodyEnabled: pointers.Ptr(true),
 				LicenseKey:  licenseKey,
 				Embeddings:  &schema.Embeddings{},
 			},
-			wantConfig: zeroConfigDefaultWithLicense,
+			allowEmbeddings: true,
+			wantConfig:      zeroConfigDefaultWithLicense,
 		},
 		{
-			name: "cody.enabled set false",
+			name: "Cody.enabled set false",
 			siteConfig: schema.SiteConfiguration{
 				CodyEnabled: pointers.Ptr(false),
 				Embeddings:  &schema.Embeddings{},
 			},
-			wantDisabled: true,
+			allowEmbeddings: true,
+			wantDisabled:    true,
 		},
 		{
-			name: "no cody config",
+			name: "No Cody config",
 			siteConfig: schema.SiteConfiguration{
 				CodyEnabled: nil,
 				Embeddings:  nil,
 			},
-			wantDisabled: true,
+			allowEmbeddings: true,
+			wantDisabled:    true,
 		},
 		{
-			name: "Invalid provider",
+			name: "Enabled, Invalid provider",
 			siteConfig: schema.SiteConfiguration{
 				CodyEnabled: pointers.Ptr(true),
 				LicenseKey:  licenseKey,
@@ -719,18 +904,20 @@ func TestGetEmbeddingsConfig(t *testing.T) {
 					Provider: "invalid",
 				},
 			},
-			wantDisabled: true,
+			allowEmbeddings: true,
+			wantDisabled:    true,
 		},
 		{
-			name: "Implicit config with cody.enabled",
+			name: "Enabled, Implicit config with cody.enabled",
 			siteConfig: schema.SiteConfiguration{
 				CodyEnabled: pointers.Ptr(true),
 				LicenseKey:  licenseKey,
 			},
-			wantConfig: zeroConfigDefaultWithLicense,
+			allowEmbeddings: true,
+			wantConfig:      zeroConfigDefaultWithLicense,
 		},
 		{
-			name: "Sourcegraph provider",
+			name: "Enabled, Sourcegraph provider",
 			siteConfig: schema.SiteConfiguration{
 				CodyEnabled: pointers.Ptr(true),
 				LicenseKey:  licenseKey,
@@ -738,10 +925,11 @@ func TestGetEmbeddingsConfig(t *testing.T) {
 					Provider: "sourcegraph",
 				},
 			},
-			wantConfig: zeroConfigDefaultWithLicense,
+			allowEmbeddings: true,
+			wantConfig:      zeroConfigDefaultWithLicense,
 		},
 		{
-			name: "File filters",
+			name: "Enabled, File filters",
 			siteConfig: schema.SiteConfiguration{
 				CodyEnabled: pointers.Ptr(true),
 				LicenseKey:  licenseKey,
@@ -754,6 +942,7 @@ func TestGetEmbeddingsConfig(t *testing.T) {
 					},
 				},
 			},
+			allowEmbeddings: true,
 			wantConfig: &conftypes.EmbeddingsConfig{
 				Provider:                   "sourcegraph",
 				AccessToken:                licenseAccessToken,
@@ -771,11 +960,10 @@ func TestGetEmbeddingsConfig(t *testing.T) {
 					ExcludedFilePathPatterns: []string{"*.java"},
 				},
 				ExcludeChunkOnError: true,
-				Qdrant:              defaultQdrantConfig,
 			},
 		},
 		{
-			name: "File filters w/o MaxFileSizeBytes",
+			name: "Enabled, File filters w/o MaxFileSizeBytes",
 			siteConfig: schema.SiteConfiguration{
 				CodyEnabled: pointers.Ptr(true),
 				LicenseKey:  licenseKey,
@@ -787,6 +975,7 @@ func TestGetEmbeddingsConfig(t *testing.T) {
 					},
 				},
 			},
+			allowEmbeddings: true,
 			wantConfig: &conftypes.EmbeddingsConfig{
 				Provider:                   "sourcegraph",
 				AccessToken:                licenseAccessToken,
@@ -804,11 +993,10 @@ func TestGetEmbeddingsConfig(t *testing.T) {
 					ExcludedFilePathPatterns: []string{"*.java"},
 				},
 				ExcludeChunkOnError: true,
-				Qdrant:              defaultQdrantConfig,
 			},
 		},
 		{
-			name: "Disable exclude failed chunk during indexing",
+			name: "Enabled, Disable exclude failed chunk during indexing",
 			siteConfig: schema.SiteConfiguration{
 				CodyEnabled: pointers.Ptr(true),
 				LicenseKey:  licenseKey,
@@ -822,6 +1010,7 @@ func TestGetEmbeddingsConfig(t *testing.T) {
 					ExcludeChunkOnError: pointers.Ptr(false),
 				},
 			},
+			allowEmbeddings: true,
 			wantConfig: &conftypes.EmbeddingsConfig{
 				Provider:                   "sourcegraph",
 				AccessToken:                licenseAccessToken,
@@ -839,11 +1028,10 @@ func TestGetEmbeddingsConfig(t *testing.T) {
 					ExcludedFilePathPatterns: []string{"*.java"},
 				},
 				ExcludeChunkOnError: false,
-				Qdrant:              defaultQdrantConfig,
 			},
 		},
 		{
-			name: "No provider and no token, assume Sourcegraph",
+			name: "Enabled, No provider and no token, assume Sourcegraph",
 			siteConfig: schema.SiteConfiguration{
 				CodyEnabled: pointers.Ptr(true),
 				LicenseKey:  licenseKey,
@@ -851,6 +1039,7 @@ func TestGetEmbeddingsConfig(t *testing.T) {
 					Model: "openai/text-embedding-bobert-9000",
 				},
 			},
+			allowEmbeddings: true,
 			wantConfig: &conftypes.EmbeddingsConfig{
 				Provider:                   "sourcegraph",
 				AccessToken:                licenseAccessToken,
@@ -866,11 +1055,10 @@ func TestGetEmbeddingsConfig(t *testing.T) {
 					MaxFileSizeBytes: 1000000,
 				},
 				ExcludeChunkOnError: true,
-				Qdrant:              defaultQdrantConfig,
 			},
 		},
 		{
-			name: "Sourcegraph provider without license",
+			name: "Enabled, Sourcegraph provider without license",
 			siteConfig: schema.SiteConfiguration{
 				CodyEnabled: pointers.Ptr(true),
 				LicenseKey:  "",
@@ -878,10 +1066,11 @@ func TestGetEmbeddingsConfig(t *testing.T) {
 					Provider: "sourcegraph",
 				},
 			},
-			wantDisabled: true,
+			allowEmbeddings: true,
+			wantDisabled:    true,
 		},
 		{
-			name: "OpenAI provider",
+			name: "Enabled, OpenAI provider",
 			siteConfig: schema.SiteConfiguration{
 				CodyEnabled: pointers.Ptr(true),
 				LicenseKey:  licenseKey,
@@ -890,6 +1079,7 @@ func TestGetEmbeddingsConfig(t *testing.T) {
 					AccessToken: "asdf",
 				},
 			},
+			allowEmbeddings: true,
 			wantConfig: &conftypes.EmbeddingsConfig{
 				Provider:                   "openai",
 				AccessToken:                "asdf",
@@ -905,11 +1095,10 @@ func TestGetEmbeddingsConfig(t *testing.T) {
 					MaxFileSizeBytes: 1000000,
 				},
 				ExcludeChunkOnError: true,
-				Qdrant:              defaultQdrantConfig,
 			},
 		},
 		{
-			name: "OpenAI provider without access token",
+			name: "Enabled, OpenAI provider without access token",
 			siteConfig: schema.SiteConfiguration{
 				CodyEnabled: pointers.Ptr(true),
 				LicenseKey:  licenseKey,
@@ -917,10 +1106,11 @@ func TestGetEmbeddingsConfig(t *testing.T) {
 					Provider: "openai",
 				},
 			},
-			wantDisabled: true,
+			allowEmbeddings: true,
+			wantDisabled:    true,
 		},
 		{
-			name: "Azure OpenAI provider",
+			name: "Enabled, Azure OpenAI provider",
 			siteConfig: schema.SiteConfiguration{
 				CodyEnabled: pointers.Ptr(true),
 				LicenseKey:  licenseKey,
@@ -932,6 +1122,7 @@ func TestGetEmbeddingsConfig(t *testing.T) {
 					Model:       "the-model",
 				},
 			},
+			allowEmbeddings: true,
 			wantConfig: &conftypes.EmbeddingsConfig{
 				Provider:                   "azure-openai",
 				AccessToken:                "asdf",
@@ -947,14 +1138,47 @@ func TestGetEmbeddingsConfig(t *testing.T) {
 					MaxFileSizeBytes: 1000000,
 				},
 				ExcludeChunkOnError: true,
-				Qdrant:              defaultQdrantConfig,
 			},
+		},
+		{
+			name: "Disabled, Implicit config with cody.enabled",
+			siteConfig: schema.SiteConfiguration{
+				CodyEnabled: pointers.Ptr(true),
+				LicenseKey:  licenseKey,
+			},
+			allowEmbeddings: false,
+			wantDisabled:    true,
+		},
+		{
+			name: "Disabled, Sourcegraph provider",
+			siteConfig: schema.SiteConfiguration{
+				CodyEnabled: pointers.Ptr(true),
+				LicenseKey:  licenseKey,
+				Embeddings: &schema.Embeddings{
+					Provider: "sourcegraph",
+				},
+			},
+			allowEmbeddings: false,
+			wantDisabled:    true,
+		},
+		{
+			name: "Disabled, explict enabled",
+			siteConfig: schema.SiteConfiguration{
+				CodyEnabled: pointers.Ptr(true),
+				LicenseKey:  licenseKey,
+				Embeddings: &schema.Embeddings{
+					Provider: "sourcegraph",
+				},
+			},
+			allowEmbeddings: false,
+			wantDisabled:    true,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			defaultDeploy := deploy.Type()
+			MockForceAllowEmbeddings(t, tc.allowEmbeddings)
 			if tc.deployType != "" {
 				deploy.Mock(tc.deployType)
 			}
@@ -1008,4 +1232,179 @@ func TestEmailSenderName(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAccessTokenAllowNoExpiration(t *testing.T) {
+	testCases := []struct {
+		name       string
+		siteConfig schema.SiteConfiguration
+		want       bool
+	}{
+		{
+			name:       "no accesstoken config set",
+			siteConfig: schema.SiteConfiguration{},
+			want:       true,
+		},
+		{
+			name: "default value",
+			siteConfig: schema.SiteConfiguration{
+				AuthAccessTokens: &schema.AuthAccessTokens{
+					Allow: string(AccessTokensAll),
+				},
+			},
+			want: true,
+		},
+		{
+			name: "allow no expiration",
+			siteConfig: schema.SiteConfiguration{
+				AuthAccessTokens: &schema.AuthAccessTokens{
+					Allow:             string(AccessTokensAll),
+					AllowNoExpiration: pointers.Ptr(true),
+				},
+			},
+			want: true,
+		},
+		{
+			name: "do not allow no expiration",
+			siteConfig: schema.SiteConfiguration{
+				AuthAccessTokens: &schema.AuthAccessTokens{
+					Allow:             string(AccessTokensAll),
+					AllowNoExpiration: pointers.Ptr(false),
+				},
+			},
+			want: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			Mock(&Unified{SiteConfiguration: tc.siteConfig})
+			t.Cleanup(func() { Mock(nil) })
+
+			if got, want := AccessTokensAllowNoExpiration(), tc.want; got != want {
+				t.Fatalf("AccessTokensAllowNoExpiration() = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+func TestAccessTokensExpirationOptions(t *testing.T) {
+	testCases := []struct {
+		name        string
+		siteConfig  schema.SiteConfiguration
+		wantDefault int
+		wantOptions []int
+	}{
+		{
+			name:        "nil config",
+			siteConfig:  schema.SiteConfiguration{},
+			wantDefault: 90,
+			wantOptions: []int{7, 14, 30, 60, 90},
+		},
+		{
+			name: "empty config",
+			siteConfig: schema.SiteConfiguration{
+				AuthAccessTokens: &schema.AuthAccessTokens{},
+			},
+			wantDefault: 90,
+			wantOptions: []int{7, 14, 30, 60, 90},
+		},
+		{
+			name: "custom options no default",
+			siteConfig: schema.SiteConfiguration{
+				AuthAccessTokens: &schema.AuthAccessTokens{
+					ExpirationOptionDays: []int{10, 20},
+				},
+			},
+			wantDefault: 90,
+			wantOptions: []int{10, 20, 90},
+		},
+		{
+			name: "custom options including default",
+			siteConfig: schema.SiteConfiguration{
+				AuthAccessTokens: &schema.AuthAccessTokens{
+					ExpirationOptionDays:  []int{10, 20},
+					DefaultExpirationDays: pointers.Ptr(20),
+				},
+			},
+			wantDefault: 20,
+			wantOptions: []int{10, 20},
+		},
+		{
+			name: "ensure options are properly sorted",
+			siteConfig: schema.SiteConfiguration{
+				AuthAccessTokens: &schema.AuthAccessTokens{
+					ExpirationOptionDays:  []int{30, 20, 10},
+					DefaultExpirationDays: pointers.Ptr(15),
+				},
+			},
+			wantDefault: 15,
+			wantOptions: []int{10, 15, 20, 30},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			Mock(&Unified{
+				SiteConfiguration: tc.siteConfig,
+			})
+			defer Mock(nil)
+
+			defaultDays, options := AccessTokensExpirationOptions()
+
+			assert.Equal(t, tc.wantDefault, defaultDays)
+			assert.Equal(t, tc.wantOptions, options)
+		})
+	}
+}
+
+func TestExternalURLParsed(t *testing.T) {
+	t.Run("Result is mutable", func(t *testing.T) {
+		Mock(&Unified{SiteConfiguration: schema.SiteConfiguration{
+			ExternalURL: "https://sourcegraph.com",
+		}})
+		t.Cleanup(func() { Mock(nil) })
+		u := ExternalURLParsed()
+		u.Scheme = "http"
+		assert.Equal(t, "http://sourcegraph.com", u.String())
+		u2 := ExternalURLParsed()
+		assert.Equal(t, "https://sourcegraph.com", u2.String())
+		Mock(&Unified{SiteConfiguration: schema.SiteConfiguration{
+			ExternalURL: "https://sourcegraph.sourcegraph.com",
+		}})
+		assert.Equal(t, "http://sourcegraph.com", u.String())
+		assert.Equal(t, "https://sourcegraph.com", u2.String())
+	})
+	t.Run("Concurrent access and updates are memory safe", func(t *testing.T) {
+		Mock(&Unified{SiteConfiguration: schema.SiteConfiguration{
+			ExternalURL: "https://host-0.sourcegraph.com",
+		}})
+		t.Cleanup(func() { Mock(nil) })
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+			for i := range 1000 {
+				Mock(&Unified{SiteConfiguration: schema.SiteConfiguration{
+					ExternalURL: fmt.Sprintf("https://host-%d.sourcegraph.com", i),
+				}})
+				// Allow some time for synchronization.
+				time.Sleep(time.Millisecond)
+			}
+		}()
+
+		go func() {
+			defer wg.Done()
+			for range 1000 {
+				u := ExternalURLParsed()
+				assert.Contains(t, u.Host, ".sourcegraph.com")
+				// Allow some time for synchronization.
+				time.Sleep(time.Millisecond)
+			}
+		}()
+
+		wg.Wait()
+	})
 }

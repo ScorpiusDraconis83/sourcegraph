@@ -4,7 +4,7 @@ import { mdiHelpCircleOutline, mdiOpenInNew } from '@mdi/js'
 import classNames from 'classnames'
 import type * as H from 'history'
 import { from, Subject, Subscription } from 'rxjs'
-import { catchError, map, mapTo, mergeMap, startWith, tap } from 'rxjs/operators'
+import { catchError, map, mergeMap, startWith, tap } from 'rxjs/operators'
 
 import type { ActionContribution, Evaluated } from '@sourcegraph/client-api'
 import { asError, type ErrorLike, isExternalLink, logger } from '@sourcegraph/common'
@@ -21,7 +21,7 @@ import {
 import type { ExecuteCommandParameters } from '../api/client/mainthread-api'
 import { urlForOpenPanel } from '../commands/commands'
 import type { ExtensionsControllerProps } from '../extensions/controller'
-import type { PlatformContextProps } from '../platform/context'
+import type { TelemetryV2Props } from '../telemetry'
 import type { TelemetryProps } from '../telemetry/telemetryService'
 
 import styles from './ActionItem.module.scss'
@@ -52,9 +52,7 @@ export interface ActionItemStyleProps {
     actionItemOutline?: ButtonLinkProps['outline']
 }
 
-export interface ActionItemComponentProps
-    extends ExtensionsControllerProps<'executeCommand'>,
-        PlatformContextProps<'settings'> {
+export interface ActionItemComponentProps extends ExtensionsControllerProps<'executeCommand'> {
     location: H.Location
 
     iconClassName?: string
@@ -62,7 +60,7 @@ export interface ActionItemComponentProps
     actionItemStyleProps?: ActionItemStyleProps
 }
 
-export interface ActionItemProps extends ActionItemAction, ActionItemComponentProps, TelemetryProps {
+export interface ActionItemProps extends ActionItemAction, ActionItemComponentProps, TelemetryProps, TelemetryV2Props {
     variant?: 'actionItem'
 
     hideLabel?: boolean
@@ -145,7 +143,7 @@ export class ActionItem extends React.PureComponent<ActionItemProps, State, type
                                       )
                                   )
                         ).pipe(
-                            mapTo(null),
+                            map(() => null),
                             catchError(error => [asError(error)]),
                             map(actionOrError => ({ actionOrError })),
                             tap(() => {
@@ -359,6 +357,28 @@ export class ActionItem extends React.PureComponent<ActionItemProps, State, type
 
         // Record action ID (but not args, which might leak sensitive data).
         this.props.telemetryService.log(action.id)
+        if (action.telemetryProps) {
+            this.props.telemetryRecorder.recordEvent(
+                // 👷 HACK: We have no control over what gets sent over Comlink/
+                // web workers, so we depend on action contribution implementations
+                // to give type guidance to ensure that we don't accidentally share
+                // arbitrary, potentially sensitive string values. In this
+                // RPC handler, when passing the provided event to the
+                // TelemetryRecorder implementation, we forcibly cast all
+                // the inputs below (feature) into known types
+                // (the string 'feature') so that the recorder will accept
+                // it. DO NOT do this elsewhere!
+                action.telemetryProps.feature as 'feature',
+                'executed',
+                {
+                    privateMetadata: { action: action.id, ...action.telemetryProps.privateMetadata },
+                }
+            )
+        } else {
+            this.props.telemetryRecorder.recordEvent('blob.action', 'executed', {
+                privateMetadata: { action: action.id },
+            })
+        }
 
         const emitDidExecute = (): void => {
             if (this.props.onDidExecute) {

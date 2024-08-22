@@ -1,15 +1,13 @@
-import React, { useCallback, useState } from 'react'
+import React, { useState } from 'react'
 
-import { mdiInformationOutline, mdiLock } from '@mdi/js'
 import classNames from 'classnames'
 import { noop } from 'lodash'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 
 import { useMutation } from '@sourcegraph/http-client'
-import type { UserSettingFields, OrgSettingFields } from '@sourcegraph/shared/src/graphql-operations'
-import { Alert, Button, Container, Icon, Input, RadioButton, Tooltip, ErrorAlert, Form } from '@sourcegraph/wildcard'
+import { Alert, Button, Code, Container, ErrorAlert, Form } from '@sourcegraph/wildcard'
 
-import type { AuthenticatedUser } from '../../../auth'
+import { PatternConstrainedInput } from '../../../components/PatternConstrainedInput'
 import type {
     BatchChangeFields,
     CreateBatchSpecFromRawResult,
@@ -18,22 +16,24 @@ import type {
     CreateEmptyBatchChangeVariables,
     Scalars,
 } from '../../../graphql-operations'
+import { NamespaceSelector } from '../../../namespaces/NamespaceSelector'
+import { useAffiliatedNamespaces } from '../../../namespaces/useAffiliatedNamespaces'
 import { useBatchChangesLicense } from '../useBatchChangesLicense'
 
 import { CREATE_BATCH_SPEC_FROM_RAW, CREATE_EMPTY_BATCH_CHANGE } from './backend'
-import { NamespaceSelector } from './NamespaceSelector'
-import { useNamespaces } from './useNamespaces'
 
 import styles from './ConfigurationForm.module.scss'
 
-/* Regex pattern for a valid batch change name. Needs to match what's defined in the BatchSpec JSON schema. */
-const NAME_PATTERN = /^[\w.-]+$/
+/**
+ * Regex pattern for a valid batch change name. Needs to match what's defined in the BatchSpec JSON
+ * schema.
+ *
+ * Note that this uses the 'v' flag, so the '-' needs to be escaped. See
+ * https://developer.mozilla.org/en-US/docs/Web/HTML/Attributes/pattern.
+ */
+const NAME_PATTERN = '[\\w.\\-]+'
 
 type ConfigurationFormProps = {
-    /**
-     * The currently signed-in user.
-     */
-    authenticatedUser: AuthenticatedUser | null
     /**
      * When set, apply a template to the batch spec before redirecting to the edit page.
      */
@@ -74,7 +74,6 @@ export const ConfigurationForm: React.FunctionComponent<React.PropsWithChildren<
     renderTemplate,
     insightTitle,
     initialNamespaceID,
-    authenticatedUser,
 }) => {
     const [createEmptyBatchChange, { loading: batchChangeLoading, error: batchChangeError }] = useMutation<
         CreateEmptyBatchChangeResult,
@@ -85,19 +84,18 @@ export const ConfigurationForm: React.FunctionComponent<React.PropsWithChildren<
         CreateBatchSpecFromRawVariables
     >(CREATE_BATCH_SPEC_FROM_RAW)
 
-    // When creating a batch change we want to disable the `Create` button, to avoid
-    // users clicking on it again.
-    const isButtonDisabled = batchChangeLoading || batchSpecLoading
-    const error = batchChangeError || batchSpecError
-
     // The set of namespaces the user has permissions to create batch changes in, and the
     // namespace among those that should be selected by default.
-    const { namespaces, defaultSelectedNamespace } = useNamespaces(authenticatedUser, initialNamespaceID)
+    const {
+        namespaces,
+        initialNamespace,
+        loading: affiliatedNamespacesLoading,
+        error: affiliatedNamespacesError,
+    } = useAffiliatedNamespaces(initialNamespaceID)
 
     // If the user is creating a new batch change, this is the namespace selected.
-    const [selectedNamespace, setSelectedNamespace] = useState<
-        Pick<UserSettingFields, 'id'> | Pick<OrgSettingFields, 'id'>
-    >(defaultSelectedNamespace)
+    const [selectedNamespace, setSelectedNamespace] = useState<string | undefined>()
+    const selectedNamespaceOrInitial = selectedNamespace ?? initialNamespace?.id
 
     // If the batch change already exists and we're in read-only mode, the namespace it
     // was created in is the only one we care about showing in the selector. The current
@@ -107,26 +105,26 @@ export const ConfigurationForm: React.FunctionComponent<React.PropsWithChildren<
     const namespaceSelector = isReadOnly ? (
         <NamespaceSelector
             namespaces={[batchChange.namespace]}
-            selectedNamespace={batchChange.namespace.id}
+            value={batchChange.namespace.id}
             onSelect={noop}
             disabled={true}
         />
     ) : (
         <NamespaceSelector
             namespaces={namespaces}
-            selectedNamespace={selectedNamespace.id}
+            loading={affiliatedNamespacesLoading}
+            value={selectedNamespaceOrInitial}
             onSelect={setSelectedNamespace}
         />
     )
 
+    // When creating a batch change we want to disable the `Create` button, to avoid
+    // users clicking on it again.
+    const isButtonDisabled = batchChangeLoading || batchSpecLoading || affiliatedNamespacesLoading
+    const error = batchChangeError || batchSpecError || affiliatedNamespacesError
+
     const [nameInput, setNameInput] = useState(batchChange?.name || '')
     const [isNameValid, setIsNameValid] = useState<boolean>()
-
-    const onNameChange = useCallback<React.ChangeEventHandler<HTMLInputElement>>(event => {
-        const newName = event.target.value.replaceAll(' ', '-')
-        setNameInput(newName)
-        setIsNameValid(NAME_PATTERN.test(newName))
-    }, [])
 
     const { isUnlicensed, maxUnlicensedChangesets } = useBatchChangesLicense()
 
@@ -143,8 +141,11 @@ export const ConfigurationForm: React.FunctionComponent<React.PropsWithChildren<
         if (serializedRedirectSearchParameters.length > 0) {
             serializedRedirectSearchParameters = '?' + serializedRedirectSearchParameters
         }
+        if (selectedNamespaceOrInitial === undefined) {
+            return
+        }
         createEmptyBatchChange({
-            variables: { namespace: selectedNamespace.id, name: nameInput },
+            variables: { namespace: selectedNamespaceOrInitial, name: nameInput },
         })
             .then(args => {
                 if (!renderTemplate) {
@@ -157,7 +158,7 @@ export const ConfigurationForm: React.FunctionComponent<React.PropsWithChildren<
                 return batchChangeID && template
                     ? createBatchSpecFromRaw({
                           variables: {
-                              namespace: selectedNamespace.id,
+                              namespace: selectedNamespaceOrInitial,
                               spec: template,
                               batchChange: batchChangeID,
                           },
@@ -188,13 +189,16 @@ export const ConfigurationForm: React.FunctionComponent<React.PropsWithChildren<
                 )}
                 {error && <ErrorAlert error={error} />}
                 {namespaceSelector}
-                <Input
+                <PatternConstrainedInput
                     label="Batch change name"
                     value={nameInput}
-                    onChange={onNameChange}
-                    pattern="^[\w.-]+$"
+                    replaceSpaces={true}
+                    pattern={NAME_PATTERN}
+                    onChange={(value, isValid) => {
+                        setNameInput(value)
+                        setIsNameValid(isValid)
+                    }}
                     required={true}
-                    status={isNameValid === undefined ? undefined : isNameValid ? 'valid' : 'error'}
                     disabled={isReadOnly}
                 />
                 {!isReadOnly && (
@@ -202,46 +206,10 @@ export const ConfigurationForm: React.FunctionComponent<React.PropsWithChildren<
                         Give it a short, descriptive name to reference the batch change on Sourcegraph. Do not include
                         confidential information.{' '}
                         <span className={classNames(isNameValid === false && 'text-danger')}>
-                            Only letters, numbers, _, and - are allowed.
+                            Only letters, numbers, and <Code>_.-</Code> are allowed.
                         </span>
                     </small>
                 )}
-                <hr className="my-3" aria-hidden={true} />
-                <strong className="d-block mb-2">
-                    Visibility
-                    <Tooltip content="Coming soon">
-                        <Icon
-                            aria-label="Private batch changes coming soon"
-                            className="ml-1"
-                            svgPath={mdiInformationOutline}
-                        />
-                    </Tooltip>
-                </strong>
-                <div className="form-group mb-1" aria-hidden={true}>
-                    <RadioButton
-                        name="visibility"
-                        value="public"
-                        className="mr-2"
-                        checked={true}
-                        disabled={true}
-                        label="Public"
-                        aria-label="Public"
-                    />
-                </div>
-                <div className="form-group mb-0" aria-hidden={true}>
-                    <RadioButton
-                        name="visibility"
-                        value="private"
-                        className="mr-2 mb-0"
-                        disabled={true}
-                        label={
-                            <>
-                                Private <Icon aria-hidden={true} className="text-warning" svgPath={mdiLock} />
-                            </>
-                        }
-                        aria-label="Private"
-                    />
-                </div>
             </Container>
 
             {!isReadOnly && (

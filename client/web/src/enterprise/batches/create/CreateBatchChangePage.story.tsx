@@ -17,11 +17,7 @@ const decorator: Decorator = story => (
 const config: Meta = {
     title: 'web/batches/create/CreateBatchChangePage',
     decorators: [decorator],
-    parameters: {
-        chromatic: {
-            disableSnapshot: false,
-        },
-    },
+    parameters: {},
 }
 
 export default config
@@ -29,7 +25,6 @@ export default config
 const MOCK_ORGANIZATION = {
     __typename: 'Org',
     name: 'acme-corp',
-    displayName: 'ACME Corporation',
     id: 'acme-corp-id',
 }
 
@@ -49,7 +44,6 @@ export const ExperimentalExecutionDisabled: StoryFn = () => (
             <CreateBatchChangePage
                 {...props}
                 headingElement="h1"
-                authenticatedUser={mockAuthenticatedUser}
                 settingsCascade={{
                     ...EMPTY_SETTINGS_CASCADE,
                     final: { experimentalFeatures: { batchChangesExecution: false } },
@@ -87,7 +81,6 @@ export const ExperimentalExecutionEnabled: StoryFn = () => (
             <CreateBatchChangePage
                 {...props}
                 headingElement="h1"
-                authenticatedUser={mockAuthenticatedUser}
                 settingsCascade={{
                     ...EMPTY_SETTINGS_CASCADE,
                     subjects: [
@@ -109,7 +102,6 @@ export const ExperimentalExecutionEnabledFromOrgNamespace: StoryFn = () => (
                 {...props}
                 headingElement="h1"
                 initialNamespaceID={MOCK_ORGANIZATION.id}
-                authenticatedUser={mockAuthenticatedUser}
                 settingsCascade={{
                     ...EMPTY_SETTINGS_CASCADE,
                     final: {
@@ -134,7 +126,6 @@ export const ExperimentalExecutionEnabledFromUserNamespace: StoryFn = () => (
                 {...props}
                 headingElement="h1"
                 initialNamespaceID={mockAuthenticatedUser.id}
-                authenticatedUser={mockAuthenticatedUser}
                 settingsCascade={{
                     ...EMPTY_SETTINGS_CASCADE,
                     final: {

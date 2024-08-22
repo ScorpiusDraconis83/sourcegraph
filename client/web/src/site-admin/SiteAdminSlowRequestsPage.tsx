@@ -1,4 +1,4 @@
-import React, { type ReactNode, useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState, type ReactNode } from 'react'
 
 import { mdiChevronDown, mdiContentCopy } from '@mdi/js'
 import classNames from 'classnames'
@@ -7,6 +7,7 @@ import { map } from 'rxjs/operators'
 
 import { Timestamp } from '@sourcegraph/branded/src/components/Timestamp'
 import { dataOrThrowErrors } from '@sourcegraph/http-client'
+import { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import {
     Button,
@@ -26,7 +27,7 @@ import {
 import { requestGraphQL } from '../backend/graphql'
 import {
     FilteredConnection,
-    type FilteredConnectionFilter,
+    type Filter,
     type FilteredConnectionQueryArguments,
 } from '../components/FilteredConnection'
 import { PageTitle } from '../components/PageTitle'
@@ -36,16 +37,16 @@ import { SLOW_REQUESTS } from './backend'
 
 import styles from './SiteAdminSlowRequestsPage.module.scss'
 
-export interface SiteAdminSlowRequestsPageProps extends TelemetryProps {}
+export interface SiteAdminSlowRequestsPageProps extends TelemetryProps, TelemetryV2Props {}
 
 type SlowRequest = SlowRequestsResult['slowRequests']['nodes'][0]
 
-const filters: FilteredConnectionFilter[] = [
+const filters: Filter[] = [
     {
         id: 'filters',
         label: 'Filter',
         type: 'select',
-        values: [
+        options: [
             {
                 label: 'All',
                 value: 'all',
@@ -70,10 +71,11 @@ const filters: FilteredConnectionFilter[] = [
 
 export const SiteAdminSlowRequestsPage: React.FunctionComponent<
     React.PropsWithChildren<SiteAdminSlowRequestsPageProps>
-> = ({ telemetryService }) => {
+> = ({ telemetryService, telemetryRecorder }) => {
     useEffect(() => {
         telemetryService.logPageView('SiteAdminSlowRequests')
-    }, [telemetryService])
+        telemetryRecorder.recordEvent('admin.slowRequests', 'view')
+    }, [telemetryService, telemetryRecorder])
 
     const querySlowRequests = useCallback(
         (args: FilteredConnectionQueryArguments & { failed?: boolean }) =>

@@ -3,15 +3,16 @@ import React, { useCallback, useRef, useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import shallow from 'zustand/shallow'
 
-import { SearchBox, Toggles } from '@sourcegraph/branded'
+import { SearchBox } from '@sourcegraph/branded'
+import { Toggles } from '@sourcegraph/branded/src/search-ui/input/toggles/Toggles'
 import type { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
 import type { SearchContextInputProps, SubmitSearchParameters } from '@sourcegraph/shared/src/search'
 import type { SettingsCascadeProps } from '@sourcegraph/shared/src/settings/settings'
+import { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { Form } from '@sourcegraph/wildcard'
 
 import type { AuthenticatedUser } from '../../auth'
-import { useFeatureFlag } from '../../featureFlags/useFeatureFlag'
 import { useNavbarQueryState, setSearchCaseSensitivity } from '../../stores'
 import { type NavbarQueryState, setSearchMode, setSearchPatternType } from '../../stores/navbarSearchQueryState'
 import { useV2QueryInput } from '../useV2QueryInput'
@@ -23,6 +24,7 @@ interface Props
     extends SettingsCascadeProps,
         SearchContextInputProps,
         TelemetryProps,
+        TelemetryV2Props,
         PlatformContextProps<'requestGraphQL'> {
     authenticatedUser: AuthenticatedUser | null
     isSourcegraphDotCom: boolean
@@ -36,11 +38,26 @@ const selectQueryState = ({
     submitSearch,
     searchCaseSensitivity,
     searchPatternType,
+    defaultPatternType,
     searchMode,
 }: NavbarQueryState): Pick<
     NavbarQueryState,
-    'queryState' | 'setQueryState' | 'submitSearch' | 'searchCaseSensitivity' | 'searchPatternType' | 'searchMode'
-> => ({ queryState, setQueryState, submitSearch, searchCaseSensitivity, searchPatternType, searchMode })
+    | 'queryState'
+    | 'setQueryState'
+    | 'submitSearch'
+    | 'searchCaseSensitivity'
+    | 'searchPatternType'
+    | 'defaultPatternType'
+    | 'searchMode'
+> => ({
+    queryState,
+    setQueryState,
+    submitSearch,
+    searchCaseSensitivity,
+    searchPatternType,
+    defaultPatternType,
+    searchMode,
+})
 
 /**
  * The search item in the navbar
@@ -49,8 +66,15 @@ export const SearchNavbarItem: React.FunctionComponent<React.PropsWithChildren<P
     const navigate = useNavigate()
     const location = useLocation()
 
-    const { queryState, setQueryState, submitSearch, searchCaseSensitivity, searchPatternType, searchMode } =
-        useNavbarQueryState(selectQueryState, shallow)
+    const {
+        queryState,
+        setQueryState,
+        submitSearch,
+        searchCaseSensitivity,
+        searchPatternType,
+        defaultPatternType,
+        searchMode,
+    } = useNavbarQueryState(selectQueryState, shallow)
 
     const [v2QueryInput] = useV2QueryInput()
 
@@ -63,10 +87,11 @@ export const SearchNavbarItem: React.FunctionComponent<React.PropsWithChildren<P
                 location,
                 source: 'nav',
                 selectedSearchContextSpec: props.selectedSearchContextSpec,
+                telemetryRecorder: props.telemetryRecorder,
                 ...parameters,
             })
         },
-        [submitSearch, navigate, location, props.selectedSearchContextSpec]
+        [submitSearch, navigate, location, props.selectedSearchContextSpec, props.telemetryRecorder]
     )
     const submitSearchOnChangeRef = useRef(submitSearchOnChange)
     useEffect(() => {
@@ -78,12 +103,6 @@ export const SearchNavbarItem: React.FunctionComponent<React.PropsWithChildren<P
         submitSearchOnChangeRef.current()
     }, [])
 
-    // If the feature-flag "search-new-keyword" is set, we allow the user to
-    // choose between precise (legacy), precise (new), and smart search.  This
-    // is only temporary for internal testing.  The goal is to make the new
-    // precise search the default.
-    const [showExtendedPicker] = useFeatureFlag('search-new-keyword')
-
     // TODO (#48103): Remove/simplify when new search input is released
     if (v2QueryInput) {
         return (
@@ -94,6 +113,7 @@ export const SearchNavbarItem: React.FunctionComponent<React.PropsWithChildren<P
                 <LazyV2SearchInput
                     visualMode="compact"
                     telemetryService={props.telemetryService}
+                    telemetryRecorder={props.telemetryRecorder}
                     patternType={searchPatternType}
                     interpretComments={false}
                     queryState={queryState}
@@ -107,6 +127,7 @@ export const SearchNavbarItem: React.FunctionComponent<React.PropsWithChildren<P
                 >
                     <Toggles
                         patternType={searchPatternType}
+                        defaultPatternType={defaultPatternType}
                         caseSensitive={searchCaseSensitivity}
                         setPatternType={setSearchPatternType}
                         setCaseSensitivity={setSearchCaseSensitivity}
@@ -114,8 +135,9 @@ export const SearchNavbarItem: React.FunctionComponent<React.PropsWithChildren<P
                         setSearchMode={setSearchMode}
                         navbarSearchQuery={queryState.query}
                         submitSearch={submitSearchOnChange}
-                        structuralSearchDisabled={window.context?.experimentalFeatures?.structuralSearch === 'disabled'}
-                        showExtendedPicker={showExtendedPicker}
+                        structuralSearchDisabled={window.context?.experimentalFeatures?.structuralSearch !== 'enabled'}
+                        telemetryService={props.telemetryService}
+                        telemetryRecorder={props.telemetryRecorder}
                     />
                 </LazyV2SearchInput>
             </Form>
@@ -135,6 +157,7 @@ export const SearchNavbarItem: React.FunctionComponent<React.PropsWithChildren<P
                 caseSensitive={searchCaseSensitivity}
                 setCaseSensitivity={setSearchCaseSensitivity}
                 patternType={searchPatternType}
+                defaultPatternType={defaultPatternType}
                 setPatternType={setSearchPatternType}
                 searchMode={searchMode}
                 setSearchMode={setSearchMode}
@@ -143,7 +166,7 @@ export const SearchNavbarItem: React.FunctionComponent<React.PropsWithChildren<P
                 onSubmit={onSubmit}
                 submitSearchOnToggle={submitSearchOnChange}
                 submitSearchOnSearchContextChange={submitSearchOnChange}
-                structuralSearchDisabled={window.context?.experimentalFeatures?.structuralSearch === 'disabled'}
+                structuralSearchDisabled={window.context?.experimentalFeatures?.structuralSearch !== 'enabled'}
                 hideHelpButton={false}
                 showSearchHistory={true}
                 recentSearches={recentSearches}

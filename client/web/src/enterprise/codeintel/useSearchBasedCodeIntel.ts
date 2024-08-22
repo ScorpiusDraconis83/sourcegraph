@@ -16,6 +16,7 @@ import { CODE_INTEL_SEARCH_QUERY, LOCAL_CODE_INTEL_QUERY } from '../../codeintel
 import type { SettingsGetter } from '../../codeintel/settings'
 import { isDefined } from '../../codeintel/util/helpers'
 import type { CodeIntelSearch2Variables } from '../../graphql-operations'
+import { SearchVersion } from '../../graphql-operations'
 import { syntaxHighlight } from '../../repo/blob/codemirror/highlight'
 import { getBlobEditView } from '../../repo/blob/use-blob-store'
 
@@ -124,7 +125,7 @@ function searchBasedReferencesViaSCIPLocals(options: UseSearchBasedCodeIntelOpti
     if (view === null) {
         return
     }
-    const occurrences = view.state.facet(syntaxHighlight).occurrences
+    const occurrences = view.state.facet(syntaxHighlight).interactiveOccurrences
     const { path, repo, position, fileContent: content, commit: commitID } = options
     const lines = split(content)
     const scipPosition = new ScipPosition(position.line, position.character)
@@ -367,6 +368,7 @@ async function executeSearchQuery(terms: string[]): Promise<SearchResult[]> {
         query: getDocumentNode(CODE_INTEL_SEARCH_QUERY),
         variables: {
             query: terms.join(' '),
+            version: SearchVersion.V3,
         },
     })
 
@@ -408,7 +410,6 @@ const cache = <Arguments extends unknown[], V>(
     return (...args) => {
         const key = stringify(args)
         if (lru.has(key)) {
-            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
             return lru.get(key)!
         }
         const value = func(...args)

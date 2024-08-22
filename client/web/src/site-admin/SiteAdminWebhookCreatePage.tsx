@@ -2,22 +2,27 @@ import { type FC, useEffect } from 'react'
 
 import { mdiWebhook } from '@mdi/js'
 
+import { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
-import { Container, PageHeader } from '@sourcegraph/wildcard'
+import { PageHeader } from '@sourcegraph/wildcard'
 
 import { PageTitle } from '../components/PageTitle'
 
 import { WebhookCreateUpdatePage } from './WebhookCreateUpdatePage'
 
-export interface SiteAdminWebhookCreatePageProps extends TelemetryProps {}
+export interface SiteAdminWebhookCreatePageProps extends TelemetryProps, TelemetryV2Props {}
 
-export const SiteAdminWebhookCreatePage: FC<SiteAdminWebhookCreatePageProps> = ({ telemetryService }) => {
+export const SiteAdminWebhookCreatePage: FC<SiteAdminWebhookCreatePageProps> = ({
+    telemetryService,
+    telemetryRecorder,
+}) => {
     useEffect(() => {
         telemetryService.logPageView('SiteAdminWebhookCreatePage')
-    }, [telemetryService])
+        telemetryRecorder.recordEvent('admin.webhook.create', 'view')
+    }, [telemetryService, telemetryRecorder])
 
     return (
-        <Container>
+        <>
             <PageTitle title="Create incoming webhook" />
             <PageHeader
                 path={[
@@ -30,6 +35,6 @@ export const SiteAdminWebhookCreatePage: FC<SiteAdminWebhookCreatePageProps> = (
                 className="mb-3"
             />
             <WebhookCreateUpdatePage />
-        </Container>
+        </>
     )
 }

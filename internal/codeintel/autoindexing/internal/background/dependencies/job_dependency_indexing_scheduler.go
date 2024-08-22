@@ -7,19 +7,16 @@ import (
 	"sort"
 	"strconv"
 	"time"
-	"unsafe"
 
 	"github.com/sourcegraph/log"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/envvar"
 	"github.com/sourcegraph/sourcegraph/internal/actor"
 	"github.com/sourcegraph/sourcegraph/internal/api"
+	"github.com/sourcegraph/sourcegraph/internal/cast"
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/autoindexing/internal/inference"
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/dependencies"
 	"github.com/sourcegraph/sourcegraph/internal/conf/reposource"
 	"github.com/sourcegraph/sourcegraph/internal/database"
-	"github.com/sourcegraph/sourcegraph/internal/errcode"
-	"github.com/sourcegraph/sourcegraph/internal/repoupdater/protocol"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 	"github.com/sourcegraph/sourcegraph/internal/workerutil"
 	"github.com/sourcegraph/sourcegraph/internal/workerutil/dbworker"
@@ -36,7 +33,6 @@ func NewDependencyIndexingScheduler(
 	externalServiceStore ExternalServiceStore,
 	gitserverRepoStore GitserverRepoStore,
 	indexEnqueuer IndexEnqueuer,
-	repoUpdater RepoUpdaterClient,
 	metrics workerutil.WorkerObservability,
 	config *Config,
 ) *workerutil.Worker[dependencyIndexingJob] {
@@ -49,7 +45,6 @@ func NewDependencyIndexingScheduler(
 		gitserverRepoStore: gitserverRepoStore,
 		indexEnqueuer:      indexEnqueuer,
 		workerStore:        dependencyIndexingStore,
-		repoUpdater:        repoUpdater,
 	}
 
 	return dbworker.NewWorker[dependencyIndexingJob](rootContext, dependencyIndexingStore, handler, workerutil.WorkerOptions{
@@ -69,7 +64,6 @@ type dependencyIndexingSchedulerHandler struct {
 	extsvcStore        ExternalServiceStore
 	gitserverRepoStore GitserverRepoStore
 	workerStore        dbworkerstore.Store[dependencyIndexingJob]
-	repoUpdater        RepoUpdaterClient
 }
 
 const requeueBackoff = time.Second * 30
@@ -167,8 +161,7 @@ func (h *dependencyIndexingSchedulerHandler) Handle(ctx context.Context, logger 
 	// if this job is not associated with an external service kind that was just synced, then we need to guarantee
 	// that the repos are visible to the Sourcegraph instance, else skip them
 	if job.ExternalServiceKind == "" {
-		// this is safe, and dont let anyone tell you otherwise
-		repoNameStrings := *(*[]string)(unsafe.Pointer(&repoNames))
+		repoNameStrings := cast.ToStrings(repoNames)
 		sort.Strings(repoNameStrings)
 
 		listedRepos, err := h.repoStore.ListMinimalRepos(ctx, database.ReposListOptions{
@@ -188,18 +181,8 @@ func (h *dependencyIndexingSchedulerHandler) Handle(ctx context.Context, logger 
 		// otherwise skip them.
 		difference := setDifference(repoNames, listedRepoNames)
 
-		if envvar.SourcegraphDotComMode() {
-			for _, repo := range difference {
-				if _, err := h.repoUpdater.RepoLookup(ctx, protocol.RepoLookupArgs{Repo: repo}); errcode.IsNotFound(err) {
-					delete(repoToPackages, repo)
-				} else if err != nil {
-					return errors.Wrapf(err, "repoUpdater.RepoLookup", "repo", repo)
-				}
-			}
-		} else {
-			for _, repo := range difference {
-				delete(repoToPackages, repo)
-			}
+		for _, repo := range difference {
+			delete(repoToPackages, repo)
 		}
 	}
 
@@ -220,8 +203,8 @@ func (h *dependencyIndexingSchedulerHandler) Handle(ctx context.Context, logger 
 	var errs []error
 	for _, pkgs := range repoToPackages {
 		for _, pkg := range pkgs {
-			if err := h.indexEnqueuer.QueueIndexesForPackage(ctx, pkg); err != nil {
-				errs = append(errs, errors.Wrap(err, "enqueuer.QueueIndexesForPackage"))
+			if err := h.indexEnqueuer.QueueAutoIndexJobsForPackage(ctx, pkg); err != nil {
+				errs = append(errs, errors.Wrap(err, "enqueuer.QueueAutoIndexJobsForPackage"))
 			}
 		}
 	}

@@ -11,13 +11,12 @@ import { Text } from '@sourcegraph/wildcard'
 
 import type { AuthenticatedUser } from '../../auth'
 import { canWriteBatchChanges } from '../../batches/utils'
-import { SHOW_BUSINESS_FEATURES } from '../../enterprise/dotcom/productSubscriptions/features'
 import type { ExecutorsUserAreaProps } from '../../enterprise/executors/ExecutorsUserArea'
 import type { UserEventLogsPageProps } from '../../enterprise/user/settings/UserEventLogsPage'
 import type { UserSettingsAreaUserFields } from '../../graphql-operations'
 import { SiteAdminAlert } from '../../site-admin/SiteAdminAlert'
 
-import type { UserSettingsAreaRoute } from './UserSettingsArea'
+import type { UserSettingsAreaRoute, UserSettingsAreaRouteContext } from './UserSettingsArea'
 
 const ExecutorsUserArea = lazyComponent<ExecutorsUserAreaProps, 'ExecutorsUserArea'>(
     () => import('../../enterprise/executors/ExecutorsUserArea'),
@@ -30,6 +29,13 @@ const UserSettingsSecurityPage = lazyComponent(
     () => import('./auth/UserSettingsSecurityPage'),
     'UserSettingsSecurityPage'
 )
+
+const shouldRenderBatchChangesPage = ({
+    batchChangesEnabled,
+    user: { viewerCanAdminister },
+    authenticatedUser,
+}: UserSettingsAreaRouteContext): boolean =>
+    batchChangesEnabled && viewerCanAdminister && canWriteBatchChanges(authenticatedUser)
 
 export const userSettingsAreaRoutes: readonly UserSettingsAreaRoute[] = [
     {
@@ -69,10 +75,6 @@ export const userSettingsAreaRoutes: readonly UserSettingsAreaRoute[] = [
         condition: () => window.context.productResearchPageEnabled,
     },
     {
-        path: 'about-organizations',
-        render: lazyComponent(() => import('./aboutOrganization/AboutOrganizationPage'), 'AboutOrganizationPage'),
-    },
-    {
         path: 'permissions',
         render: lazyComponent(
             () => import('../../enterprise/user/settings/auth/UserSettingsPermissionsPage'),
@@ -88,9 +90,14 @@ export const userSettingsAreaRoutes: readonly UserSettingsAreaRoute[] = [
     },
     {
         path: 'executors/*',
-        render: props => <ExecutorsUserArea {...props} namespaceID={props.user.id} />,
-        condition: ({ batchChangesEnabled, user: { viewerCanAdminister }, authenticatedUser }) =>
-            batchChangesEnabled && viewerCanAdminister && canWriteBatchChanges(authenticatedUser),
+        render: props => (
+            <ExecutorsUserArea
+                {...props}
+                telemetryRecorder={props.platformContext.telemetryRecorder}
+                namespaceID={props.user.id}
+            />
+        ),
+        condition: shouldRenderBatchChangesPage,
     },
     {
         path: 'batch-changes',
@@ -98,24 +105,7 @@ export const userSettingsAreaRoutes: readonly UserSettingsAreaRoute[] = [
             () => import('../../enterprise/batches/settings/BatchChangesSettingsArea'),
             'BatchChangesSettingsArea'
         ),
-        condition: ({ batchChangesEnabled, user: { viewerCanAdminister }, authenticatedUser }) =>
-            batchChangesEnabled && viewerCanAdminister && canWriteBatchChanges(authenticatedUser),
-    },
-    {
-        path: 'subscriptions/:subscriptionUUID',
-        render: lazyComponent(
-            () => import('../../enterprise/user/productSubscriptions/UserSubscriptionsProductSubscriptionPage'),
-            'UserSubscriptionsProductSubscriptionPage'
-        ),
-        condition: () => SHOW_BUSINESS_FEATURES,
-    },
-    {
-        path: 'subscriptions',
-        render: lazyComponent(
-            () => import('../../enterprise/user/productSubscriptions/UserSubscriptionsProductSubscriptionsPage'),
-            'UserSubscriptionsProductSubscriptionsPage'
-        ),
-        condition: () => SHOW_BUSINESS_FEATURES,
+        condition: shouldRenderBatchChangesPage,
     },
 ]
 

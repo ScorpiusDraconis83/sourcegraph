@@ -7,10 +7,72 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/sourcegraph/log"
+
 	"github.com/sourcegraph/sourcegraph/internal/completions/types"
 	"github.com/sourcegraph/sourcegraph/internal/httpcli"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
+
+// Single-tenant model identifiers
+const Starcoder16bSingleTenant = "accounts/sourcegraph/models/starcoder-16b"
+
+// Multi-tenant model identifiers
+const Starcoder16b8bit = "accounts/fireworks/models/starcoder-16b-w8a16"
+const Starcoder7b8bit = "accounts/fireworks/models/starcoder-7b-w8a16"
+const Starcoder16b = "accounts/fireworks/models/starcoder-16b"
+const Starcoder7b = "accounts/fireworks/models/starcoder-7b"
+const StarcoderTwo15b = "accounts/sourcegraph/models/starcoder2-15b"
+const StarcoderTwo7b = "accounts/sourcegraph/models/starcoder2-7b"
+const Llama27bCode = "accounts/fireworks/models/llama-v2-7b-code"
+const Llama213bCode = "accounts/fireworks/models/llama-v2-13b-code"
+const Llama213bCodeInstruct = "accounts/fireworks/models/llama-v2-13b-code-instruct"
+const Llama234bCodeInstruct = "accounts/fireworks/models/llama-v2-34b-code-instruct"
+const Llama38bInstruct = "accounts/fireworks/models/llama-v3-8b-instruct"
+const Llama370bInstruct = "accounts/fireworks/models/llama-v3-70b-instruct"
+const Mistral7bInstruct = "accounts/fireworks/models/mistral-7b-instruct-4k"
+const Mixtral8x7bInstruct = "accounts/fireworks/models/mixtral-8x7b-instruct"
+const Mixtral8x22Instruct = "accounts/fireworks/models/mixtral-8x22b-instruct"
+const DeepseekCoder1p3b = "accounts/sourcegraph/models/custom-deepseek-1p3b-base-hf-version"
+const DeepseekCoder7b = "accounts/sourcegraph/models/deepseek-coder-7b-base"
+const DeepseekCoderV2LiteBase = "accounts/sourcegraph/models/deepseek-coder-v2-lite-base"
+const CodeQwen7B = "accounts/sourcegraph/models/code-qwen-1p5-7b"
+
+const FineTunedFIMVariant1 = "fim-fine-tuned-model-variant-1"
+const FineTunedFIMVariant2 = "fim-fine-tuned-model-variant-2"
+const FineTunedFIMVariant3 = "fim-fine-tuned-model-variant-3"
+const FineTunedFIMVariant4 = "fim-fine-tuned-model-variant-4"
+const FineTunedFIMLangSpecificMixtral = "fim-lang-specific-model-mixtral"
+
+const FineTunedMixtralTypescript = "accounts/sourcegraph/models/finetuned-fim-lang-typescript-model-mixtral-8x7b"
+const FineTunedMixtralJavascript = "accounts/sourcegraph/models/finetuned-fim-lang-javascript-model-mixtral-8x7b"
+const FineTunedMixtralPhp = "accounts/sourcegraph/models/finetuned-fim-lang-php-model-mixtral-8x7b"
+const FineTunedMixtralPython = "accounts/sourcegraph/models/finetuned-fim-lang-python-model-mixtral-8x7b"
+const FineTunedMixtralJsx = "accounts/sourcegraph/models/finetuned-fim-lang-jsx-model-mixtral-8x7b"
+const FineTunedMixtralAll = "accounts/sourcegraph/models/finetuned-fim-lang-all-model-mixtral-8x7b"
+
+var FineTunedMixtralModelVariants = []string{FineTunedMixtralTypescript, FineTunedMixtralJavascript, FineTunedMixtralPhp, FineTunedMixtralPython, FineTunedMixtralAll, FineTunedMixtralJsx, FineTunedFIMLangSpecificMixtral}
+
+const FineTunedLlamaTypescript = "accounts/sourcegraph/models/lang-typescript-context-fim-meta-llama-3-8b-instruct-e-1"
+const FineTunedLlamaJavascript = "accounts/sourcegraph/models/lang-javascript-context-fim-meta-llama-3-8b-instruct-e-1"
+const FineTunedLlamaPhp = "accounts/sourcegraph/models/lang-php-context-fim-meta-llama-3-8b-instruct-e-1"
+const FineTunedLlamaPython = "accounts/sourcegraph/models/lang-python-context-fim-meta-llama-3-8b-instruct-e-1"
+const FineTunedLlamaAll = "accounts/sourcegraph/models/finetuned-fim-lang-all-model-meta-llama-3-8b"
+
+var FineTunedLlamaModelVariants = []string{FineTunedLlamaTypescript, FineTunedLlamaJavascript, FineTunedLlamaPhp, FineTunedLlamaPython, FineTunedLlamaAll}
+
+const FineTunedDeepseekStackTrainedTypescript = "accounts/sourcegraph/models/finetuned-fim-lang-ts-like-model-deepseek-7b-stack-v2"
+const FineTunedDeepseekStackTrainedPython = "accounts/sourcegraph/models/finetuned-fim-lang-py-model-deepseek-7b-stack-v2"
+const FineTunedFIMLangDeepSeekStackTrained = "fim-lang-specific-model-deepseek-stack-trained"
+
+const FineTunedDeepseekLogsTrainedTypescript = "accounts/sourcegraph/models/finetuned-fim-lang-ts-model-deepseek-7b-logs-v2"
+const FineTunedDeepseekLogsTrainedJavascript = "accounts/sourcegraph/models/finetuned-fim-lang-js-model-deepseek-7b-logs-v2"
+const FineTunedDeepseekLogsTrainedPython = "accounts/sourcegraph/models/finetuned-fim-lang-py-model-deepseek-7b-logs-v2"
+const FineTunedDeepseekLogsTrainedReact = "accounts/sourcegraph/models/finetuned-fim-lang-tsx-jsx-model-deepseek-7b-logs-v2"
+const FineTunedFIMLangDeepSeekLogsTrained = "fim-lang-specific-model-deepseek-logs-trained"
+
+var FineTunedDeepseekStackTrainedModelVariants = []string{FineTunedDeepseekStackTrainedTypescript, FineTunedDeepseekStackTrainedPython, FineTunedFIMLangDeepSeekStackTrained}
+var FineTunedDeepseekLogsTrainedModelVariants = []string{FineTunedDeepseekLogsTrainedTypescript, FineTunedDeepseekLogsTrainedJavascript, FineTunedDeepseekLogsTrainedPython, FineTunedDeepseekLogsTrainedReact, FineTunedFIMLangDeepSeekLogsTrained}
 
 func NewClient(cli httpcli.Doer, endpoint, accessToken string) types.CompletionsClient {
 	return &fireworksClient{
@@ -28,10 +90,9 @@ type fireworksClient struct {
 
 func (c *fireworksClient) Complete(
 	ctx context.Context,
-	feature types.CompletionsFeature,
-	requestParams types.CompletionRequestParameters,
-) (*types.CompletionResponse, error) {
-	resp, err := c.makeRequest(ctx, feature, requestParams, false)
+	logger log.Logger,
+	request types.CompletionRequest) (*types.CompletionResponse, error) {
+	resp, err := c.makeRequest(ctx, request, false /* stream */)
 	if err != nil {
 		return nil, err
 	}
@@ -51,9 +112,9 @@ func (c *fireworksClient) Complete(
 	if response.Choices[0].Text != "" {
 		// The /completion endpoint returns a text field ...
 		completion = response.Choices[0].Text
-	} else if response.Choices[0].Delta != nil {
+	} else if response.Choices[0].Message != nil {
 		// ... whereas the /chat/completion endpoints returns this structure
-		completion = response.Choices[0].Delta.Content
+		completion = response.Choices[0].Message.Content
 	}
 
 	return &types.CompletionResponse{
@@ -65,20 +126,14 @@ func (c *fireworksClient) Complete(
 
 func (c *fireworksClient) Stream(
 	ctx context.Context,
-	feature types.CompletionsFeature,
-	requestParams types.CompletionRequestParameters,
-	sendEvent types.SendCompletionEvent,
-) error {
+	logger log.Logger,
+	request types.CompletionRequest,
+	sendEvent types.SendCompletionEvent) error {
+	requestParams := request.Parameters
 	logprobsInclude := uint8(0)
 	requestParams.Logprobs = &logprobsInclude
 
-	// HACK: Cody Gateway expects model names in <provider>/<model> format, but if we're connecting directly to
-	// the Fireworks API, we need to strip the "fireworks" provider prefix
-	if components := strings.Split(requestParams.Model, "/"); components[0] == "fireworks" {
-		requestParams.Model = strings.Join(components[1:], "/")
-	}
-
-	resp, err := c.makeRequest(ctx, feature, requestParams, true)
+	resp, err := c.makeRequest(ctx, request, true /* stream */)
 	if err != nil {
 		return err
 	}
@@ -98,7 +153,7 @@ func (c *fireworksClient) Stream(
 			continue
 		}
 
-		var event fireworksResponse
+		var event fireworksStreamingResponse
 		if err := json.Unmarshal(data, &event); err != nil {
 			return errors.Errorf("failed to decode event payload: %w - body: %s", err, string(data))
 		}
@@ -126,16 +181,20 @@ func (c *fireworksClient) Stream(
 	return dec.Err()
 }
 
-func (c *fireworksClient) makeRequest(ctx context.Context, feature types.CompletionsFeature, requestParams types.CompletionRequestParameters, stream bool) (*http.Response, error) {
+func (c *fireworksClient) makeRequest(ctx context.Context, request types.CompletionRequest, stream bool) (*http.Response, error) {
+	requestParams := request.Parameters
 	if requestParams.TopP < 0 {
 		requestParams.TopP = 0
 	}
 
-	var reqBody []byte
-	var err error
-	var endpoint string
+	var (
+		reqBody  []byte
+		err      error
+		endpoint string
+	)
 
-	if feature == types.CompletionsFeatureCode {
+	switch request.Feature {
+	case types.CompletionsFeatureCode:
 		// For compatibility reasons with other models, we expect to find the prompt
 		// in the first and only message
 		prompt, promptErr := getPrompt(requestParams.Messages)
@@ -144,7 +203,7 @@ func (c *fireworksClient) makeRequest(ctx context.Context, feature types.Complet
 		}
 
 		payload := fireworksRequest{
-			Model:       requestParams.Model,
+			Model:       request.ModelConfigInfo.Model.ModelName,
 			Temperature: requestParams.Temperature,
 			TopP:        requestParams.TopP,
 			N:           1,
@@ -158,9 +217,9 @@ func (c *fireworksClient) makeRequest(ctx context.Context, feature types.Complet
 
 		reqBody, err = json.Marshal(payload)
 		endpoint = c.endpoint
-	} else {
+	case types.CompletionsFeatureChat:
 		payload := fireworksChatRequest{
-			Model:       requestParams.Model,
+			Model:       request.ModelConfigInfo.Model.ModelName,
 			Temperature: requestParams.Temperature,
 			TopP:        requestParams.TopP,
 			N:           1,
@@ -173,7 +232,7 @@ func (c *fireworksClient) makeRequest(ctx context.Context, feature types.Complet
 			switch m.Speaker {
 			case types.HUMAN_MESSAGE_SPEAKER:
 				role = "user"
-			case types.ASISSTANT_MESSAGE_SPEAKER:
+			case types.ASSISTANT_MESSAGE_SPEAKER:
 				role = "assistant"
 			default:
 				role = strings.ToLower(role)
@@ -192,8 +251,9 @@ func (c *fireworksClient) makeRequest(ctx context.Context, feature types.Complet
 		}
 
 		reqBody, err = json.Marshal(payload)
+	default:
+		return nil, errors.Errorf("unrecognized feature %q", request.Feature)
 	}
-
 	if err != nil {
 		return nil, err
 	}
@@ -216,53 +276,4 @@ func (c *fireworksClient) makeRequest(ctx context.Context, feature types.Complet
 	}
 
 	return resp, nil
-}
-
-// fireworksRequest captures fields from https://readme.fireworks.ai/reference/createcompletion
-type fireworksRequest struct {
-	Model       string   `json:"model"`
-	Prompt      string   `json:"prompt"`
-	MaxTokens   int32    `json:"max_tokens,omitempty"`
-	Temperature float32  `json:"temperature,omitempty"`
-	TopP        float32  `json:"top_p,omitempty"`
-	N           int32    `json:"n,omitempty"`
-	Stream      bool     `json:"stream,omitempty"`
-	Echo        bool     `json:"echo,omitempty"`
-	Stop        []string `json:"stop,omitempty"`
-	Logprobs    *uint8   `json:"logprobs,omitempty"`
-}
-
-// fireworksChatRequest captures fields from https://readme.fireworks.ai/reference/createchatcompletion
-type fireworksChatRequest struct {
-	Model       string    `json:"model"`
-	Messages    []message `json:"messages"`
-	MaxTokens   int32     `json:"max_tokens,omitempty"`
-	Temperature float32   `json:"temperature,omitempty"`
-	TopP        float32   `json:"top_p,omitempty"`
-	N           int32     `json:"n,omitempty"`
-	Stream      bool      `json:"stream,omitempty"`
-	Stop        []string  `json:"stop,omitempty"`
-}
-
-type message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-// response for a non streaming request
-type fireworksResponse struct {
-	Choices []struct {
-		Text  string `json:"text"`
-		Delta *struct {
-			Content string `json:"content"`
-		} `json:"delta"`
-		Index        int             `json:"index"`
-		FinishReason string          `json:"finish_reason"`
-		Logprobs     *types.Logprobs `json:"logprobs"`
-	} `json:"choices"`
-	Usage struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		TotalTokens      int `json:"total_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-	} `json:"usage"`
 }

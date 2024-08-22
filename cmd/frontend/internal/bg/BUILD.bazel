@@ -5,8 +5,6 @@ go_library(
     name = "bg",
     srcs = [
         "check_redis_cache_eviction_policy.go",
-        "delete_old_cache_data_in_redis.go",
-        "delete_old_event_logs_in_postgres.go",
         "doc.go",
         "update_permissions.go",
     ],
@@ -14,11 +12,9 @@ go_library(
     visibility = ["//cmd/frontend:__subpackages__"],
     deps = [
         "//internal/collections",
-        "//internal/conf",
         "//internal/database",
         "//internal/rbac",
         "//internal/rbac/types",
-        "//internal/rcache",
         "//internal/redispool",
         "//internal/types",
         "//lib/errors",
@@ -40,6 +36,7 @@ go_test(
     deps = [
         "//internal/database",
         "//internal/database/dbtest",
+        "//internal/dotcom",
         "//internal/rbac/types",
         "//internal/types",
         "@com_github_sourcegraph_log//logtest",

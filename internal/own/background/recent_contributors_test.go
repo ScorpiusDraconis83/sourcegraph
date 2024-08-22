@@ -8,12 +8,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sourcegraph/sourcegraph/internal/rcache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/sourcegraph/sourcegraph/internal/conf"
+	"github.com/sourcegraph/sourcegraph/internal/gitserver/gitdomain"
+	"github.com/sourcegraph/sourcegraph/internal/rcache"
+	"github.com/sourcegraph/sourcegraph/schema"
+
 	"github.com/sourcegraph/log/logtest"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/globals"
+
 	"github.com/sourcegraph/sourcegraph/internal/actor"
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/authz"
@@ -59,9 +63,8 @@ func Test_RecentContributorIndexFromGitserver(t *testing.T) {
 		},
 	}
 
-	client := gitserver.NewMockClient()
-	client.CommitLogFunc.SetDefaultReturn(fakeCommitsToLog(commits), nil)
-	indexer := newRecentContributorsIndexer(client, db, logger, rcache.New("testing_own_signals"))
+	client := newMockGitserverClientWithFakeCommits(commits)
+	indexer := newRecentContributorsIndexer(client, db, logger)
 	checker := authz.NewMockSubRepoPermissionChecker()
 	checker.EnabledFunc.SetDefaultReturn(true)
 	checker.EnabledForRepoIDFunc.SetDefaultReturn(false, nil)
@@ -132,12 +135,21 @@ func Test_RecentContributorIndex_CanSeePrivateRepos(t *testing.T) {
 	userNoAccess, err := db.Users().Create(ctx, database.NewUser{Username: "user-no-access"})
 	require.NoError(t, err)
 
-	globals.PermissionsUserMapping().Enabled = true // this is required otherwise setting the permissions won't do anything
+	conf.Mock(&conf.Unified{
+		SiteConfiguration: schema.SiteConfiguration{
+			PermissionsUserMapping: &schema.PermissionsUserMapping{
+				Enabled: true,
+				BindID:  "email",
+			},
+		},
+	})
+	t.Cleanup(func() { conf.Mock(nil) })
+
 	_, err = db.Perms().SetRepoPerms(ctx, 1, []authz.UserIDWithExternalAccountID{{UserID: userWithAccess.ID}}, authz.SourceAPI)
 	require.NoError(t, err)
 
 	client := gitserver.NewMockClient()
-	indexer := newRecentContributorsIndexer(client, db, logger, rcache.New("testing_own_signals"))
+	indexer := newRecentContributorsIndexer(client, db, logger)
 
 	t.Run("non-internal user", func(t *testing.T) {
 		// this is kind of an unrelated test just to provide a baseline that there is actually a difference when
@@ -196,9 +208,8 @@ func Test_RecentContributorIndexSkipsSubrepoPermsRepos(t *testing.T) {
 		},
 	}
 
-	client := gitserver.NewMockClient()
-	client.CommitLogFunc.SetDefaultReturn(fakeCommitsToLog(commits), nil)
-	indexer := newRecentContributorsIndexer(client, db, logger, rcache.New("testing_own_signals"))
+	client := newMockGitserverClientWithFakeCommits(commits)
+	indexer := newRecentContributorsIndexer(client, db, logger)
 	checker := authz.NewMockSubRepoPermissionChecker()
 	checker.EnabledFunc.SetDefaultReturn(true)
 	checker.EnabledForRepoIDFunc.SetDefaultReturn(true, nil)
@@ -212,17 +223,38 @@ func Test_RecentContributorIndexSkipsSubrepoPermsRepos(t *testing.T) {
 	assert.Equal(t, 0, len(got))
 }
 
-func fakeCommitsToLog(commits []fakeCommit) (results []gitserver.CommitLog) {
+func fakeCommitsToLog(commits []fakeCommit) (results []*gitdomain.Commit) {
 	for i, commit := range commits {
-		results = append(results, gitserver.CommitLog{
-			AuthorEmail:  commit.email,
-			AuthorName:   commit.name,
-			Timestamp:    time.Now(),
-			SHA:          gitSha(fmt.Sprintf("%d", i)),
-			ChangedFiles: commit.changedFiles,
+		results = append(results, &gitdomain.Commit{
+			ID: api.CommitID(gitSha(fmt.Sprintf("%d", i))),
+			Author: gitdomain.Signature{
+				Email: commit.email,
+				Name:  commit.name,
+				Date:  time.Now(),
+			},
 		})
 	}
 	return results
+}
+
+func newMockGitserverClientWithFakeCommits(commits []fakeCommit) gitserver.Client {
+	client := gitserver.NewMockClient()
+	client.CommitsFunc.SetDefaultReturn(fakeCommitsToLog(commits), nil)
+	client.ChangedFilesFunc.SetDefaultHook(func(_ context.Context, _ api.RepoName, _, commitID string) (gitserver.ChangedFilesIterator, error) {
+		ps := make([]gitdomain.PathStatus, 0, len(commits))
+		for i, commit := range commits {
+			if gitSha(fmt.Sprintf("%d", i)) == commitID {
+				for _, f := range commit.changedFiles {
+					ps = append(ps, gitdomain.PathStatus{
+						Path:   f,
+						Status: gitdomain.StatusAdded,
+					})
+				}
+			}
+		}
+		return gitserver.NewChangedFilesIteratorFromSlice(ps), nil
+	})
+	return client
 }
 
 type fakeCommit struct {

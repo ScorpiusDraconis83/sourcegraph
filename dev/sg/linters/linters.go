@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/sourcegraph/run"
 	"go.bobheadxi.dev/streamline/pipeline"
@@ -36,7 +37,7 @@ var Targets = []Target{
 		Name:        "go",
 		Description: "Check go code for linting errors, forbidden imports, generated files, etc",
 		Checks: []*linter{
-			goGenerateLinter,
+			onlyLocal(goGenerateLinter),
 			onlyLocal(goDBConnImport),
 			onlyLocal(noLocalHost),
 			lintGoDirectives(),
@@ -54,14 +55,6 @@ var Targets = []Target{
 		},
 	},
 	{
-		Name:        "docs",
-		Description: "Documentation checks",
-		Checks: []*linter{
-			onlyLocal(bazelExec("Docsite lint (bazel)", "test //doc:test")),
-			docChangesLint(),
-		},
-	},
-	{
 		Name:        "dockerfiles",
 		Description: "Check Dockerfiles for Sourcegraph best practices",
 		Checks: []*linter{
@@ -74,10 +67,16 @@ var Targets = []Target{
 		Description: "Check client code for linting errors, forbidden imports, etc",
 		Checks: []*linter{
 			inlineTemplates,
-			runScript("pnpm dedupe", "dev/check/pnpm-deduplicate.sh"),
 			// we only run this linter locally, since on CI it has it's own job
-			onlyLocal(runScript("pnpm list:js:web", "dev/ci/pnpm-run.sh lint:js:web")),
+			onlyLocal(runScriptSerialized("pnpm lint:js:web", "dev/ci/pnpm-run.sh lint:js:web")),
 			checkUnversionedDocsLinks(),
+		},
+	},
+	{
+		Name:        "pnpm",
+		Description: "Check pnpm lockfiles for optimality",
+		Checks: []*linter{
+			runScriptSerialized("pnpm dedupe", "dev/check/pnpm-deduplicate.sh"),
 		},
 	},
 	{
@@ -108,6 +107,8 @@ var Targets = []Target{
 	Formatting,
 }
 
+// Formatting is set aside from Targets so that we can reference it directly.
+// e.g. to include it automatically when running other linters.
 var Formatting = Target{
 	Name:        "format",
 	Description: "Check client code and docs for formatting errors",
@@ -130,6 +131,24 @@ func runScript(name string, script string) *linter {
 	return &linter{
 		Name: name,
 		Check: func(ctx context.Context, out *std.Output, args *repo.State) error {
+			return root.Run(run.Bash(ctx, script)).StreamLines(out.Write)
+		},
+	}
+}
+
+var runScriptSerializedMu sync.Mutex
+
+// runScriptSerialized is exactly like runScript, but ensure that all the check functions
+// are run serially by acquiring a lock.
+//
+// This is useful for pnpm for examples, as some tasks might end up writing to the same files
+// concurrently, leading to race conditions and thus CI failures.
+func runScriptSerialized(name string, script string) *linter {
+	return &linter{
+		Name: name,
+		Check: func(ctx context.Context, out *std.Output, args *repo.State) error {
+			runScriptSerializedMu.Lock()
+			defer runScriptSerializedMu.Unlock()
 			return root.Run(run.Bash(ctx, script)).StreamLines(out.Write)
 		},
 	}
@@ -165,11 +184,4 @@ func bazelExec(name, args string) *linter {
 //	warning Workspaces can only be enabled in private projects.
 func pnpmInstallFilter() pipeline.Pipeline {
 	return pipeline.Filter(func(line []byte) bool { return !bytes.Contains(line, []byte("warning")) })
-}
-
-// disabled can be used to mark a category or check as disabled.
-func disabled(reason string) check.EnableFunc[*repo.State] {
-	return func(context.Context, *repo.State) error {
-		return errors.Newf("disabled: %s", reason)
-	}
 }

@@ -68,6 +68,7 @@ func (c *RealCommand) Run(ctx context.Context, cmdLogger cmdlogger.Logger, spec 
 		"Running command",
 		log.String("key", spec.Key),
 		log.String("workingDir", spec.Dir),
+		log.String("image", spec.Image),
 	)
 
 	// Check if we can even run the command.
@@ -80,7 +81,7 @@ func (c *RealCommand) Run(ctx context.Context, cmdLogger cmdlogger.Logger, spec 
 		return err
 	}
 
-	go func() {
+	context.AfterFunc(ctx, func() {
 		// There is a deadlock condition due the following strange decisions:
 		//
 		// 1. The pipes attached to a command are not closed if the context
@@ -99,11 +100,9 @@ func (c *RealCommand) Run(ctx context.Context, cmdLogger cmdlogger.Logger, spec 
 		// finished. These may return an ErrClosed condition, but we don't really
 		// care: the command package doesn't surface errors when closing the pipes
 		// either.
-
-		<-ctx.Done()
 		stdout.Close()
 		stderr.Close()
-	}()
+	})
 
 	// Create the log entry that we will be writing stdout and stderr to.
 	logEntry := cmdLogger.LogEntry(spec.Key, spec.Command)

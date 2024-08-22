@@ -32,7 +32,7 @@ type preciseIndexResolver struct {
 	locationResolver *gitresolvers.CachedLocationResolver
 	traceErrs        *observation.ErrCollector
 	upload           *shared.Upload
-	index            *uploadsshared.Index
+	index            *uploadsshared.AutoIndexJob
 }
 
 func newPreciseIndexResolver(
@@ -41,13 +41,13 @@ func newPreciseIndexResolver(
 	policySvc PolicyService,
 	gitserverClient gitserver.Client,
 	uploadLoader UploadLoader,
-	indexLoader IndexLoader,
+	autoIndexJobLoader AutoIndexJobLoader,
 	siteAdminChecker sharedresolvers.SiteAdminChecker,
 	repoStore database.RepoStore,
 	locationResolver *gitresolvers.CachedLocationResolver,
 	traceErrs *observation.ErrCollector,
 	upload *shared.Upload,
-	index *uploadsshared.Index,
+	index *uploadsshared.AutoIndexJob,
 ) (resolverstubs.PreciseIndexResolver, error) {
 	if index != nil && index.AssociatedUploadID != nil && upload == nil {
 		v, ok, err := uploadLoader.GetByID(ctx, *index.AssociatedUploadID)
@@ -61,7 +61,7 @@ func newPreciseIndexResolver(
 
 	if upload != nil {
 		if upload.AssociatedIndexID != nil {
-			v, ok, err := indexLoader.GetByID(ctx, *upload.AssociatedIndexID)
+			v, ok, err := autoIndexJobLoader.GetByID(ctx, *upload.AssociatedIndexID)
 			if err != nil {
 				return nil, err
 			}
@@ -157,9 +157,9 @@ func (r *preciseIndexResolver) ProcessingFinishedAt() *gqlutil.DateTime {
 	return nil
 }
 
-func (r *preciseIndexResolver) Steps() resolverstubs.IndexStepsResolver {
+func (r *preciseIndexResolver) Steps() resolverstubs.AutoIndexJobStepsResolver {
 	if r.index != nil {
-		return NewIndexStepsResolver(r.siteAdminChecker, *r.index)
+		return NewAutoIndexJobStepsResolver(r.siteAdminChecker, *r.index)
 	}
 
 	return nil
@@ -243,30 +243,32 @@ func (r *preciseIndexResolver) ShouldReindex(ctx context.Context) bool {
 	return r.index != nil && r.index.ShouldReindex
 }
 
+// State returns values matching up with PreciseIndexState
+// in the GraphQL API.
 func (r *preciseIndexResolver) State() string {
 	if r.upload != nil {
-		switch strings.ToUpper(r.upload.State) {
-		case "UPLOADING":
+		switch shared.UploadState(strings.ToLower(r.upload.State)) {
+		case shared.StateUploading:
 			return "UPLOADING_INDEX"
 
-		case "QUEUED":
+		case shared.StateQueued:
 			return "QUEUED_FOR_PROCESSING"
 
-		case "PROCESSING":
+		case shared.StateProcessing:
 			return "PROCESSING"
 
-		case "FAILED":
+		case shared.StateFailed:
 			fallthrough
-		case "ERRORED":
+		case shared.StateErrored:
 			return "PROCESSING_ERRORED"
 
-		case "COMPLETED":
+		case shared.StateCompleted:
 			return "COMPLETED"
 
-		case "DELETING":
+		case shared.StateDeleting:
 			return "DELETING"
 
-		case "DELETED":
+		case shared.StateDeleted:
 			return "DELETED"
 
 		default:
@@ -274,19 +276,19 @@ func (r *preciseIndexResolver) State() string {
 		}
 	}
 
-	switch strings.ToUpper(r.index.State) {
-	case "QUEUED":
+	switch shared.AutoIndexJobState(strings.ToLower(r.index.State)) {
+	case shared.JobStateQueued:
 		return "QUEUED_FOR_INDEXING"
 
-	case "PROCESSING":
+	case shared.JobStateProcessing:
 		return "INDEXING"
 
-	case "FAILED":
+	case shared.JobStateFailed:
 		fallthrough
-	case "ERRORED":
+	case shared.JobStateErrored:
 		return "INDEXING_ERRORED"
 
-	case "COMPLETED":
+	case shared.JobStateCompleted:
 		// Should not actually occur in practice (where did upload go?)
 		return "INDEXING_COMPLETED"
 

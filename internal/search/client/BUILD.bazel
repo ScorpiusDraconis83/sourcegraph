@@ -1,3 +1,4 @@
+load("//dev:go_mockgen.bzl", "go_mockgen")
 load("//dev:go_defs.bzl", "go_test")
 load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
@@ -9,12 +10,13 @@ go_library(
         "telemetry.go",
     ],
     importpath = "github.com/sourcegraph/sourcegraph/internal/search/client",
+    tags = [TAG_PLATFORM_SEARCH],
     visibility = ["//:__subpackages__"],
     deps = [
-        "//cmd/frontend/envvar",
         "//internal/actor",
         "//internal/conf",
         "//internal/database",
+        "//internal/dotcom",
         "//internal/featureflag",
         "//internal/gitserver",
         "//internal/search",
@@ -40,6 +42,7 @@ go_test(
     timeout = "short",
     srcs = ["client_test.go"],
     embed = [":client"],
+    tags = [TAG_PLATFORM_SEARCH],
     deps = [
         "//internal/actor",
         "//internal/conf",
@@ -52,4 +55,15 @@ go_test(
         "@com_github_sourcegraph_log//logtest",
         "@com_github_stretchr_testify//require",
     ],
+)
+
+go_mockgen(
+    name = "generate_mocks",
+    out = "mocks_temp.go",
+    manifests = [
+        "//:mockgen.yaml",
+        "//:mockgen.test.yaml",
+        "//:mockgen.temp.yaml",
+    ],
+    deps = [":client"],
 )

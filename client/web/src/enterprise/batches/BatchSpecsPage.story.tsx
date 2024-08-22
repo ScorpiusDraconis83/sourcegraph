@@ -2,6 +2,8 @@ import type { Decorator, Meta, StoryFn } from '@storybook/react'
 import { addDays } from 'date-fns'
 import { of } from 'rxjs'
 
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
+
 import { WebStory } from '../../components/WebStory'
 
 import type { queryBatchSpecs as _queryBatchSpecs } from './backend'
@@ -13,12 +15,7 @@ const decorator: Decorator = story => <div className="p-3 container">{story()}</
 const config: Meta = {
     title: 'web/batches/settings/specs/BatchSpecsPage',
     decorators: [decorator],
-    parameters: {
-        chromatic: {
-            viewports: [320, 576, 978, 1440],
-            disableSnapshot: false,
-        },
-    },
+    parameters: {},
 }
 
 export default config
@@ -48,13 +45,31 @@ const queryNoBatchSpecs: typeof _queryBatchSpecs = () =>
     })
 
 export const ListOfSpecs: StoryFn = () => (
-    <WebStory>{props => <BatchSpecsPage {...props} queryBatchSpecs={queryBatchSpecs} now={NOW} />}</WebStory>
+    <WebStory>
+        {props => (
+            <BatchSpecsPage
+                {...props}
+                queryBatchSpecs={queryBatchSpecs}
+                now={NOW}
+                telemetryRecorder={noOpTelemetryRecorder}
+            />
+        )}
+    </WebStory>
 )
 
 ListOfSpecs.storyName = 'List of specs'
 
 export const NoSpecs: StoryFn = () => (
-    <WebStory>{props => <BatchSpecsPage {...props} queryBatchSpecs={queryNoBatchSpecs} now={NOW} />}</WebStory>
+    <WebStory>
+        {props => (
+            <BatchSpecsPage
+                {...props}
+                queryBatchSpecs={queryNoBatchSpecs}
+                now={NOW}
+                telemetryRecorder={noOpTelemetryRecorder}
+            />
+        )}
+    </WebStory>
 )
 
 NoSpecs.storyName = 'No specs'

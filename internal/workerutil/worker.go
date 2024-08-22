@@ -122,7 +122,7 @@ func newWorker[T Record](ctx context.Context, store Store[T], handler Handler[T]
 	dequeueContext, cancel := context.WithCancel(ctx)
 
 	handlerSemaphore := make(chan struct{}, options.NumHandlers)
-	for i := 0; i < options.NumHandlers; i++ {
+	for range options.NumHandlers {
 		handlerSemaphore <- struct{}{}
 	}
 
@@ -256,12 +256,13 @@ loop:
 // Stop will cause the worker loop to exit after the current iteration. This is done by canceling the
 // context passed to the dequeue operations (but not the handler operations). This method blocks until
 // all handler goroutines have exited.
-func (w *Worker[T]) Stop() {
+func (w *Worker[T]) Stop(context.Context) error {
 	if w.recorder != nil {
 		go w.recorder.LogStop(w)
 	}
 	w.dequeueCancel()
 	w.Wait()
+	return nil
 }
 
 // Wait blocks until all handler goroutines have exited.
@@ -326,7 +327,7 @@ func (w *Worker[T]) dequeueAndHandle() (dequeued bool, err error) {
 
 	// Set up observability
 	w.options.Metrics.numJobs.Inc()
-	processLog.Info("Dequeued record for processing", log.String("id", record.RecordUID()))
+	processLog.Debug("Dequeued record for processing", log.String("id", record.RecordUID()))
 	processArgs := observation.Args{
 		Attrs: []attribute.KeyValue{attribute.String("record.id", record.RecordUID())},
 	}

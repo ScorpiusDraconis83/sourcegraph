@@ -17,7 +17,6 @@ import (
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/autoindexing/internal/inference/luatypes"
 	"github.com/sourcegraph/sourcegraph/internal/codeintel/autoindexing/shared"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
-	"github.com/sourcegraph/sourcegraph/internal/gitserver/gitdomain"
 	"github.com/sourcegraph/sourcegraph/internal/luasandbox"
 	"github.com/sourcegraph/sourcegraph/internal/luasandbox/util"
 	"github.com/sourcegraph/sourcegraph/internal/observation"
@@ -46,7 +45,7 @@ type invocationContext struct {
 type invocationFunctionTable struct {
 	linearize    func(recognizer *luatypes.Recognizer) []*luatypes.Recognizer
 	callback     func(recognizer *luatypes.Recognizer) *baselua.LFunction
-	scanLuaValue func(value baselua.LValue) ([]config.IndexJob, error)
+	scanLuaValue func(value baselua.LValue) ([]config.AutoIndexJobSpec, error)
 }
 
 type LimitError struct {
@@ -89,7 +88,7 @@ func (s *Service) InferIndexJobs(ctx context.Context, repo api.RepoName, commit,
 	functionTable := invocationFunctionTable{
 		linearize: luatypes.LinearizeGenerator,
 		callback:  func(recognizer *luatypes.Recognizer) *baselua.LFunction { return recognizer.Generator() },
-		scanLuaValue: func(value baselua.LValue) ([]config.IndexJob, error) {
+		scanLuaValue: func(value baselua.LValue) ([]config.AutoIndexJobSpec, error) {
 			return util.MapSliceOrSingleton(value, luatypes.IndexJobFromTable)
 		},
 	}
@@ -116,7 +115,7 @@ func (s *Service) inferIndexJobs(
 	commit string,
 	overrideScript string,
 	invocationContextMethods invocationFunctionTable,
-) (_ []config.IndexJob, logs string, _ error) {
+) (_ []config.AutoIndexJobSpec, logs string, _ error) {
 	sandbox, err := s.createSandbox(ctx)
 	if err != nil {
 		return nil, "", err
@@ -228,7 +227,7 @@ func (s *Service) invokeRecognizers(
 	ctx context.Context,
 	invocationContext invocationContext,
 	recognizers []*luatypes.Recognizer,
-) (_ []config.IndexJob, err error) {
+) (_ []config.AutoIndexJobSpec, err error) {
 	ctx, _, endObservation := s.operations.invokeRecognizers.With(ctx, &err, observation.Args{})
 	defer endObservation(1, observation.Args{})
 
@@ -275,15 +274,34 @@ func (s *Service) resolvePaths(
 		return nil, err
 	}
 
-	globs, pathspecs, err := flattenPatterns(patternsForPaths, false)
+	globs, _, err := flattenPatterns(patternsForPaths, false)
 	if err != nil {
 		return nil, err
 	}
 
-	// Ideally we can pass the globs we explicitly filter by below
-	paths, err := invocationContext.gitService.LsFiles(ctx, invocationContext.repo, invocationContext.commit, pathspecs...)
+	// We resolve the commit string to a commit SHA here, the name of the field
+	// is a misnomer and it can also contain non-commit SHAs.
+	commitID, err := invocationContext.gitService.ResolveRevision(ctx, invocationContext.repo, invocationContext.commit)
 	if err != nil {
 		return nil, err
+	}
+
+	// Ideally we can pass the pathspecs from flattenPatterns here and avoid returning
+	// all files in the tree, so we don't need to filter as much further down.
+	// This requires implementing either globbing support in the ReadDir call,
+	// or that the pathpatterns are supported by ReadDir (and thus, in git ls-tree)
+	// which is not the case today.
+	fds, err := invocationContext.gitService.ReadDir(ctx, invocationContext.repo, commitID, "", true)
+	if err != nil {
+		return nil, err
+	}
+
+	paths := make([]string, 0, len(fds))
+	for _, fd := range fds {
+		if fd.IsDir() {
+			continue
+		}
+		paths = append(paths, fd.Name())
 	}
 
 	return filterPaths(paths, globs, nil), nil
@@ -315,14 +333,10 @@ func (s *Service) resolveFileContents(
 		return nil, err
 	}
 
-	pathspecs := make([]gitdomain.Pathspec, 0, len(relevantPaths))
-	for _, p := range relevantPaths {
-		pathspecs = append(pathspecs, gitdomain.PathspecLiteral(p))
-	}
 	opts := gitserver.ArchiveOptions{
-		Treeish:   invocationContext.commit,
-		Format:    gitserver.ArchiveFormatTar,
-		Pathspecs: pathspecs,
+		Treeish: invocationContext.commit,
+		Format:  gitserver.ArchiveFormatTar,
+		Paths:   relevantPaths,
 	}
 	rc, err := invocationContext.gitService.Archive(ctx, invocationContext.repo, opts)
 	if err != nil {
@@ -396,7 +410,7 @@ func (s *Service) invokeRecognizerChains(
 	recognizers []*luatypes.Recognizer,
 	paths []string,
 	contentsByPath map[string]string,
-) (jobs []config.IndexJob, _ error) {
+) (jobs []config.AutoIndexJobSpec, _ error) {
 	registrationAPI := &registrationAPI{}
 
 	// Invoke the recognizers and gather the resulting jobs or hints
@@ -442,7 +456,7 @@ func (s *Service) invokeRecognizerChainUntilResults(
 	registrationAPI *registrationAPI,
 	paths []string,
 	contentsByPath map[string]string,
-) ([]config.IndexJob, error) {
+) ([]config.AutoIndexJobSpec, error) {
 	for _, recognizer := range invocationContext.linearize(recognizer) {
 		if jobs, err := s.invokeLinearizedRecognizer(
 			ctx,
@@ -467,7 +481,7 @@ func (s *Service) invokeLinearizedRecognizer(
 	registrationAPI *registrationAPI,
 	paths []string,
 	contentsByPath map[string]string,
-) (_ []config.IndexJob, err error) {
+) (_ []config.AutoIndexJobSpec, err error) {
 	ctx, _, endObservation := s.operations.invokeLinearizedRecognizer.With(ctx, &err, observation.Args{})
 	defer endObservation(1, observation.Args{})
 

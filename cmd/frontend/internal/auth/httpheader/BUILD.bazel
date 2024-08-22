@@ -12,13 +12,14 @@ go_library(
     visibility = ["//cmd/frontend:__subpackages__"],
     deps = [
         "//cmd/frontend/auth",
+        "//cmd/frontend/internal/auth/providers",
         "//internal/actor",
-        "//internal/auth/providers",
         "//internal/conf",
         "//internal/conf/conftypes",
         "//internal/database",
         "//internal/extsvc",
         "//internal/licensing",
+        "//internal/telemetry/telemetryrecorder",
         "//schema",
         "@com_github_inconshreveable_log15//:log15",
         "@com_github_sourcegraph_log//:log",
@@ -34,13 +35,14 @@ go_test(
     ],
     embed = [":httpheader"],
     tags = [
+        TAG_PLATFORM_SOURCE,
         # Test requires localhost database
         "requires-network",
     ],
     deps = [
         "//cmd/frontend/auth",
+        "//cmd/frontend/internal/auth/providers",
         "//internal/actor",
-        "//internal/auth/providers",
         "//internal/conf",
         "//internal/database",
         "//internal/database/dbtest",

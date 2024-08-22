@@ -15,6 +15,7 @@ import { omitFilter } from '@sourcegraph/shared/src/search/query/transformer'
 import type { fetchStreamSuggestions as defaultFetchStreamSuggestions } from '@sourcegraph/shared/src/search/suggestions'
 import type { RecentSearch } from '@sourcegraph/shared/src/settings/temporary/recentSearches'
 import { useTemporarySetting } from '@sourcegraph/shared/src/settings/temporary/useTemporarySetting'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 
 import { type IEditor, LazyQueryInput, type LazyQueryInputProps } from './LazyQueryInput'
@@ -22,7 +23,7 @@ import { SearchButton } from './SearchButton'
 import { SearchContextDropdown } from './SearchContextDropdown'
 import { SearchHelpDropdownButton } from './SearchHelpDropdownButton'
 import { SearchHistoryDropdown } from './SearchHistoryDropdown'
-import { Toggles, type TogglesProps } from './toggles'
+import { Toggles, type TogglesProps } from './toggles/Toggles'
 
 import styles from './SearchBox.module.scss'
 
@@ -30,6 +31,7 @@ export interface SearchBoxProps
     extends Omit<TogglesProps, 'navbarSearchQuery' | 'submitSearch'>,
         SearchContextInputProps,
         TelemetryProps,
+        TelemetryV2Props,
         PlatformContextProps<'requestGraphQL'>,
         Pick<LazyQueryInputProps, 'autoFocus' | 'onFocus' | 'onSubmit' | 'interpretComments' | 'onChange'> {
     authenticatedUser: AuthenticatedUser | null
@@ -140,6 +142,7 @@ export const SearchBox: FC<SearchBoxProps> = props => {
                             recentSearches={props.recentSearches ?? []}
                             onSelect={onSearchHistorySelect}
                             telemetryService={props.telemetryService}
+                            telemetryRecorder={props.telemetryRecorder}
                         />
                         <div className={styles.searchBoxSeparator} />
                     </>
@@ -184,9 +187,11 @@ export const SearchBox: FC<SearchBoxProps> = props => {
                         selectedSearchContextSpec={props.selectedSearchContextSpec}
                         searchHistory={recentSearchesWithoutSearchContext}
                         onSelectSearchFromHistory={onInlineSearchHistorySelect}
+                        enableJumpToSuggestion={true}
                     />
                     <Toggles
                         patternType={props.patternType}
+                        defaultPatternType={props.defaultPatternType}
                         setPatternType={props.setPatternType}
                         caseSensitive={props.caseSensitive}
                         setCaseSensitivity={props.setCaseSensitivity}
@@ -196,6 +201,8 @@ export const SearchBox: FC<SearchBoxProps> = props => {
                         navbarSearchQuery={queryState.query}
                         className={styles.searchBoxToggles}
                         structuralSearchDisabled={props.structuralSearchDisabled}
+                        telemetryService={props.telemetryService}
+                        telemetryRecorder={props.telemetryRecorder}
                     />
                 </div>
             </div>
@@ -205,6 +212,7 @@ export const SearchBox: FC<SearchBoxProps> = props => {
                     <SearchHelpDropdownButton
                         isSourcegraphDotCom={props.isSourcegraphDotCom}
                         telemetryService={props.telemetryService}
+                        telemetryRecorder={props.telemetryRecorder}
                     />
                 )}
             </div>

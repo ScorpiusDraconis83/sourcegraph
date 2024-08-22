@@ -7,6 +7,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { Subject } from 'rxjs'
 
 import { asError, isErrorLike } from '@sourcegraph/common'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { useIsLightTheme } from '@sourcegraph/shared/src/theme'
 import { Alert, Button, Container, ErrorAlert, H2, H3, Icon, Link, PageHeader, Tooltip } from '@sourcegraph/wildcard'
@@ -31,11 +32,10 @@ import { getBreadCrumbs } from './breadCrumbs'
 import { ExternalServiceInformation } from './ExternalServiceInformation'
 import { resolveExternalServiceCategory } from './externalServices'
 import { ExternalServiceSyncJobsList } from './ExternalServiceSyncJobsList'
-import { ExternalServiceWebhook } from './ExternalServiceWebhook'
 
 import styles from './ExternalServicePage.module.scss'
 
-interface Props extends TelemetryProps {
+interface Props extends TelemetryProps, TelemetryV2Props {
     afterDeleteRoute: string
 
     externalServicesFromFile: boolean
@@ -52,6 +52,7 @@ const NotFoundPage: FC = () => (
 export const ExternalServicePage: FC<Props> = props => {
     const {
         telemetryService,
+        telemetryRecorder,
         afterDeleteRoute,
         externalServicesFromFile,
         allowEditExternalServicesWithFile,
@@ -64,7 +65,8 @@ export const ExternalServicePage: FC<Props> = props => {
 
     useEffect(() => {
         telemetryService.logViewEvent('SiteAdminExternalService')
-    }, [telemetryService])
+        telemetryRecorder.recordEvent('admin.codeHostConnection', 'view')
+    }, [telemetryService, telemetryRecorder])
 
     const [syncInProgress, setSyncInProgress] = useState<boolean>(false)
     // Callback used in ExternalServiceSyncJobsList to update the state in current component.
@@ -134,22 +136,13 @@ export const ExternalServicePage: FC<Props> = props => {
     const renderExternalService = (externalService: ExternalServiceFieldsWithConfig): JSX.Element => {
         let externalServiceAvailabilityStatus
         if (loading) {
-            externalServiceAvailabilityStatus = (
-                <Alert className="mt-2" variant="waiting">
-                    Checking code host connection status...
-                </Alert>
-            )
+            externalServiceAvailabilityStatus = <Alert variant="waiting">Checking code host connection status...</Alert>
         } else if (!error) {
             if (checkConnectionNode?.__typename === 'ExternalServiceAvailable') {
-                externalServiceAvailabilityStatus = (
-                    <Alert className="mt-2" variant="success">
-                        Code host is reachable.
-                    </Alert>
-                )
+                externalServiceAvailabilityStatus = <Alert variant="success">Code host is reachable.</Alert>
             } else if (checkConnectionNode?.__typename === 'ExternalServiceUnavailable') {
                 externalServiceAvailabilityStatus = (
                     <ErrorAlert
-                        className="mt-2"
                         prefix="Error during code host connection check"
                         error={checkConnectionNode.suspectedReason}
                     />
@@ -157,23 +150,21 @@ export const ExternalServicePage: FC<Props> = props => {
             }
         } else {
             externalServiceAvailabilityStatus = (
-                <ErrorAlert
-                    className="mt-2"
-                    prefix="Unexpected error during code host connection check"
-                    error={error.message}
-                />
+                <ErrorAlert prefix="Unexpected error during code host connection check" error={error.message} />
             )
         }
         const externalServiceCategory = resolveExternalServiceCategory(externalService)
         return (
-            <Container className="mb-3">
+            <>
                 <PageHeader
                     path={path}
                     byline={
                         <CreatedByAndUpdatedByInfoByline
                             createdAt={externalService.createdAt}
                             updatedAt={externalService.updatedAt}
-                            noAuthor={true}
+                            createdBy={externalService.creator}
+                            updatedBy={externalService.lastUpdater}
+                            type={externalService.__typename}
                         />
                     }
                     className="mb-3"
@@ -243,63 +234,69 @@ export const ExternalServicePage: FC<Props> = props => {
                         </div>
                     }
                 />
-                {isErrorLike(isDeleting) && <ErrorAlert className="mt-2" error={isDeleting} />}
-                {externalServiceAvailabilityStatus}
-                <H2>Information</H2>
-                {externalService.unrestricted && (
-                    <Alert className="mt-2" variant="warning">
-                        <H3>All repositories will be unrestricted</H3>
-                        This code host connection does not have authorization configured. Any repositories added by this
-                        code host will be accessible by all users on the instance, even if another code host connection
-                        with authorization syncs the same repository. See{' '}
-                        <Link to="/help/admin/permissions#getting-started">the documentation</Link> for instructions on
-                        configuring authorization.
-                    </Alert>
-                )}
-                {externalServiceCategory && (
-                    <ExternalServiceInformation
-                        displayName={externalService.displayName}
-                        codeHostID={externalService.id}
-                        rateLimiterState={externalService.rateLimiterState}
-                        reposNumber={numberOfRepos === 0 ? externalService.repoCount : numberOfRepos}
-                        syncInProgress={syncInProgress}
-                        gitHubApp={ghApp}
-                        {...externalServiceCategory}
+                <Container className="mb-3">
+                    {isErrorLike(isDeleting) && <ErrorAlert error={isDeleting} />}
+                    {externalServiceAvailabilityStatus}
+                    <H2>Information</H2>
+                    {externalService.unrestricted && (
+                        <Alert variant="warning">
+                            <H3>All repositories will be unrestricted</H3>
+                            This code host connection does not have authorization configured. Any repositories added by
+                            this code host will be accessible by all users on the instance, even if another code host
+                            connection with authorization syncs the same repository. See{' '}
+                            <Link to="/help/admin/permissions#getting-started">the documentation</Link> for instructions
+                            on configuring authorization.
+                        </Alert>
+                    )}
+                    {externalServiceCategory && (
+                        <ExternalServiceInformation
+                            displayName={externalService.displayName}
+                            codeHostID={externalService.id}
+                            rateLimiterState={externalService.rateLimiterState}
+                            reposNumber={numberOfRepos === 0 ? externalService.repoCount : numberOfRepos}
+                            syncInProgress={syncInProgress}
+                            gitHubApp={ghApp}
+                            {...externalServiceCategory}
+                        />
+                    )}
+                    <H2>Configuration</H2>
+                    {externalServiceCategory && (
+                        <DynamicallyImportedMonacoSettingsEditor
+                            value={externalService.config}
+                            jsonSchema={externalServiceCategory.jsonSchema}
+                            canEdit={false}
+                            loading={fetchLoading}
+                            height={350}
+                            readOnly={true}
+                            isLightTheme={isLightTheme}
+                            className="test-external-service-editor"
+                            telemetryService={telemetryService}
+                            telemetryRecorder={telemetryRecorder}
+                        />
+                    )}
+                </Container>
+                <div className="d-flex mb-2 align-items-baseline justify-content-between">
+                    <H2 className="mb-0">Recent sync jobs</H2>
+                    <LoaderButton
+                        label="Trigger manual sync"
+                        alwaysShowLabel={true}
+                        variant="secondary"
+                        onClick={triggerSync}
+                        loading={syncExternalServiceLoading}
+                        disabled={syncExternalServiceLoading}
                     />
-                )}
-                <H2>Configuration</H2>
-                {externalServiceCategory && (
-                    <DynamicallyImportedMonacoSettingsEditor
-                        value={externalService.config}
-                        jsonSchema={externalServiceCategory.jsonSchema}
-                        canEdit={false}
-                        loading={fetchLoading}
-                        height={350}
-                        readOnly={true}
-                        isLightTheme={isLightTheme}
-                        className="test-external-service-editor"
-                        telemetryService={telemetryService}
+                </div>
+                <Container className="mb-3">
+                    {syncExternalServiceError && <ErrorAlert error={syncExternalServiceError} />}
+                    <ExternalServiceSyncJobsList
+                        queryExternalServiceSyncJobs={queryExternalServiceSyncJobs}
+                        updateSyncInProgress={updateSyncInProgress}
+                        updateNumberOfRepos={updateNumberOfRepos}
+                        externalServiceID={externalService.id}
+                        updates={syncJobUpdates}
                     />
-                )}
-                <ExternalServiceWebhook externalService={externalService} className="mt-3" />
-                <LoaderButton
-                    label="Trigger manual sync"
-                    className="mt-3 mb-2 float-right"
-                    alwaysShowLabel={true}
-                    variant="secondary"
-                    onClick={triggerSync}
-                    loading={syncExternalServiceLoading}
-                    disabled={syncExternalServiceLoading}
-                />
-                {syncExternalServiceError && <ErrorAlert error={syncExternalServiceError} />}
-                <ExternalServiceSyncJobsList
-                    queryExternalServiceSyncJobs={queryExternalServiceSyncJobs}
-                    updateSyncInProgress={updateSyncInProgress}
-                    updateNumberOfRepos={updateNumberOfRepos}
-                    externalServiceID={externalService.id}
-                    updates={syncJobUpdates}
-                />
-            </Container>
+                </Container>
+            </>
         )
     }
 

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/derision-test/glock"
+	"github.com/stretchr/testify/require"
 
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
@@ -36,13 +37,15 @@ func TestPeriodicGoroutine(t *testing.T) {
 		withClock(clock),
 	)
 	go goroutine.Start()
-	clock.BlockingAdvance(time.Second)
 	<-called
 	clock.BlockingAdvance(time.Second)
 	<-called
 	clock.BlockingAdvance(time.Second)
 	<-called
-	goroutine.Stop()
+	clock.BlockingAdvance(time.Second)
+	<-called
+	err := goroutine.Stop(context.Background())
+	require.NoError(t, err)
 
 	if calls := len(handler.HandleFunc.History()); calls != 4 {
 		t.Errorf("unexpected number of handler invocations. want=%d have=%d", 4, calls)
@@ -60,7 +63,7 @@ func TestPeriodicGoroutineReinvoke(t *testing.T) {
 	})
 
 	witnessHandler := func() {
-		for i := 0; i < maxConsecutiveReinvocations; i++ {
+		for range maxConsecutiveReinvocations {
 			<-called
 		}
 	}
@@ -80,7 +83,8 @@ func TestPeriodicGoroutineReinvoke(t *testing.T) {
 	witnessHandler()
 	clock.BlockingAdvance(time.Second)
 	witnessHandler()
-	goroutine.Stop()
+	err := goroutine.Stop(context.Background())
+	require.NoError(t, err)
 
 	if calls := len(handler.HandleFunc.History()); calls != 4*maxConsecutiveReinvocations {
 		t.Errorf("unexpected number of handler invocations. want=%d have=%d", 4*maxConsecutiveReinvocations, calls)
@@ -120,7 +124,8 @@ func TestPeriodicGoroutineWithDynamicInterval(t *testing.T) {
 	<-called
 	clock.BlockingAdvance(3 * time.Second)
 	<-called
-	goroutine.Stop()
+	err := goroutine.Stop(context.Background())
+	require.NoError(t, err)
 
 	if calls := len(handler.HandleFunc.History()); calls != 4 {
 		t.Errorf("unexpected number of handler invocations. want=%d have=%d", 4, calls)
@@ -158,7 +163,8 @@ func TestPeriodicGoroutineWithInitialDelay(t *testing.T) {
 	<-called
 	clock.BlockingAdvance(time.Second)
 	<-called
-	goroutine.Stop()
+	err := goroutine.Stop(context.Background())
+	require.NoError(t, err)
 
 	if calls := len(handler.HandleFunc.History()); calls != 3 {
 		t.Errorf("unexpected number of handler invocations. want=%d have=%d", 3, calls)
@@ -185,21 +191,22 @@ func TestPeriodicGoroutineConcurrency(t *testing.T) {
 	)
 	go goroutine.Start()
 
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		<-called
 		clock.BlockingAdvance(time.Second)
 	}
 
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		<-called
 		clock.BlockingAdvance(time.Second)
 	}
 
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		<-called
 	}
 
-	goroutine.Stop()
+	err := goroutine.Stop(context.Background())
+	require.NoError(t, err)
 
 	if calls := len(handler.HandleFunc.History()); calls != 3*concurrency {
 		t.Errorf("unexpected number of handler invocations. want=%d have=%d", 3*concurrency, calls)
@@ -250,7 +257,7 @@ func TestPeriodicGoroutineWithDynamicConcurrency(t *testing.T) {
 		// Ensure each of the handlers can be called independently.
 		// Adding an additional channel read would block as each of
 		// the monitor routines would be waiting on the clock tick.
-		for i := 0; i < poolSize; i++ {
+		for range poolSize {
 			<-called
 		}
 
@@ -260,7 +267,8 @@ func TestPeriodicGoroutineWithDynamicConcurrency(t *testing.T) {
 		<-exit                                                       // wait for blocked handler to exit
 	}
 
-	goroutine.Stop()
+	err := goroutine.Stop(context.Background())
+	require.NoError(t, err)
 
 	// N.B.: no need for assertions here as getting through the test at all to this
 	// point without some permanent blockage shows that each of the pool sizes behave
@@ -297,7 +305,8 @@ func TestPeriodicGoroutineError(t *testing.T) {
 	<-called
 	clock.BlockingAdvance(time.Second)
 	<-called
-	goroutine.Stop()
+	err := goroutine.Stop(context.Background())
+	require.NoError(t, err)
 
 	if calls := len(handler.HandleFunc.History()); calls != 4 {
 		t.Errorf("unexpected number of handler invocations. want=%d have=%d", 4, calls)
@@ -352,7 +361,8 @@ func TestPeriodicGoroutinePanic(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("second call didn't happen within 1s")
 	}
-	goroutine.Stop()
+	err := goroutine.Stop(context.Background())
+	require.NoError(t, err)
 
 	if calls := len(handler.HandleFunc.History()); calls != 2 {
 		t.Errorf("unexpected number of handler invocations. want=%d have=%d", 4, calls)
@@ -382,7 +392,8 @@ func TestPeriodicGoroutineContextError(t *testing.T) {
 	)
 	go goroutine.Start()
 	<-called
-	goroutine.Stop()
+	err := goroutine.Stop(context.Background())
+	require.NoError(t, err)
 
 	if calls := len(handler.HandleFunc.History()); calls != 1 {
 		t.Errorf("unexpected number of handler invocations. want=%d have=%d", 1, calls)
@@ -417,7 +428,8 @@ func TestPeriodicGoroutineFinalizer(t *testing.T) {
 	<-called
 	clock.BlockingAdvance(time.Second)
 	<-called
-	goroutine.Stop()
+	err := goroutine.Stop(context.Background())
+	require.NoError(t, err)
 
 	if calls := len(handler.HandleFunc.History()); calls != 4 {
 		t.Errorf("unexpected number of handler invocations. want=%d have=%d", 4, calls)

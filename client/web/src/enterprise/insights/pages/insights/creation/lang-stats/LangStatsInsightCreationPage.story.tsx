@@ -4,11 +4,13 @@ import delay from 'delay'
 import { noop } from 'lodash'
 
 import { getDocumentNode } from '@sourcegraph/http-client'
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { NOOP_TELEMETRY_SERVICE } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { MockedTestProvider } from '@sourcegraph/shared/src/testing/apollo'
 
 import { WebStory } from '../../../../../../components/WebStory'
 import type { LangStatsInsightContentResult } from '../../../../../../graphql-operations'
+import { SearchVersion } from '../../../../../../graphql-operations'
 import { GET_LANG_STATS_GQL } from '../../../../core/hooks/live-preview-insight'
 import { useCodeInsightsLicenseState } from '../../../../stores'
 
@@ -17,12 +19,7 @@ import { LangStatsInsightCreationPage as LangStatsInsightCreationPageComponent }
 const defaultStory: Meta = {
     title: 'web/insights/creation-ui/lang-stats/LangStatsInsightCreationPage',
     decorators: [story => <WebStory>{() => story()}</WebStory>],
-    parameters: {
-        chromatic: {
-            viewports: [576, 1440],
-            disableSnapshot: false,
-        },
-    },
+    parameters: {},
 }
 
 export default defaultStory
@@ -30,7 +27,7 @@ export default defaultStory
 const LANG_STATS_MOCK: MockedResponse<LangStatsInsightContentResult> = {
     request: {
         query: getDocumentNode(GET_LANG_STATS_GQL),
-        variables: {},
+        variables: { version: SearchVersion.V3 },
     },
     result: {
         data: {
@@ -67,6 +64,7 @@ export const LangStatsInsightCreationPage: StoryFn = () => {
                 onCancel={noop}
                 onSuccessfulCreation={noop}
                 telemetryService={NOOP_TELEMETRY_SERVICE}
+                telemetryRecorder={noOpTelemetryRecorder}
             />
         </MockedTestProvider>
     )

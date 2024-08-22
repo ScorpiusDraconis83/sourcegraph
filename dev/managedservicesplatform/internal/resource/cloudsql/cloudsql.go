@@ -34,6 +34,9 @@ type Output struct {
 	// OperatorAccessUser is the SQL user corresponding to the operator access
 	// service account.
 	OperatorAccessUser sqluser.SqlUser
+	// Databases created in the Cloud SQL instance, used for resources that
+	// depend on database creation.
+	Databases []cdktf.ITerraformDependable
 }
 
 type Config struct {
@@ -64,6 +67,24 @@ func New(scope constructs.Construct, id resourceid.ID, config Config) (*Output, 
 		pointers.Deref(config.Spec.CPU, 1),
 		pointers.Deref(config.Spec.MemoryGB, 4)*1024)
 
+	databaseFlags := []sqldatabaseinstance.SqlDatabaseInstanceSettingsDatabaseFlags{{
+		Name:  pointers.Ptr("cloudsql.iam_authentication"),
+		Value: pointers.Ptr("on"),
+	}}
+	if config.Spec.MaxConnections != nil {
+		databaseFlags = append(databaseFlags, sqldatabaseinstance.SqlDatabaseInstanceSettingsDatabaseFlags{
+			Name:  pointers.Ptr("max_connections"),
+			Value: pointers.Stringf("%d", *config.Spec.MaxConnections),
+		})
+	}
+	if config.Spec.LogicalReplication != nil {
+		// https://cloud.google.com/sql/docs/postgres/replication/configure-logical-replication#set-up-native-postgresql-logical-replication
+		databaseFlags = append(databaseFlags, sqldatabaseinstance.SqlDatabaseInstanceSettingsDatabaseFlags{
+			Name:  pointers.Ptr("cloudsql.logical_decoding"),
+			Value: pointers.Ptr("on"),
+		})
+	}
+
 	instance := sqldatabaseinstance.NewSqlDatabaseInstance(scope, id.TerraformID("instance"), &sqldatabaseinstance.SqlDatabaseInstanceConfig{
 		Project: &config.ProjectID,
 		Region:  &config.Region,
@@ -79,9 +100,14 @@ func New(scope constructs.Construct, id resourceid.ID, config Config) (*Output, 
 			}).HexValue)),
 
 		Settings: &sqldatabaseinstance.SqlDatabaseInstanceSettings{
-			Tier:             pointers.Ptr(machineType),
-			AvailabilityType: pointers.Ptr("ZONAL"),
-			DiskType:         pointers.Ptr("PD_SSD"),
+			Tier: pointers.Ptr(machineType),
+			AvailabilityType: pointers.Ptr(func() string {
+				if pointers.DerefZero(config.Spec.HighAvailability) {
+					return "REGIONAL" // multi-zone in a region
+				}
+				return "ZONAL" // single-zone
+			}()),
+			DiskType: pointers.Ptr("PD_SSD"),
 
 			// Arbitrary starting disk size - we use autoresizing to scale the
 			// disk up automatically. The minimum size is 10GB.
@@ -89,17 +115,21 @@ func New(scope constructs.Construct, id resourceid.ID, config Config) (*Output, 
 			DiskAutoresize:      pointers.Ptr(true),
 			DiskAutoresizeLimit: pointers.Float64(0),
 
-			DatabaseFlags: []sqldatabaseinstance.SqlDatabaseInstanceSettingsDatabaseFlags{{
-				Name:  pointers.Ptr("cloudsql.iam_authentication"),
-				Value: pointers.Ptr("on"),
-			}},
+			DatabaseFlags: databaseFlags,
 
 			// 🚨SECURITY🚨 SOC2/CI-79
 			// Production disks for MSP are configured with daily snapshots and retention set at ninety days,
 			// so we do the same.
 			BackupConfiguration: &sqldatabaseinstance.SqlDatabaseInstanceSettingsBackupConfiguration{
-				Enabled:                     pointers.Ptr(true),
-				PointInTimeRecoveryEnabled:  pointers.Ptr(false), // PITR uses a lot of resources and is cumbersome to use
+				Enabled: pointers.Ptr(true),
+				// PITR uses a lot of resources and is cumbersome to use -
+				// only enable it for services that require HA, since it is
+				// required for regional deployments:
+				// - https://cloud.google.com/sql/docs/postgres/configure-ha#terraform
+				// - https://cloud.google.com/sql/docs/postgres/high-availability#backups-and-restores
+				PointInTimeRecoveryEnabled: pointers.Ptr(
+					pointers.DerefZero(config.Spec.HighAvailability),
+				),
 				StartTime:                   pointers.Ptr("10:00"),
 				TransactionLogRetentionDays: pointers.Float64(7),
 				BackupRetentionSettings: &sqldatabaseinstance.SqlDatabaseInstanceSettingsBackupConfigurationBackupRetentionSettings{
@@ -125,7 +155,12 @@ func New(scope constructs.Construct, id resourceid.ID, config Config) (*Output, 
 			IpConfiguration: &sqldatabaseinstance.SqlDatabaseInstanceSettingsIpConfiguration{
 				Ipv4Enabled:    pointers.Ptr(true),
 				PrivateNetwork: config.Network.Id(),
-				RequireSsl:     pointers.Ptr(true),
+
+				// https://cloud.google.com/sql/docs/postgres/admin-api/rest/v1beta4/instances#SslMode
+				RequireSsl: pointers.Ptr(true),
+				SslMode:    pointers.Ptr("TRUSTED_CLIENT_CERTIFICATE_REQUIRED"),
+
+				EnablePrivatePathForGoogleCloudServices: pointers.Ptr(true),
 			},
 		},
 
@@ -171,6 +206,7 @@ func New(scope constructs.Construct, id resourceid.ID, config Config) (*Output, 
 		Length:  pointers.Float64(32),
 		Special: pointers.Ptr(false),
 	})
+	// sqluser.NewSqlUser has 'cloudsqlsuperuser' by default
 	adminUser := sqluser.NewSqlUser(scope, id.TerraformID("admin_user"), &sqluser.SqlUserConfig{
 		Instance: instance.Name(),
 		Project:  &config.ProjectID,
@@ -189,6 +225,7 @@ func New(scope constructs.Construct, id resourceid.ID, config Config) (*Output, 
 			instance, config.WorkloadIdentity, databaseResources),
 		OperatorAccessUser: newSqlUserForIdentity(scope, id.TerraformID("operator_access_service_account_user"),
 			instance, config.OperatorAccessIdentity, databaseResources),
+		Databases: databaseResources,
 	}, nil
 }
 

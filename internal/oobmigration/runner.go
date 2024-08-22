@@ -193,12 +193,21 @@ func (r *Runner) UpdateDirection(ctx context.Context, ids []int, applyReverse bo
 	return nil
 }
 
+func (r *Runner) Name() string {
+	return "oobmigrationRunner"
+}
+
 // Start runs registered migrators on a loop until they complete. This method will periodically
 // re-read from the database in order to refresh its current view of the migrations.
-func (r *Runner) Start(currentVersion Version) {
+func (r *Runner) Start(currentVersion, firstVersion Version) {
 	r.startInternal(func(migration Migration) bool {
 		if CompareVersions(currentVersion, migration.Introduced) == VersionOrderBefore {
 			// current version before migration introduction
+			return false
+		}
+
+		if migration.Deprecated != nil && CompareVersions(firstVersion, *migration.Deprecated) == VersionOrderAfter {
+			// instance initialized after migration deprecation
 			return false
 		}
 
@@ -238,6 +247,7 @@ func (r *Runner) startInternal(shouldRunMigration func(m Migration) bool) {
 			if !ok {
 				continue
 			}
+
 			if !shouldRunMigration(migration) {
 				continue
 			}
@@ -332,9 +342,10 @@ func (r *Runner) ensureProcessorIsRunning(wg *sync.WaitGroup, m map[int]chan Mig
 }
 
 // Stop will cancel the context used in Start, then blocks until Start has returned.
-func (r *Runner) Stop() {
+func (r *Runner) Stop(context.Context) error {
 	r.cancel()
 	<-r.finished
+	return nil
 }
 
 type migratorOptions struct {

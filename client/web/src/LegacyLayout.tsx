@@ -1,12 +1,12 @@
-import { type FC, Suspense, useCallback, useLayoutEffect, useState } from 'react'
+import { Suspense, useCallback, useLayoutEffect, useState, type FC } from 'react'
 
 import classNames from 'classnames'
-import { matchPath, useLocation, Route, Routes, Navigate, type RouteObject } from 'react-router-dom'
+import { matchPath, Navigate, Route, Routes, useLocation, type RouteObject } from 'react-router-dom'
 
 import { useKeyboardShortcut } from '@sourcegraph/shared/src/keyboardShortcuts/useKeyboardShortcut'
 import { Shortcut } from '@sourcegraph/shared/src/react-shortcuts'
 import { useExperimentalFeatures } from '@sourcegraph/shared/src/settings/settings'
-import { useTheme, Theme } from '@sourcegraph/shared/src/theme'
+import { Theme, useTheme } from '@sourcegraph/shared/src/theme'
 import { lazyComponent } from '@sourcegraph/shared/src/util/lazyComponent'
 import { FeedbackPrompt, LoadingSpinner, useLocalStorage } from '@sourcegraph/wildcard'
 
@@ -18,13 +18,14 @@ import { KeyboardShortcutsHelp } from './components/KeyboardShortcutsHelp/Keyboa
 import { useScrollToLocationHash } from './components/useScrollToLocationHash'
 import { useUserHistory } from './components/useUserHistory'
 import { GlobalContributions } from './contributions'
+import { ExternalAccountsModal } from './external-account-modal/ExternalAccountsModal'
 import { useFeatureFlag } from './featureFlags/useFeatureFlag'
 import { GlobalAlerts } from './global/GlobalAlerts'
 import { useHandleSubmitFeedback } from './hooks'
 import type { LegacyLayoutRouteContext } from './LegacyRouteContext'
 import { SurveyToast } from './marketing/toast'
 import { GlobalNavbar } from './nav/GlobalNavbar'
-import { NewGlobalNavigationBar } from './nav/new-global-navigation/NewGlobalNavigationBar'
+import { NewGlobalNavigationBar, useNewSearchNavigation } from './nav/new-global-navigation'
 import { PageRoutes } from './routes.constants'
 import { parseSearchURLQuery } from './search'
 import { SearchQueryStateObserver } from './SearchQueryStateObserver'
@@ -61,10 +62,8 @@ export const LegacyLayout: FC<LegacyLayoutProps> = props => {
 
     const isSearchRelatedPage = (routeMatch === PageRoutes.RepoContainer || routeMatch?.startsWith('/search')) ?? false
     const isSearchHomepage = location.pathname === '/search' && !parseSearchURLQuery(location.search)
-    const isSearchConsolePage = routeMatch?.startsWith('/search/console')
     const isSearchJobsPage = routeMatch?.startsWith(PageRoutes.SearchJobs)
     const isSearchNotebooksPage = routeMatch?.startsWith(PageRoutes.Notebooks)
-    const isCodySearchPage = routeMatch === PageRoutes.CodySearch
     const isRepositoryRelatedPage = routeMatch === PageRoutes.RepoContainer ?? false
 
     // Since the access token callback page is rendered in a nested route, we can't use
@@ -96,23 +95,16 @@ export const LegacyLayout: FC<LegacyLayoutProps> = props => {
     // so that Layout can always render the navbar.
     const needsSiteInit = window.context?.needsSiteInit
     const disableFeedbackSurvey = window.context?.disableFeedbackSurvey
-    const isSiteInit = location.pathname === PageRoutes.SiteAdminInit
+    const isSiteInit = location.pathname === PageRoutes.SiteAdminInit.toString()
     const isSignInOrUp =
         routeMatch &&
-        [
-            PageRoutes.SignIn,
-            PageRoutes.SignUp,
-            PageRoutes.PasswordReset,
-            PageRoutes.Welcome,
-            PageRoutes.RequestAccess,
-        ].includes(routeMatch as PageRoutes)
-    const isGetCodyPage = location.pathname === PageRoutes.GetCody
-    const isPostSignUpPage = location.pathname === PageRoutes.PostSignUp
+        [PageRoutes.SignIn, PageRoutes.SignUp, PageRoutes.PasswordReset, PageRoutes.RequestAccess].includes(
+            routeMatch as PageRoutes
+        )
+    const isPostSignUpPage = location.pathname === PageRoutes.PostSignUp.toString()
 
-    const newSearchNavigation = useExperimentalFeatures<boolean>(features => features.newSearchNavigationUI ?? false)
+    const [newSearchNavigation] = useNewSearchNavigation()
     const [enableContrastCompliantSyntaxHighlighting] = useFeatureFlag('contrast-compliant-syntax-highlighting')
-    // Start with `true` to avoid redirecting before having a chance to check the real value of the flag.
-    const [isCodyProEnabled] = useFeatureFlag('cody-pro', true)
 
     const { theme } = useTheme()
     const showHelpShortcut = useKeyboardShortcut('keyboardShortcutsHelp')
@@ -159,7 +151,10 @@ export const LegacyLayout: FC<LegacyLayoutProps> = props => {
                     </div>
                 }
             >
-                <LazySetupWizard telemetryService={props.telemetryService} />
+                <LazySetupWizard
+                    telemetryService={props.telemetryService}
+                    telemetryRecorder={props.platformContext.telemetryRecorder}
+                />
             </Suspense>
         )
     }
@@ -182,31 +177,11 @@ export const LegacyLayout: FC<LegacyLayoutProps> = props => {
         return <ApplicationRoutes routes={props.routes} />
     }
 
-    if (
-        props.isSourcegraphDotCom &&
-        !isCodyProEnabled &&
-        props.authenticatedUser &&
-        !props.authenticatedUser.completedPostSignup &&
-        !isPostSignUpPage
-    ) {
-        if (location.pathname !== '/search') {
-            const returnTo = window.location.href
-            const params = new URLSearchParams()
-            params.set('returnTo', returnTo)
-            const navigateTo = PageRoutes.PostSignUp + '?' + params.toString()
-            return <Navigate to={navigateTo.toString()} replace={true} />
-        }
-
-        return <Navigate to={PageRoutes.PostSignUp} replace={true} />
-    }
-
     const showNavigationSearchBox =
         isSearchRelatedPage &&
         !isSearchHomepage &&
         !isCommunitySearchContextPage &&
-        !isSearchConsolePage &&
         !isSearchNotebooksPage &&
-        !isCodySearchPage &&
         !isSearchJobsPage
 
     return (
@@ -238,25 +213,34 @@ export const LegacyLayout: FC<LegacyLayoutProps> = props => {
                 />
             )}
 
-            <GlobalAlerts authenticatedUser={props.authenticatedUser} />
+            <GlobalAlerts
+                authenticatedUser={props.authenticatedUser}
+                telemetryRecorder={props.platformContext.telemetryRecorder}
+            />
             {!isSiteInit && !isSignInOrUp && !props.isSourcegraphDotCom && !disableFeedbackSurvey && (
-                <SurveyToast authenticatedUser={props.authenticatedUser} />
+                <SurveyToast
+                    authenticatedUser={props.authenticatedUser}
+                    telemetryRecorder={props.platformContext.telemetryRecorder}
+                />
             )}
-            {!isSiteInit && !isSignInOrUp && !isGetCodyPage && !isPostSignUpPage && (
+            {!isSiteInit && !isSignInOrUp && !isPostSignUpPage && (
                 <>
                     {newSearchNavigation ? (
                         <NewGlobalNavigationBar
+                            routes={props.routes}
                             showSearchBox={showNavigationSearchBox}
                             authenticatedUser={props.authenticatedUser}
                             isSourcegraphDotCom={props.isSourcegraphDotCom}
-                            ownEnabled={props.ownEnabled}
                             notebooksEnabled={props.notebooksEnabled}
                             searchContextsEnabled={props.searchContextsEnabled}
                             codeMonitoringEnabled={props.codeMonitoringEnabled}
                             batchChangesEnabled={props.batchChangesEnabled}
                             codeInsightsEnabled={props.codeInsightsEnabled ?? false}
+                            searchJobsEnabled={props.searchJobsEnabled}
+                            showFeedbackModal={showFeedbackModal}
                             selectedSearchContextSpec={props.selectedSearchContextSpec}
                             telemetryService={props.telemetryService}
+                            telemetryRecorder={props.platformContext.telemetryRecorder}
                         />
                     ) : (
                         <GlobalNavbar
@@ -272,11 +256,7 @@ export const LegacyLayout: FC<LegacyLayoutProps> = props => {
             )}
             {needsSiteInit && !isSiteInit && <Navigate replace={true} to="/site-admin/init" />}
             <ApplicationRoutes routes={props.routes} />
-            <GlobalContributions
-                key={3}
-                extensionsController={props.extensionsController}
-                platformContext={props.platformContext}
-            />
+            <GlobalContributions key={3} />
             {fuzzyFinder && (
                 <LazyFuzzyFinder
                     isVisible={isFuzzyFinderVisible}
@@ -284,8 +264,17 @@ export const LegacyLayout: FC<LegacyLayoutProps> = props => {
                     isRepositoryRelatedPage={isRepositoryRelatedPage}
                     settingsCascade={props.settingsCascade}
                     telemetryService={props.telemetryService}
+                    telemetryRecorder={props.platformContext.telemetryRecorder}
                     location={location}
                     userHistory={userHistory}
+                />
+            )}
+            {props.authenticatedUser && (
+                <ExternalAccountsModal
+                    context={window.context}
+                    authenticatedUser={props.authenticatedUser}
+                    isLightTheme={theme === Theme.Light}
+                    telemetryRecorder={props.platformContext.telemetryRecorder}
                 />
             )}
             {showDeveloperDialog && <LazyDeveloperDialog />}

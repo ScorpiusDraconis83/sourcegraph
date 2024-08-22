@@ -13,12 +13,11 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/sourcegraph/sourcegraph/internal/actor"
-	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/metrics"
+	"github.com/sourcegraph/sourcegraph/internal/object"
 	"github.com/sourcegraph/sourcegraph/internal/observation"
 	"github.com/sourcegraph/sourcegraph/internal/search/exhaustive/store"
 	"github.com/sourcegraph/sourcegraph/internal/search/exhaustive/types"
-	"github.com/sourcegraph/sourcegraph/internal/uploadstore"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 	"github.com/sourcegraph/sourcegraph/lib/iterator"
 )
@@ -27,7 +26,7 @@ import (
 func New(
 	observationCtx *observation.Context,
 	store *store.Store,
-	uploadStore uploadstore.Store,
+	uploadStore object.Storage,
 	newSearcher NewSearcher,
 ) *Service {
 	logger := log.Scoped("searchjobs.Service")
@@ -46,7 +45,7 @@ func New(
 type Service struct {
 	logger      log.Logger
 	store       *store.Store
-	uploadStore uploadstore.Store
+	uploadStore object.Storage
 	newSearcher NewSearcher
 	operations  *operations
 }
@@ -63,8 +62,8 @@ type operations struct {
 	cancelSearchJob          *observation.Operation
 	getAggregateRepoRevState *observation.Operation
 
-	getSearchJobCSVWriterTo  operationWithWriterTo
-	getSearchJobLogsWriterTo operationWithWriterTo
+	getSearchJobResultsWriterTo operationWithWriterTo
+	getSearchJobLogsWriterTo    operationWithWriterTo
 }
 
 // operationWithWriterTo encodes our pattern around our CSV WriterTo were we
@@ -109,9 +108,9 @@ func newOperations(observationCtx *observation.Context) *operations {
 			cancelSearchJob:          op("CancelSearchJob"),
 			getAggregateRepoRevState: op("GetAggregateRepoRevState"),
 
-			getSearchJobCSVWriterTo: operationWithWriterTo{
-				get:      op("GetSearchJobCSVWriterTo"),
-				writerTo: op("GetSearchJobCSVWriterTo.WriteTo"),
+			getSearchJobResultsWriterTo: operationWithWriterTo{
+				get:      op("GetSearchJobResultsWriterTo"),
+				writerTo: op("GetSearchJobResultsWriterTo.WriteTo"),
 			},
 			getSearchJobLogsWriterTo: operationWithWriterTo{
 				get:      op("GetSearchJobLogsWriterTo"),
@@ -136,10 +135,6 @@ func (s *Service) CreateSearchJob(ctx context.Context, query string) (_ *types.E
 		attribute.String("query", query),
 	))
 	defer endObservation(1, observation.Args{})
-
-	if !isEnabled() {
-		return nil, errors.New("search jobs is an experimental feature, enable it by setting \"experimentalFeatures.searchJobs: true\" in site configuration")
-	}
 
 	actor := actor.FromContext(ctx)
 	if !actor.IsAuthenticated() {
@@ -237,6 +232,38 @@ func (s *Service) GetSearchJobLogsWriterTo(parentCtx context.Context, id int64) 
 	}), nil
 }
 
+// getLogKey returns the key for the log that is stored in the blobstore.
+func getLogKey(searchJobID int64) string {
+	return fmt.Sprintf("log-%d.csv", searchJobID)
+}
+
+func (s *Service) UploadJobLogs(ctx context.Context, id int64, r io.Reader) (int64, error) {
+	// 🚨 SECURITY: only someone with access to the job may upload the logs
+	if err := s.store.UserHasAccess(ctx, id); err != nil {
+		return 0, err
+	}
+
+	return s.uploadStore.Upload(ctx, getLogKey(id), r)
+}
+
+func (s *Service) GetJobLogs(ctx context.Context, id int64) (io.ReadCloser, error) {
+	// 🚨 SECURITY: only someone with access to the job may download the logs
+	if err := s.store.UserHasAccess(ctx, id); err != nil {
+		return nil, err
+	}
+
+	return s.uploadStore.Get(ctx, getLogKey(id))
+}
+
+func (s *Service) DeleteJobLogs(ctx context.Context, id int64) error {
+	// 🚨 SECURITY: only someone with access to the job may delete the logs
+	if err := s.store.UserHasAccess(ctx, id); err != nil {
+		return err
+	}
+
+	return s.uploadStore.Delete(ctx, getLogKey(id))
+}
+
 // JobLogsIterLimit is the number of lines the iterator will read from the
 // database per page. Assuming 100 bytes per line, this will be ~1MB of memory
 // per 10k repo-rev jobs.
@@ -314,21 +341,21 @@ func (s *Service) DeleteSearchJob(ctx context.Context, id int64) (err error) {
 		return err
 	}
 
+	// The log file is not guaranteed to exist, so we ignore the error here.
+	_ = s.uploadStore.Delete(ctx, getLogKey(id))
+
 	return s.store.DeleteExhaustiveSearchJob(ctx, id)
 }
 
-// WriteSearchJobCSV copies all CSVs associated with a search job to the given
-// writer. It returns the number of bytes written and any error encountered.
-
-// GetSearchJobCSVWriterTo returns a WriterTo which can be called once to
+// GetSearchJobResultsWriterTo returns a WriterTo which can be called once to
 // write all CSVs associated with a search job to the given writer for job id.
 // Note: ctx is used by WriterTo.
 //
 // io.WriterTo is a specialization of an io.Reader. We expect callers of this
-// function to want to write an http response, so we avoid an io.Pipe and
+// function to want to write a http response, so we avoid an io.Pipe and
 // instead pass a more direct use.
-func (s *Service) GetSearchJobCSVWriterTo(parentCtx context.Context, id int64) (_ io.WriterTo, err error) {
-	ctx, _, endObservation := s.operations.getSearchJobCSVWriterTo.get.With(parentCtx, &err, opAttrs(
+func (s *Service) GetSearchJobResultsWriterTo(parentCtx context.Context, id int64) (_ io.WriterTo, err error) {
+	ctx, _, endObservation := s.operations.getSearchJobResultsWriterTo.get.With(parentCtx, &err, opAttrs(
 		attribute.Int64("id", id)))
 	defer endObservation(1, observation.Args{})
 
@@ -343,13 +370,13 @@ func (s *Service) GetSearchJobCSVWriterTo(parentCtx context.Context, id int64) (
 	}
 
 	return writerToFunc(func(w io.Writer) (n int64, err error) {
-		ctx, _, endObservation := s.operations.getSearchJobCSVWriterTo.writerTo.With(parentCtx, &err, opAttrs(
+		ctx, _, endObservation := s.operations.getSearchJobResultsWriterTo.writerTo.With(parentCtx, &err, opAttrs(
 			attribute.Int64("id", id)))
 		defer func() {
 			endObservation(1, opAttrs(attribute.Int64("bytesWritten", n)))
 		}()
 
-		return writeSearchJobCSV(ctx, iter, s.uploadStore, w)
+		return writeSearchJobJSON(ctx, iter, s.uploadStore, w)
 	}), nil
 }
 
@@ -386,25 +413,11 @@ func (s *Service) GetAggregateRepoRevState(ctx context.Context, id int64) (_ *ty
 	return &stats, nil
 }
 
-// discards output from br up until delim is read. If an error is encountered
-// it is returned. Note: often the error is io.EOF
-func discardUntil(br *bufio.Reader, delim byte) error {
-	// This function just wraps ReadSlice which will read until delim. If we
-	// get the error ErrBufferFull we didn't find delim since we need to read
-	// more, so we just try again. For every other error (or nil) we can
-	// return it.
-	for {
-		_, err := br.ReadSlice(delim)
-		if err != bufio.ErrBufferFull {
-			return err
-		}
-	}
-}
-
-func writeSearchJobCSV(ctx context.Context, iter *iterator.Iterator[string], uploadStore uploadstore.Store, w io.Writer) (int64, error) {
+func writeSearchJobJSON(ctx context.Context, iter *iterator.Iterator[string], uploadStore object.Storage, w io.Writer) (int64, error) {
 	// keep a single bufio.Reader so we can reuse its buffer.
 	var br bufio.Reader
-	writeKey := func(key string, skipHeader bool) (int64, error) {
+
+	writeKey := func(key string) (int64, error) {
 		rc, err := uploadStore.Get(ctx, key)
 		if err != nil {
 			return 0, err
@@ -413,32 +426,17 @@ func writeSearchJobCSV(ctx context.Context, iter *iterator.Iterator[string], upl
 
 		br.Reset(rc)
 
-		// skip header line
-		if skipHeader {
-			err := discardUntil(&br, '\n')
-			if err == io.EOF {
-				// reached end of file before finding the newline. Write
-				// nothing
-				return 0, nil
-			} else if err != nil {
-				return 0, err
-			}
-		}
-
 		return br.WriteTo(w)
 	}
 
-	// For the first blob we want the header, for the rest we don't
-	skipHeader := false
 	var n int64
 	for iter.Next() {
 		key := iter.Current()
-		m, err := writeKey(key, skipHeader)
+		m, err := writeKey(key)
 		n += m
 		if err != nil {
-			return n, errors.Wrapf(err, "writing csv for key %q", key)
+			return n, errors.Wrapf(err, "writing JSON for key %q", key)
 		}
-		skipHeader = true
 	}
 
 	return n, iter.Err()
@@ -506,11 +504,4 @@ func (c *writeCounter) Write(p []byte) (n int, err error) {
 	n, err = c.w.Write(p)
 	c.n += int64(n)
 	return
-}
-
-func isEnabled() bool {
-	if experimentalFeatures := conf.SiteConfig().ExperimentalFeatures; experimentalFeatures != nil {
-		return experimentalFeatures.SearchJobs != nil && *experimentalFeatures.SearchJobs
-	}
-	return false
 }

@@ -12,7 +12,6 @@ type RootResolver interface {
 	AutoindexingServiceResolver
 	CodeNavServiceResolver
 	PoliciesServiceResolver
-	SentinelServiceResolver
 	UploadsServiceResolver
 	RankingServiceResolver
 }
@@ -22,16 +21,16 @@ type Resolver struct {
 	codenavResolver          CodeNavServiceResolver
 	policiesRootResolver     PoliciesServiceResolver
 	uploadsRootResolver      UploadsServiceResolver
-	sentinelRootResolver     SentinelServiceResolver
 	rankingServiceResolver   RankingServiceResolver
 }
+
+var _ RootResolver = &Resolver{}
 
 func NewCodeIntelResolver(
 	autoIndexingRootResolver AutoindexingServiceResolver,
 	codenavResolver CodeNavServiceResolver,
 	policiesRootResolver PoliciesServiceResolver,
 	uploadsRootResolver UploadsServiceResolver,
-	sentinelRootResolver SentinelServiceResolver,
 	rankingServiceResolver RankingServiceResolver,
 ) *Resolver {
 	return &Resolver{
@@ -39,7 +38,6 @@ func NewCodeIntelResolver(
 		codenavResolver:          codenavResolver,
 		policiesRootResolver:     policiesRootResolver,
 		uploadsRootResolver:      uploadsRootResolver,
-		sentinelRootResolver:     sentinelRootResolver,
 		rankingServiceResolver:   rankingServiceResolver,
 	}
 }
@@ -65,11 +63,8 @@ func (r *Resolver) NodeResolvers() map[string]NodeByIDFunc {
 		"PreciseIndex": func(ctx context.Context, id graphql.ID) (Node, error) {
 			return r.uploadsRootResolver.PreciseIndexByID(ctx, id)
 		},
-		"Vulnerability": func(ctx context.Context, id graphql.ID) (Node, error) {
-			return r.sentinelRootResolver.VulnerabilityByID(ctx, id)
-		},
-		"VulnerabilityMatch": func(ctx context.Context, id graphql.ID) (Node, error) {
-			return r.sentinelRootResolver.VulnerabilityMatchByID(ctx, id)
+		CodeGraphDataIDKind: func(ctx context.Context, id graphql.ID) (Node, error) {
+			return r.codenavResolver.CodeGraphDataByID(ctx, id)
 		},
 	}
 }
@@ -87,30 +82,6 @@ func unmarshalLegacyUploadID(id graphql.ID) (int64, error) {
 	}
 
 	return strconv.ParseInt(rawID, 10, 64)
-}
-
-func (r *Resolver) Vulnerabilities(ctx context.Context, args GetVulnerabilitiesArgs) (_ VulnerabilityConnectionResolver, err error) {
-	return r.sentinelRootResolver.Vulnerabilities(ctx, args)
-}
-
-func (r *Resolver) VulnerabilityMatches(ctx context.Context, args GetVulnerabilityMatchesArgs) (_ VulnerabilityMatchConnectionResolver, err error) {
-	return r.sentinelRootResolver.VulnerabilityMatches(ctx, args)
-}
-
-func (r *Resolver) VulnerabilityByID(ctx context.Context, id graphql.ID) (_ VulnerabilityResolver, err error) {
-	return r.sentinelRootResolver.VulnerabilityByID(ctx, id)
-}
-
-func (r *Resolver) VulnerabilityMatchByID(ctx context.Context, id graphql.ID) (_ VulnerabilityMatchResolver, err error) {
-	return r.sentinelRootResolver.VulnerabilityMatchByID(ctx, id)
-}
-
-func (r *Resolver) VulnerabilityMatchesSummaryCounts(ctx context.Context) (_ VulnerabilityMatchesSummaryCountResolver, err error) {
-	return r.sentinelRootResolver.VulnerabilityMatchesSummaryCounts(ctx)
-}
-
-func (r *Resolver) VulnerabilityMatchesCountByRepository(ctx context.Context, args GetVulnerabilityMatchCountByRepositoryArgs) (_ VulnerabilityMatchCountByRepositoryConnectionResolver, err error) {
-	return r.sentinelRootResolver.VulnerabilityMatchesCountByRepository(ctx, args)
 }
 
 func (r *Resolver) IndexerKeys(ctx context.Context, opts *IndexerKeyQueryArgs) (_ []string, err error) {
@@ -155,6 +126,18 @@ func (r *Resolver) InferAutoIndexJobsForRepo(ctx context.Context, args *InferAut
 
 func (r *Resolver) GitBlobLSIFData(ctx context.Context, args *GitBlobLSIFDataArgs) (_ GitBlobLSIFDataResolver, err error) {
 	return r.codenavResolver.GitBlobLSIFData(ctx, args)
+}
+
+func (r *Resolver) CodeGraphData(ctx context.Context, opts *CodeGraphDataOpts) (*[]CodeGraphDataResolver, error) {
+	return r.codenavResolver.CodeGraphData(ctx, opts)
+}
+
+func (r *Resolver) CodeGraphDataByID(ctx context.Context, id graphql.ID) (CodeGraphDataResolver, error) {
+	return r.codenavResolver.CodeGraphDataByID(ctx, id)
+}
+
+func (r *Resolver) UsagesForSymbol(ctx context.Context, args *UsagesForSymbolArgs) (UsageConnectionResolver, error) {
+	return r.codenavResolver.UsagesForSymbol(ctx, args)
 }
 
 func (r *Resolver) ConfigurationPolicyByID(ctx context.Context, id graphql.ID) (_ CodeIntelligenceConfigurationPolicyResolver, err error) {

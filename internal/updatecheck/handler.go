@@ -32,17 +32,17 @@ var (
 	// non-cluster, non-docker-compose, and non-pure-docker installations what the latest
 	// version is. The version here _must_ be available at https://hub.docker.com/r/sourcegraph/server/tags/
 	// before landing in master.
-	latestReleaseDockerServerImageBuild = newPingResponse("5.2.5")
+	latestReleaseDockerServerImageBuild = newPingResponse("5.5.2463")
 
 	// latestReleaseKubernetesBuild is only used by sourcegraph.com to tell existing Sourcegraph
 	// cluster deployments what the latest version is. The version here _must_ be available in
 	// a tag at https://github.com/sourcegraph/deploy-sourcegraph before landing in master.
-	latestReleaseKubernetesBuild = newPingResponse("5.2.5")
+	latestReleaseKubernetesBuild = newPingResponse("5.5.2463")
 
 	// latestReleaseDockerComposeOrPureDocker is only used by sourcegraph.com to tell existing Sourcegraph
 	// Docker Compose or Pure Docker deployments what the latest version is. The version here _must_ be
 	// available in a tag at https://github.com/sourcegraph/deploy-sourcegraph-docker before landing in master.
-	latestReleaseDockerComposeOrPureDocker = newPingResponse("5.2.5")
+	latestReleaseDockerComposeOrPureDocker = newPingResponse("5.5.2463")
 )
 
 func getLatestRelease(deployType string) pingResponse {
@@ -88,7 +88,6 @@ func Handle(logger log.Logger, pubsubClient pubsub.TopicPublisher, meter *Meter,
 
 	pr, err := readPingRequest(r)
 	if err != nil {
-		logger.Error("malformed request", log.Error(err))
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -191,6 +190,7 @@ func canUpdateDate(clientVersionString string) (bool, error) {
 type pingRequest struct {
 	ClientSiteID         string          `json:"site"`
 	LicenseKey           string          `json:",omitempty"`
+	ExternalURL          string          `json:"externalURL,omitempty"`
 	DeployType           string          `json:"deployType"`
 	Os                   string          `json:"os,omitempty"` // Only used in Cody App
 	ClientVersionString  string          `json:"version"`
@@ -207,6 +207,7 @@ type pingRequest struct {
 	AutomationUsage               json.RawMessage `json:"automationUsage,omitempty"`
 	GrowthStatistics              json.RawMessage `json:"growthStatistics,omitempty"`
 	SavedSearches                 json.RawMessage `json:"savedSearches,omitempty"`
+	Prompts                       json.RawMessage `json:"prompts,omitempty"`
 	HomepagePanels                json.RawMessage `json:"homepagePanels,omitempty"`
 	SearchOnboarding              json.RawMessage `json:"searchOnboarding,omitempty"`
 	Repositories                  json.RawMessage `json:"repositories,omitempty"`
@@ -236,9 +237,13 @@ type pingRequest struct {
 	EverFindRefs                  bool            `json:"refs,omitempty"`
 	ActiveToday                   bool            `json:"activeToday,omitempty"` // Only used in Cody App
 	HasCodyEnabled                bool            `json:"hasCodyEnabled,omitempty"`
-	CodyUsage                     json.RawMessage `json:"codyUsage,omitempty"`
-	CodyProviders                 json.RawMessage `json:"codyProviders,omitempty"`
-	RepoMetadataUsage             json.RawMessage `json:"repoMetadataUsage,omitempty"`
+	// CodyUsage is deprecated, but here so we can receive pings from older instances
+	CodyUsage                    json.RawMessage `json:"codyUsage,omitempty"`
+	CodyUsage2                   json.RawMessage `json:"codyUsage2,omitempty"`
+	CodyProviders                json.RawMessage `json:"codyProviders,omitempty"`
+	RepoMetadataUsage            json.RawMessage `json:"repoMetadataUsage,omitempty"`
+	LlmUsage                     json.RawMessage `json:"llmUsage,omitempty"`
+	CodyContextFiltersConfigured bool            `json:"codyContextFiltersConfigured,omitempty"`
 }
 
 type dependencyVersions struct {
@@ -323,6 +328,7 @@ type pingPayload struct {
 	RemoteSiteVersion             string          `json:"remote_site_version"`
 	RemoteSiteID                  string          `json:"remote_site_id"`
 	LicenseKey                    string          `json:"license_key"`
+	ExternalURL                   string          `json:"external_url"`
 	HasUpdate                     string          `json:"has_update"`
 	UniqueUsersToday              string          `json:"unique_users_today"`
 	SiteActivity                  json.RawMessage `json:"site_activity"`
@@ -365,9 +371,11 @@ type pingPayload struct {
 	ActiveToday                   string          `json:"active_today"`
 	Timestamp                     string          `json:"timestamp"`
 	HasCodyEnabled                string          `json:"has_cody_enabled"`
-	CodyUsage                     json.RawMessage `json:"cody_usage"`
+	CodyUsage2                    json.RawMessage `json:"cody_usage_2"`
 	CodyProviders                 json.RawMessage `json:"cody_providers"`
 	RepoMetadataUsage             json.RawMessage `json:"repo_metadata_usage"`
+	LlmUsage                      json.RawMessage `json:"llm_usage"`
+	CodyContextFiltersConfigured  string          `json:"cody_context_filters_configured"`
 }
 
 func logPing(logger log.Logger, pubsubClient pubsub.TopicPublisher, meter *Meter, r *http.Request, pr *pingRequest, hasUpdate bool) {
@@ -421,16 +429,12 @@ func marshalPing(pr *pingRequest, hasUpdate bool, clientAddr string, now time.Ti
 		return nil, errors.Wrap(err, "malformed search usage")
 	}
 
-	codyUsage, err := reserializeCodyUsage(pr.CodyUsage)
-	if err != nil {
-		return nil, errors.Wrap(err, "malformed cody usage")
-	}
-
 	return json.Marshal(&pingPayload{
 		RemoteIP:                      clientAddr,
 		RemoteSiteVersion:             pr.ClientVersionString,
 		RemoteSiteID:                  pr.ClientSiteID,
 		LicenseKey:                    pr.LicenseKey,
+		ExternalURL:                   pr.ExternalURL,
 		Os:                            pr.Os,
 		HasUpdate:                     strconv.FormatBool(hasUpdate),
 		UniqueUsersToday:              strconv.FormatInt(int64(pr.UniqueUsers), 10),
@@ -471,9 +475,11 @@ func marshalPing(pr *pingRequest, hasUpdate bool, clientAddr string, now time.Ti
 		ActiveToday:                   strconv.FormatBool(pr.ActiveToday),
 		Timestamp:                     now.UTC().Format(time.RFC3339),
 		HasCodyEnabled:                strconv.FormatBool(pr.HasCodyEnabled),
-		CodyUsage:                     codyUsage,
+		CodyUsage2:                    pr.CodyUsage2,
 		CodyProviders:                 pr.CodyProviders,
 		RepoMetadataUsage:             pr.RepoMetadataUsage,
+		LlmUsage:                      pr.LlmUsage,
+		CodyContextFiltersConfigured:  strconv.FormatBool(pr.CodyContextFiltersConfigured),
 	})
 }
 
@@ -510,10 +516,7 @@ func reserializeNewCodeIntelUsage(payload json.RawMessage) (json.RawMessage, err
 	}
 
 	countsByLanguage := make([]jsonCodeIntelRepositoryCountsByLanguage, 0, len(codeIntelUsage.CountsByLanguage))
-	for language, counts := range codeIntelUsage.CountsByLanguage {
-		// note: do not capture loop var by ref
-		languageID := language
-
+	for languageID, counts := range codeIntelUsage.CountsByLanguage {
 		countsByLanguage = append(countsByLanguage, jsonCodeIntelRepositoryCountsByLanguage{
 			LanguageID:                            &languageID,
 			NumRepositoriesWithUploadRecords:      counts.NumRepositoriesWithUploadRecords,
@@ -540,9 +543,6 @@ func reserializeNewCodeIntelUsage(payload json.RawMessage) (json.RawMessage, err
 
 	languageRequests := make([]jsonLanguageRequest, 0, len(codeIntelUsage.LanguageRequests))
 	for _, request := range codeIntelUsage.LanguageRequests {
-		// note: do not capture loop var by ref
-		request := request
-
 		languageRequests = append(languageRequests, jsonLanguageRequest{
 			LanguageID:  &request.LanguageID,
 			NumRequests: &request.NumRequests,
@@ -727,42 +727,6 @@ func reserializeSearchUsage(payload json.RawMessage) (json.RawMessage, error) {
 	}
 	if len(searchUsage.Monthly) > 0 {
 		singlePeriodUsage.Monthly = searchUsage.Monthly[0]
-	}
-
-	return json.Marshal(singlePeriodUsage)
-}
-
-// reserializeCodyUsage will reserialize a cody usage statistics
-// struct with only the first period in each period type. This reduces the
-// complexity required in the BigQuery schema and downstream ETL transform
-// logic.
-func reserializeCodyUsage(payload json.RawMessage) (json.RawMessage, error) {
-	if len(payload) == 0 {
-		return nil, nil
-	}
-
-	var codyUsage *types.CodyUsageStatistics
-	if err := json.Unmarshal(payload, &codyUsage); err != nil {
-		return nil, err
-	}
-	if codyUsage == nil {
-		return nil, nil
-	}
-
-	singlePeriodUsage := struct {
-		Daily   *types.CodyUsagePeriod
-		Weekly  *types.CodyUsagePeriod
-		Monthly *types.CodyUsagePeriod
-	}{}
-
-	if len(codyUsage.Daily) > 0 {
-		singlePeriodUsage.Daily = codyUsage.Daily[0]
-	}
-	if len(codyUsage.Weekly) > 0 {
-		singlePeriodUsage.Weekly = codyUsage.Weekly[0]
-	}
-	if len(codyUsage.Monthly) > 0 {
-		singlePeriodUsage.Monthly = codyUsage.Monthly[0]
 	}
 
 	return json.Marshal(singlePeriodUsage)

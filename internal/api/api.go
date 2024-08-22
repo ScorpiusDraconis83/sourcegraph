@@ -2,13 +2,13 @@
 package api
 
 import (
+	"cmp"
 	"fmt"
 	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 
-	proto "github.com/sourcegraph/sourcegraph/internal/gitserver/v1"
 	"github.com/sourcegraph/sourcegraph/internal/lazyregexp"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
@@ -32,7 +32,7 @@ func (r RepoName) Equal(o RepoName) bool {
 // RepoHashedName is the hashed name of a repo
 type RepoHashedName string
 
-var deletedRegex = lazyregexp.New("DELETED-[0-9]+\\.[0-9]+-")
+var deletedRegex = lazyregexp.New("^DELETED-[0-9]+\\.[0-9]+-")
 
 // UndeletedRepoName will "undelete" a repo name. When we soft-delete a repo we
 // change its name in the database, this function extracts the original repo
@@ -67,33 +67,6 @@ func (c CommitID) Short() string {
 	return string(c)
 }
 
-// RepoCommit scopes a commit to a repository.
-type RepoCommit struct {
-	Repo     RepoName
-	CommitID CommitID
-}
-
-func (rc *RepoCommit) ToProto() *proto.RepoCommit {
-	return &proto.RepoCommit{
-		Repo:   string(rc.Repo),
-		Commit: string(rc.CommitID),
-	}
-}
-
-func (rc *RepoCommit) FromProto(p *proto.RepoCommit) {
-	*rc = RepoCommit{
-		Repo:     RepoName(p.GetRepo()),
-		CommitID: CommitID(p.GetCommit()),
-	}
-}
-
-func (rc RepoCommit) Attrs() []attribute.KeyValue {
-	return []attribute.KeyValue{
-		rc.Repo.Attr(),
-		rc.CommitID.Attr(),
-	}
-}
-
 // ExternalRepoSpec specifies a repository on an external service (such as GitHub or GitLab).
 type ExternalRepoSpec struct {
 	// ID is the repository's ID on the external service. Its value is opaque except to the repo-updater.
@@ -126,12 +99,12 @@ func (r ExternalRepoSpec) Equal(s *ExternalRepoSpec) bool {
 // Compare returns -1 if r < s, 0 if r == s or 1 if r > s
 func (r ExternalRepoSpec) Compare(s ExternalRepoSpec) int {
 	if r.ServiceType != s.ServiceType {
-		return cmp(r.ServiceType, s.ServiceType)
+		return cmp.Compare(r.ServiceType, s.ServiceType)
 	}
 	if r.ServiceID != s.ServiceID {
-		return cmp(r.ServiceID, s.ServiceID)
+		return cmp.Compare(r.ServiceID, s.ServiceID)
 	}
-	return cmp(r.ID, s.ID)
+	return cmp.Compare(r.ID, s.ID)
 }
 
 func (r ExternalRepoSpec) String() string {
@@ -168,39 +141,4 @@ type Settings struct {
 	AuthorUserID *int32          // the ID of the user who authored this settings value
 	Contents     string          // the raw JSON (with comments and trailing commas allowed)
 	CreatedAt    time.Time       // the date when this settings value was created
-}
-
-func cmp(a, b string) int {
-	switch {
-	case a < b:
-		return -1
-	case b < a:
-		return 1
-	default:
-		return 0
-	}
-}
-
-type SavedQueryIDSpec struct {
-	Subject SettingsSubject
-	Key     string
-}
-
-// ConfigSavedQuery is the JSON shape of a saved query entry in the JSON configuration
-// (i.e., an entry in the {"search.savedQueries": [...]} array).
-type ConfigSavedQuery struct {
-	Key             string  `json:"key,omitempty"`
-	Description     string  `json:"description"`
-	Query           string  `json:"query"`
-	Notify          bool    `json:"notify,omitempty"`
-	NotifySlack     bool    `json:"notifySlack,omitempty"`
-	UserID          *int32  `json:"userID"`
-	OrgID           *int32  `json:"orgID"`
-	SlackWebhookURL *string `json:"slackWebhookURL"`
-}
-
-// SavedQuerySpecAndConfig represents a saved query configuration its unique ID.
-type SavedQuerySpecAndConfig struct {
-	Spec   SavedQueryIDSpec
-	Config ConfigSavedQuery
 }

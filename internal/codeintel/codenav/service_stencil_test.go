@@ -5,30 +5,35 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/sourcegraph/log"
 
-	shared "github.com/sourcegraph/sourcegraph/internal/codeintel/codenav/shared"
+	lsifstoremocks "github.com/sourcegraph/sourcegraph/internal/codeintel/codenav/internal/lsifstore/mocks"
+	"github.com/sourcegraph/sourcegraph/internal/codeintel/codenav/shared"
 	uploadsshared "github.com/sourcegraph/sourcegraph/internal/codeintel/uploads/shared"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
 	"github.com/sourcegraph/sourcegraph/internal/observation"
+	"github.com/sourcegraph/sourcegraph/internal/search/client"
 	sgtypes "github.com/sourcegraph/sourcegraph/internal/types"
 )
 
 func TestStencil(t *testing.T) {
 	// Set up mocks
-	mockRepoStore := defaultMockRepoStore()
-	mockLsifStore := NewMockLsifStore()
+	fakeRepoStore := AllPresentFakeRepoStore{}
+	mockLsifStore := lsifstoremocks.NewMockLsifStore()
 	mockUploadSvc := NewMockUploadService()
 	mockGitserverClient := gitserver.NewMockClient()
-	hunkCache, _ := NewHunkCache(50)
+	mockSearchClient := client.NewMockSearchClient()
+
+	mockLsifStore.FindDocumentIDsFunc.SetDefaultHook(findDocumentIDsFuncAllowAny())
 
 	// Init service
-	svc := newService(&observation.TestContext, mockRepoStore, mockLsifStore, mockUploadSvc, mockGitserverClient)
+	svc := newService(observation.TestContextTB(t), fakeRepoStore, mockLsifStore, mockUploadSvc, mockGitserverClient, mockSearchClient, log.NoOp())
 
 	// Set up request state
 	mockRequestState := RequestState{}
-	mockRequestState.SetLocalCommitCache(mockRepoStore, mockGitserverClient)
-	mockRequestState.SetLocalGitTreeTranslator(mockGitserverClient, &sgtypes.Repo{}, mockCommit, mockPath, hunkCache)
-	uploads := []uploadsshared.Dump{
+	mockRequestState.SetLocalCommitCache(fakeRepoStore, mockGitserverClient)
+	mockRequestState.SetLocalGitTreeTranslator(mockGitserverClient, &sgtypes.Repo{})
+	uploads := []uploadsshared.CompletedUpload{
 		{ID: 50, Commit: "deadbeef", Root: "sub1/"},
 		{ID: 51, Commit: "deadbeef", Root: "sub2/"},
 		{ID: 52, Commit: "deadbeef", Root: "sub3/"},
@@ -73,20 +78,22 @@ func TestStencil(t *testing.T) {
 
 func TestStencilWithDuplicateRanges(t *testing.T) {
 	// Set up mocks
-	mockRepoStore := defaultMockRepoStore()
-	mockLsifStore := NewMockLsifStore()
+	fakeRepoStore := AllPresentFakeRepoStore{}
+	mockLsifStore := lsifstoremocks.NewMockLsifStore()
 	mockUploadSvc := NewMockUploadService()
 	mockGitserverClient := gitserver.NewMockClient()
-	hunkCache, _ := NewHunkCache(50)
+	mockSearchClient := client.NewMockSearchClient()
+
+	mockLsifStore.FindDocumentIDsFunc.SetDefaultHook(findDocumentIDsFuncAllowAny())
 
 	// Init service
-	svc := newService(&observation.TestContext, mockRepoStore, mockLsifStore, mockUploadSvc, mockGitserverClient)
+	svc := newService(observation.TestContextTB(t), fakeRepoStore, mockLsifStore, mockUploadSvc, mockGitserverClient, mockSearchClient, log.NoOp())
 
 	// Set up request state
 	mockRequestState := RequestState{}
-	mockRequestState.SetLocalCommitCache(mockRepoStore, mockGitserverClient)
-	mockRequestState.SetLocalGitTreeTranslator(mockGitserverClient, &sgtypes.Repo{}, mockCommit, mockPath, hunkCache)
-	uploads := []uploadsshared.Dump{
+	mockRequestState.SetLocalCommitCache(fakeRepoStore, mockGitserverClient)
+	mockRequestState.SetLocalGitTreeTranslator(mockGitserverClient, &sgtypes.Repo{})
+	uploads := []uploadsshared.CompletedUpload{
 		{ID: 50, Commit: "deadbeef", Root: "sub1/"},
 		{ID: 51, Commit: "deadbeef", Root: "sub2/"},
 		{ID: 52, Commit: "deadbeef", Root: "sub3/"},

@@ -1,8 +1,14 @@
-import React, { type FC, useCallback, useState } from 'react'
+import React, { useCallback, useEffect, useState, type FC } from 'react'
 
+import { dataOrThrowErrors } from '@sourcegraph/http-client'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import { Button, Container, Link, PageHeader } from '@sourcegraph/wildcard'
 
-import type { UseShowMorePaginationResult } from '../../../components/FilteredConnection/hooks/useShowMorePagination'
+import { useUrlSearchParamsForConnectionState } from '../../../components/FilteredConnection/hooks/connectionState'
+import {
+    useShowMorePagination,
+    type UseShowMorePaginationResult,
+} from '../../../components/FilteredConnection/hooks/useShowMorePagination'
 import {
     ConnectionContainer,
     ConnectionError,
@@ -13,9 +19,10 @@ import {
     SummaryContainer,
 } from '../../../components/FilteredConnection/ui'
 import {
-    type ExecutorSecretFields,
     ExecutorSecretScope,
+    type ExecutorSecretFields,
     type GlobalExecutorSecretsResult,
+    type GlobalExecutorSecretsVariables,
     type OrgExecutorSecretsResult,
     type Scalars,
     type UserExecutorSecretsResult,
@@ -23,22 +30,45 @@ import {
 
 import { AddSecretModal } from './AddSecretModal'
 import {
-    globalExecutorSecretsConnectionFactory,
-    userExecutorSecretsConnectionFactory,
+    GLOBAL_EXECUTOR_SECRETS,
     orgExecutorSecretsConnectionFactory,
+    userExecutorSecretsConnectionFactory,
 } from './backend'
 import { ExecutorSecretNode } from './ExecutorSecretNode'
 import { ExecutorSecretScopeSelector } from './ExecutorSecretScopeSelector'
 
-export interface GlobalExecutorSecretsListPageProps {}
+export interface GlobalExecutorSecretsListPageProps extends TelemetryV2Props {}
 
 export const GlobalExecutorSecretsListPage: FC<GlobalExecutorSecretsListPageProps> = props => {
+    useEffect(
+        () => props.telemetryRecorder.recordEvent('admin.executors.secretsList', 'view'),
+        [props.telemetryRecorder]
+    )
+
+    const connectionState = useUrlSearchParamsForConnectionState()
     const connectionLoader = useCallback(
-        (scope: ExecutorSecretScope) => globalExecutorSecretsConnectionFactory(scope),
-        []
+        (scope: ExecutorSecretScope) =>
+            // Scope has to be injected dynamically.
+            // eslint-disable-next-line react-hooks/rules-of-hooks
+            useShowMorePagination<GlobalExecutorSecretsResult, GlobalExecutorSecretsVariables, ExecutorSecretFields>({
+                query: GLOBAL_EXECUTOR_SECRETS,
+                variables: {
+                    scope,
+                },
+                options: {
+                    fetchPolicy: 'network-only',
+                },
+                getConnection: result => {
+                    const { executorSecrets } = dataOrThrowErrors(result)
+                    return executorSecrets
+                },
+                state: connectionState,
+            }),
+        [connectionState]
     )
     return (
         <ExecutorSecretsListPage
+            areaType="admin"
             namespaceID={null}
             headerLine={<>Configure executor secrets that will be available to everyone on the Sourcegraph instance.</>}
             connectionLoader={connectionLoader}
@@ -52,12 +82,17 @@ export interface UserExecutorSecretsListPageProps extends GlobalExecutorSecretsL
 }
 
 export const UserExecutorSecretsListPage: FC<UserExecutorSecretsListPageProps> = props => {
+    useEffect(
+        () => props.telemetryRecorder.recordEvent('settings.executors.secretsList', 'view'),
+        [props.telemetryRecorder]
+    )
     const connectionLoader = useCallback(
         (scope: ExecutorSecretScope) => userExecutorSecretsConnectionFactory(props.userID, scope),
         [props.userID]
     )
     return (
         <ExecutorSecretsListPage
+            areaType="settings"
             namespaceID={props.userID}
             headerLine={
                 <>
@@ -79,12 +114,14 @@ export interface OrgExecutorSecretsListPageProps extends GlobalExecutorSecretsLi
 }
 
 export const OrgExecutorSecretsListPage: FC<OrgExecutorSecretsListPageProps> = props => {
+    useEffect(() => props.telemetryRecorder.recordEvent('org.executors.secretsList', 'view'), [props.telemetryRecorder])
     const connectionLoader = useCallback(
         (scope: ExecutorSecretScope) => orgExecutorSecretsConnectionFactory(props.orgID, scope),
         [props.orgID]
     )
     return (
         <ExecutorSecretsListPage
+            areaType="org"
             namespaceID={props.orgID}
             headerLine={
                 <>
@@ -101,7 +138,11 @@ export const OrgExecutorSecretsListPage: FC<OrgExecutorSecretsListPageProps> = p
     )
 }
 
+type executorSecretsAreaType = 'admin' | 'org' | 'settings'
+
 export interface ExecutorSecretsListPageProps extends GlobalExecutorSecretsListPageProps {
+    // Used as a prefix for telemetry event naming
+    areaType: executorSecretsAreaType
     namespaceID: Scalars['ID'] | null
     headerLine: JSX.Element
     connectionLoader: (
@@ -112,23 +153,35 @@ export interface ExecutorSecretsListPageProps extends GlobalExecutorSecretsListP
     >
 }
 
-const ExecutorSecretsListPage: FC<ExecutorSecretsListPageProps> = ({ namespaceID, headerLine, connectionLoader }) => {
+const ExecutorSecretsListPage: FC<ExecutorSecretsListPageProps> = ({
+    areaType,
+    namespaceID,
+    headerLine,
+    connectionLoader,
+    telemetryRecorder,
+}) => {
     const [selectedScope, setSelectedScope] = useState<ExecutorSecretScope>(ExecutorSecretScope.BATCHES)
     const { loading, hasNextPage, fetchMore, connection, error, refetchAll } = connectionLoader(selectedScope)
 
     const [showAddModal, setShowAddModal] = useState<boolean>(false)
-    const onClickAdd = useCallback<React.MouseEventHandler>(event => {
-        event.preventDefault()
-        setShowAddModal(true)
-    }, [])
+    const onClickAdd = useCallback<React.MouseEventHandler>(
+        event => {
+            event.preventDefault()
+            telemetryRecorder.recordEvent(`${areaType}.executors.addSecret`, 'click')
+            setShowAddModal(true)
+        },
+        [areaType, telemetryRecorder]
+    )
 
     const closeModal = useCallback(() => {
+        telemetryRecorder.recordEvent(`${areaType}.executors.addSecret`, 'cancel')
         setShowAddModal(false)
-    }, [])
+    }, [areaType, telemetryRecorder])
     const afterAction = useCallback(() => {
+        telemetryRecorder.recordEvent(`${areaType}.executors.addSecret`, 'submit')
         setShowAddModal(false)
         refetchAll()
-    }, [refetchAll])
+    }, [areaType, refetchAll, telemetryRecorder])
 
     return (
         <>
@@ -188,7 +241,6 @@ const ExecutorSecretsListPage: FC<ExecutorSecretsListPageProps> = ({ namespaceID
                         <SummaryContainer className="mt-2">
                             <ConnectionSummary
                                 noSummaryIfAllNodesVisible={true}
-                                first={15}
                                 centered={true}
                                 connection={connection}
                                 noun="executor secret"

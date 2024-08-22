@@ -4,11 +4,11 @@ import { lazyComponent } from '@sourcegraph/shared/src/util/lazyComponent'
 import { FeedbackBadge } from '@sourcegraph/wildcard'
 
 import type { BatchSpecsPageProps } from '../enterprise/batches/BatchSpecsPage'
-import { CodeIntelConfigurationPolicyPage } from '../enterprise/codeintel/configuration/pages/CodeIntelConfigurationPolicyPage'
 import { SHOW_BUSINESS_FEATURES } from '../enterprise/dotcom/productSubscriptions/features'
 import { OwnAnalyticsPage } from '../enterprise/own/admin-ui/OwnAnalyticsPage'
 import type { SiteAdminRolesPageProps } from '../enterprise/rbac/SiteAdminRolesPage'
 import type { RoleAssignmentModalProps } from '../enterprise/site-admin/UserManagement/components/RoleAssignmentModal'
+import { GitHubAppKind } from '../graphql-operations'
 import { checkRequestAccessAllowed } from '../util/checkRequestAccessAllowed'
 
 import { isPackagesEnabled } from './flags'
@@ -26,6 +26,7 @@ const AnalyticsExtensionsPage = lazyComponent(
     'AnalyticsExtensionsPage'
 )
 const AnalyticsUsersPage = lazyComponent(() => import('./analytics/AnalyticsUsersPage'), 'AnalyticsUsersPage')
+const AnalyticsCodyPage = lazyComponent(() => import('./analytics/AnalyticsCodyPage'), 'AnalyticsCodyPage')
 const AnalyticsCodeInsightsPage = lazyComponent(
     () => import('./analytics/AnalyticsCodeInsightsPage'),
     'AnalyticsCodeInsightsPage'
@@ -113,10 +114,6 @@ const SiteAdminProductSubscriptionPage = lazyComponent(
     () => import('../enterprise/site-admin/productSubscription/SiteAdminProductSubscriptionPage'),
     'SiteAdminProductSubscriptionPage'
 )
-const SiteAdminProductCustomersPage = lazyComponent(
-    () => import('../enterprise/site-admin/dotcom/customers/SiteAdminCustomersPage'),
-    'SiteAdminProductCustomersPage'
-)
 const SiteAdminCreateProductSubscriptionPage = lazyComponent(
     () => import('../enterprise/site-admin/dotcom/productSubscriptions/SiteAdminCreateProductSubscriptionPage'),
     'SiteAdminCreateProductSubscriptionPage'
@@ -183,51 +180,48 @@ const CodeInsightsJobsPage = lazyComponent(
 )
 const OwnStatusPage = lazyComponent(() => import('../enterprise/own/admin-ui/OwnStatusPage'), 'OwnStatusPage')
 
-const SiteAdminCodyPage = lazyComponent(
-    () => import('../enterprise/site-admin/cody/SiteAdminCodyPage'),
-    'SiteAdminCodyPage'
-)
-const CodyConfigurationPage = lazyComponent(
-    () => import('../enterprise/cody/configuration/pages/CodyConfigurationPage'),
-    'CodyConfigurationPage'
-)
-
-const codyIsEnabled = (): boolean => Boolean(window.context?.codyEnabled && window.context?.embeddingsEnabled)
-
 export const otherSiteAdminRoutes: readonly SiteAdminAreaRoute[] = [
     {
         path: '/',
-        render: () => <AnalyticsOverviewPage />,
+        render: props => <AnalyticsOverviewPage {...props} />,
     },
     {
         path: '/analytics/search',
-        render: () => <AnalyticsSearchPage />,
+        render: props => <AnalyticsSearchPage {...props} />,
+        condition: () => window.context?.codeSearchEnabledOnInstance,
     },
     {
         path: '/analytics/code-intel',
-        render: () => <AnalyticsCodeIntelPage />,
+        render: props => <AnalyticsCodeIntelPage {...props} />,
+        condition: () => window.context?.codeSearchEnabledOnInstance,
     },
     {
         path: '/analytics/extensions',
-        render: () => <AnalyticsExtensionsPage />,
+        render: props => <AnalyticsExtensionsPage {...props} />,
     },
     {
         path: '/analytics/users',
-        render: () => <AnalyticsUsersPage />,
+        render: props => <AnalyticsUsersPage {...props} />,
+    },
+    {
+        path: '/analytics/cody',
+        render: props => <AnalyticsCodyPage {...props} />,
+        condition: () => window.context?.codyEnabledOnInstance,
     },
     {
         path: '/analytics/code-insights',
-        render: () => <AnalyticsCodeInsightsPage />,
+        render: props => <AnalyticsCodeInsightsPage {...props} />,
         condition: ({ codeInsightsEnabled }) => codeInsightsEnabled,
     },
     {
         path: '/analytics/batch-changes',
-        render: () => <AnalyticsBatchChangesPage />,
+        render: props => <AnalyticsBatchChangesPage {...props} />,
         condition: ({ batchChangesEnabled }) => batchChangesEnabled,
     },
     {
         path: '/analytics/notebooks',
-        render: () => <AnalyticsNotebooksPage />,
+        render: props => <AnalyticsNotebooksPage {...props} />,
+        condition: () => window.context?.codeSearchEnabledOnInstance,
     },
     {
         path: '/configuration',
@@ -260,12 +254,12 @@ export const otherSiteAdminRoutes: readonly SiteAdminAreaRoute[] = [
     },
     {
         path: '/account-requests',
-        render: () => <AccessRequestsPage />,
+        render: props => <AccessRequestsPage {...props} />,
         condition: () => checkRequestAccessAllowed(window.context),
     },
     {
         path: '/users/new',
-        render: () => <SiteAdminCreateUserPage />,
+        render: props => <SiteAdminCreateUserPage {...props} />,
     },
     {
         path: '/tokens',
@@ -346,9 +340,7 @@ export const otherSiteAdminRoutes: readonly SiteAdminAreaRoute[] = [
     },
     {
         path: '/permissions-syncs',
-        render: props => (
-            <PermissionsSyncJobsTable {...props} telemetryRecorder={props.platformContext.telemetryRecorder} />
-        ),
+        render: props => <PermissionsSyncJobsTable {...props} />,
     },
     {
         path: '/gitservers',
@@ -356,22 +348,20 @@ export const otherSiteAdminRoutes: readonly SiteAdminAreaRoute[] = [
     },
     {
         path: '/users',
-        render: () => (
+        render: props => (
             <UsersManagement
                 renderAssignmentModal={(onCancel, onSuccess, user) => (
                     <RoleAssignmentModal onCancel={onCancel} onSuccess={onSuccess} user={user} />
                 )}
+                {...props}
             />
         ),
     },
     {
         path: '/license',
-        render: () => <SiteAdminProductSubscriptionPage />,
-    },
-    {
-        path: '/dotcom/customers',
-        render: () => <SiteAdminProductCustomersPage />,
-        condition: () => SHOW_BUSINESS_FEATURES,
+        render: props => (
+            <SiteAdminProductSubscriptionPage telemetryRecorder={props.platformContext.telemetryRecorder} />
+        ),
     },
     {
         path: '/dotcom/product/subscriptions/new',
@@ -380,17 +370,19 @@ export const otherSiteAdminRoutes: readonly SiteAdminAreaRoute[] = [
     },
     {
         path: '/dotcom/product/subscriptions/:subscriptionUUID',
-        render: () => <DotComSiteAdminProductSubscriptionPage />,
+        render: props => <DotComSiteAdminProductSubscriptionPage {...props} />,
         condition: () => SHOW_BUSINESS_FEATURES,
     },
     {
         path: '/dotcom/product/subscriptions',
-        render: () => <SiteAdminProductSubscriptionsPage />,
+        render: props => (
+            <SiteAdminProductSubscriptionsPage {...props} telemetryRecorder={props.platformContext.telemetryRecorder} />
+        ),
         condition: () => SHOW_BUSINESS_FEATURES,
     },
     {
         path: '/dotcom/product/licenses',
-        render: () => <SiteAdminLicenseKeyLookupPage />,
+        render: props => <SiteAdminLicenseKeyLookupPage {...props} />,
         condition: () => SHOW_BUSINESS_FEATURES,
     },
     {
@@ -403,12 +395,17 @@ export const otherSiteAdminRoutes: readonly SiteAdminAreaRoute[] = [
     },
     {
         path: '/batch-changes',
-        render: () => <BatchChangesSiteConfigSettingsPage />,
+        render: props => <BatchChangesSiteConfigSettingsPage {...props} />,
         condition: ({ batchChangesEnabled }) => batchChangesEnabled,
     },
     {
         path: '/batch-changes/github-apps/new',
-        render: () => <BatchChangesCreateGitHubAppPage />,
+        render: ({ authenticatedUser }) => (
+            <BatchChangesCreateGitHubAppPage
+                authenticatedUser={authenticatedUser}
+                kind={GitHubAppKind.COMMIT_SIGNING}
+            />
+        ),
         condition: ({ batchChangesEnabled }) => batchChangesEnabled,
     },
     {
@@ -418,13 +415,14 @@ export const otherSiteAdminRoutes: readonly SiteAdminAreaRoute[] = [
                 headerParentBreadcrumb={{ to: '/site-admin/batch-changes', text: 'Batch Changes settings' }}
                 headerAnnotation={<FeedbackBadge status="beta" feedback={{ mailto: 'support@sourcegraph.com' }} />}
                 telemetryService={props.telemetryService}
+                telemetryRecorder={props.platformContext.telemetryRecorder}
             />
         ),
         condition: ({ batchChangesEnabled }) => batchChangesEnabled,
     },
     {
         path: '/batch-changes/specs',
-        render: () => <BatchSpecsPage />,
+        render: props => <BatchSpecsPage {...props} />,
         condition: ({ batchChangesEnabled, batchChangesExecutionEnabled }) =>
             batchChangesEnabled && batchChangesExecutionEnabled,
     },
@@ -443,74 +441,51 @@ export const otherSiteAdminRoutes: readonly SiteAdminAreaRoute[] = [
     {
         exact: true,
         path: '/code-insights-jobs',
-        render: () => <CodeInsightsJobsPage />,
+        render: props => <CodeInsightsJobsPage {...props} />,
         condition: ({ codeInsightsEnabled }) => codeInsightsEnabled,
     },
     {
         exact: true,
         path: '/own-signal-page',
-        render: () => <OwnStatusPage />,
+        render: props => <OwnStatusPage telemetryRecorder={props.platformContext.telemetryRecorder} />,
     },
 
     // Code intelligence redirect
     {
         path: '/code-intelligence/*',
         render: () => <NavigateToCodeGraph />,
+        condition: () => window.context?.codeSearchEnabledOnInstance,
     },
     // Code graph routes
     {
         path: '/code-graph/*',
         render: props => <AdminCodeIntelArea {...props} />,
+        condition: () => window.context?.codeSearchEnabledOnInstance,
     },
     {
         path: '/lsif-uploads/:id',
-        render: () => <SiteAdminPreciseIndexPage />,
+        render: props => <SiteAdminPreciseIndexPage {...props} />,
     },
 
     // Executor routes
     {
         path: '/executors/*',
-        render: () => <ExecutorsSiteAdminArea />,
+        render: props => <ExecutorsSiteAdminArea telemetryRecorder={props.platformContext.telemetryRecorder} />,
         condition: () => Boolean(window.context?.executorsEnabled),
-    },
-
-    // Cody configuration
-    {
-        exact: true,
-        path: '/cody',
-        render: () => <Navigate to="/site-admin/embeddings" />,
-        condition: codyIsEnabled,
-    },
-    {
-        exact: true,
-        path: '/embeddings',
-        render: props => <SiteAdminCodyPage {...props} />,
-        condition: codyIsEnabled,
-    },
-    {
-        exact: true,
-        path: '/embeddings/configuration',
-        render: props => <CodyConfigurationPage {...props} />,
-        condition: codyIsEnabled,
-    },
-    {
-        path: '/embeddings/configuration/:id',
-        render: props => <CodeIntelConfigurationPolicyPage {...props} domain="embeddings" />,
-        condition: codyIsEnabled,
     },
 
     // rbac-related routes
     {
         path: '/roles',
         exact: true,
-        render: props => <SiteAdminRolesPage {...props} />,
+        render: props => <SiteAdminRolesPage telemetryRecorder={props.platformContext.telemetryRecorder} />,
     },
 
     // Own analytics
     {
         exact: true,
         path: '/analytics/own',
-        render: () => <OwnAnalyticsPage />,
+        render: props => <OwnAnalyticsPage telemetryRecorder={props.platformContext.telemetryRecorder} />,
     },
 ]
 
@@ -521,7 +496,7 @@ function NavigateToCodeGraph(): JSX.Element {
 
 const siteAdminUserManagementRoute: SiteAdminAreaRoute = {
     path: '/users',
-    render: () => <UsersManagement renderAssignmentModal={() => null} />,
+    render: props => <UsersManagement renderAssignmentModal={() => null} {...props} />,
 }
 
 export const siteAdminAreaRoutes: readonly SiteAdminAreaRoute[] = [

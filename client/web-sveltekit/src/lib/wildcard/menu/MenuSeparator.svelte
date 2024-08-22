@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { getContext } from './Menu.svelte'
+    import { getContext } from './DropdownMenu.svelte'
 
     const { separator } = getContext()
 </script>
@@ -9,7 +9,7 @@
 <style lang="scss">
     div {
         height: 0;
-        margin: 0.25rem 0;
+        margin: var(--dropdown-item-padding-y) 0;
         overflow: hidden;
         border-top: 1px solid var(--dropdown--separator-color, var(--border-color));
     }

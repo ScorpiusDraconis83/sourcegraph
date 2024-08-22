@@ -5,6 +5,7 @@ import { type Observable, of } from 'rxjs'
 import { MATCH_ANY_PARAMETERS, WildcardMockLink } from 'wildcard-mock-link'
 
 import { getDocumentNode } from '@sourcegraph/http-client'
+import { noOpTelemetryRecorder } from '@sourcegraph/shared/src/telemetry'
 import { MockedTestProvider } from '@sourcegraph/shared/src/testing/apollo'
 
 import { WebStory } from '../../../components/WebStory'
@@ -28,12 +29,7 @@ const config: Meta = {
     title: 'web/batches/preview/BatchChangePreviewPage',
     decorators: [decorator],
 
-    parameters: {
-        chromatic: {
-            viewports: [320, 576, 978, 1440],
-            disableSnapshot: false,
-        },
-    },
+    parameters: {},
     argTypes: {
         supersedingBatchSpec: {
             control: { type: 'boolean' },
@@ -244,6 +240,7 @@ export const Create: StoryFn = args => {
                             username: 'alice',
                             emails: [{ email: 'alice@email.test', isPrimary: true, verified: true }],
                         }}
+                        telemetryRecorder={noOpTelemetryRecorder}
                     />
                 </MockedTestProvider>
             )}
@@ -269,6 +266,7 @@ export const Update: StoryFn = args => {
                             username: 'alice',
                             emails: [{ email: 'alice@email.test', isPrimary: true, verified: true }],
                         }}
+                        telemetryRecorder={noOpTelemetryRecorder}
                     />
                 </MockedTestProvider>
             )}
@@ -294,6 +292,7 @@ export const MissingCredentials: StoryFn = args => {
                             username: 'alice',
                             emails: [{ email: 'alice@email.test', isPrimary: true, verified: true }],
                         }}
+                        telemetryRecorder={noOpTelemetryRecorder}
                     />
                 </MockedTestProvider>
             )}
@@ -321,6 +320,7 @@ export const SpecFile: StoryFn = args => {
                             username: 'alice',
                             emails: [{ email: 'alice@email.test', isPrimary: true, verified: true }],
                         }}
+                        telemetryRecorder={noOpTelemetryRecorder}
                     />
                 </MockedTestProvider>
             )}
@@ -348,6 +348,7 @@ export const NoChangesets: StoryFn = args => {
                             username: 'alice',
                             emails: [{ email: 'alice@email.test', isPrimary: true, verified: true }],
                         }}
+                        telemetryRecorder={noOpTelemetryRecorder}
                     />
                 </MockedTestProvider>
             )}
@@ -375,6 +376,7 @@ export const CreateNewStory: StoryFn = args => {
                             username: 'alice',
                             emails: [{ email: 'alice@email.test', isPrimary: true, verified: true }],
                         }}
+                        telemetryRecorder={noOpTelemetryRecorder}
                     />
                 </MockedTestProvider>
             )}
@@ -402,6 +404,7 @@ export const ExceedsLicenseStory: StoryFn = args => {
                             username: 'alice',
                             emails: [{ email: 'alice@email.test', isPrimary: true, verified: true }],
                         }}
+                        telemetryRecorder={noOpTelemetryRecorder}
                     />
                 </MockedTestProvider>
             )}

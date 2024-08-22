@@ -38,7 +38,7 @@ func TestCodeGatewayAccessResolverRateLimit(t *testing.T) {
 
 	// Enable access to Cody Gateway.
 	tru := true
-	err = dbSubscriptions{db: db}.Update(ctx, subID, dbSubscriptionUpdate{codyGatewayAccess: &graphqlbackend.UpdateCodyGatewayAccessInput{Enabled: &tru}})
+	err = dbSubscriptions{db: db}.Update(ctx, subID, DBSubscriptionUpdate{CodyGatewayAccess: &graphqlbackend.UpdateCodyGatewayAccessInput{Enabled: &tru}})
 	require.NoError(t, err)
 
 	t.Run("default rate limit for a plan", func(t *testing.T) {
@@ -49,14 +49,14 @@ func TestCodeGatewayAccessResolverRateLimit(t *testing.T) {
 		rateLimit, err := r.ChatCompletionsRateLimit(ctx)
 		require.NoError(t, err)
 
-		wantRateLimit := licensing.NewCodyGatewayChatRateLimit(licensing.PlanEnterprise1, pointify(int(info.UserCount)), []string{})
+		wantRateLimit := licensing.NewCodyGatewayChatRateLimit(licensing.PlanEnterprise1, pointify(int(info.UserCount)))
 		assert.Equal(t, graphqlbackend.BigInt(wantRateLimit.Limit), rateLimit.Limit())
 		assert.Equal(t, wantRateLimit.IntervalSeconds, rateLimit.IntervalSeconds())
 	})
 
 	t.Run("override default rate limit for a plan", func(t *testing.T) {
-		err := dbSubscriptions{db: db}.Update(ctx, subID, dbSubscriptionUpdate{
-			codyGatewayAccess: &graphqlbackend.UpdateCodyGatewayAccessInput{
+		err := dbSubscriptions{db: db}.Update(ctx, subID, DBSubscriptionUpdate{
+			CodyGatewayAccess: &graphqlbackend.UpdateCodyGatewayAccessInput{
 				ChatCompletionsRateLimit: pointify(graphqlbackend.BigInt(10)),
 			},
 		})
@@ -69,7 +69,7 @@ func TestCodeGatewayAccessResolverRateLimit(t *testing.T) {
 		rateLimit, err := r.ChatCompletionsRateLimit(ctx)
 		require.NoError(t, err)
 
-		defaultRateLimit := licensing.NewCodyGatewayChatRateLimit(licensing.PlanEnterprise1, pointify(10), []string{})
+		defaultRateLimit := licensing.NewCodyGatewayChatRateLimit(licensing.PlanEnterprise1, pointify(10))
 		assert.Equal(t, graphqlbackend.BigInt(10), rateLimit.Limit())
 		assert.Equal(t, defaultRateLimit.IntervalSeconds, rateLimit.IntervalSeconds())
 	})

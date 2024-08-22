@@ -1,21 +1,25 @@
 package background
 
 import (
+	"bytes"
 	"context"
+	"io"
+	"io/fs"
 	"os"
 	"testing"
 	"time"
 
-	"github.com/sourcegraph/sourcegraph/internal/rcache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/sourcegraph/sourcegraph/internal/fileutil"
+	"github.com/sourcegraph/sourcegraph/internal/rcache"
 
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/authz"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbtest"
 	"github.com/sourcegraph/sourcegraph/internal/gitserver"
-	"github.com/sourcegraph/sourcegraph/internal/gitserver/gitdomain"
 	"github.com/sourcegraph/sourcegraph/internal/observation"
 	"github.com/sourcegraph/sourcegraph/internal/types"
 )
@@ -26,15 +30,21 @@ type fakeGitServer struct {
 	fileContents map[string]string
 }
 
-func (f fakeGitServer) LsFiles(ctx context.Context, repo api.RepoName, commit api.CommitID, pathspecs ...gitdomain.Pathspec) ([]string, error) {
-	return f.files, nil
+func (f fakeGitServer) ReadDir(ctx context.Context, repo api.RepoName, commit api.CommitID, path string, recursive bool) (gitserver.ReadDirIterator, error) {
+	fis := make([]fs.FileInfo, 0, len(f.files))
+	for _, file := range f.files {
+		fis = append(fis, &fileutil.FileInfo{
+			Name_: file,
+		})
+	}
+	return gitserver.NewReadDirIteratorFromSlice(fis), nil
 }
 
 func (f fakeGitServer) ResolveRevision(ctx context.Context, repo api.RepoName, spec string, opt gitserver.ResolveRevisionOptions) (api.CommitID, error) {
 	return api.CommitID(""), nil
 }
 
-func (f fakeGitServer) ReadFile(ctx context.Context, repo api.RepoName, commit api.CommitID, name string) ([]byte, error) {
+func (f fakeGitServer) NewFileReader(ctx context.Context, repo api.RepoName, commit api.CommitID, name string) (io.ReadCloser, error) {
 	if f.fileContents == nil {
 		return nil, os.ErrNotExist
 	}
@@ -42,7 +52,7 @@ func (f fakeGitServer) ReadFile(ctx context.Context, repo api.RepoName, commit a
 	if !ok {
 		return nil, os.ErrNotExist
 	}
-	return []byte(contents), nil
+	return io.NopCloser(bytes.NewReader([]byte(contents))), nil
 }
 
 func TestAnalyticsIndexerSuccess(t *testing.T) {
@@ -73,7 +83,7 @@ func TestAnalyticsIndexerSuccess(t *testing.T) {
 	checker.EnabledForRepoIDFunc.SetDefaultReturn(false, nil)
 	require.NoError(t, db.AssignedOwners().Insert(ctx, user.ID, repoID, "owned/file1.go", user.ID))
 	require.NoError(t, db.AssignedOwners().Insert(ctx, user.ID, repoID, "assigned.go", user.ID))
-	require.NoError(t, newAnalyticsIndexer(client, db, rcache.New("test_own_signal"), logger).indexRepo(ctx, repoID, checker))
+	require.NoError(t, newAnalyticsIndexer(client, db, logger).indexRepo(ctx, repoID, checker))
 
 	totalFileCount, err := db.RepoPaths().AggregateFileCount(ctx, database.TreeLocationOpts{})
 	require.NoError(t, err)
@@ -111,7 +121,7 @@ func TestAnalyticsIndexerSkipsReposWithSubRepoPerms(t *testing.T) {
 	checker := authz.NewMockSubRepoPermissionChecker()
 	checker.EnabledFunc.SetDefaultReturn(true)
 	checker.EnabledForRepoIDFunc.SetDefaultReturn(true, nil)
-	err = newAnalyticsIndexer(client, db, rcache.New("test_own_signal"), logger).indexRepo(ctx, repoID, checker)
+	err = newAnalyticsIndexer(client, db, logger).indexRepo(ctx, repoID, checker)
 	require.NoError(t, err)
 
 	totalFileCount, err := db.RepoPaths().AggregateFileCount(ctx, database.TreeLocationOpts{})
@@ -138,7 +148,7 @@ func TestAnalyticsIndexerNoCodeowners(t *testing.T) {
 	checker := authz.NewMockSubRepoPermissionChecker()
 	checker.EnabledFunc.SetDefaultReturn(true)
 	checker.EnabledForRepoIDFunc.SetDefaultReturn(false, nil)
-	err = newAnalyticsIndexer(client, db, rcache.New("test_own_signal"), logger).indexRepo(ctx, repoID, checker)
+	err = newAnalyticsIndexer(client, db, logger).indexRepo(ctx, repoID, checker)
 	require.NoError(t, err)
 
 	totalFileCount, err := db.RepoPaths().AggregateFileCount(ctx, database.TreeLocationOpts{})

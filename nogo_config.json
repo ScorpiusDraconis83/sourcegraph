@@ -11,8 +11,8 @@
       "main\\.go$": "ignore main",
       ".*_test\\.go$": "ignore test code",
       "internal/batches/testing/.*": "ignore batches testing code",
-      "internal/gitserver/mock\\.go$": "ignore deprecation warning of P4Exec",
-      "internal/gitserver/retry\\.go$": "ignore deprecation warning of P4Exec",
+      "internal/gitserver/mock\\.go$": "ignore deprecation warning of BatchLog",
+      "internal/gitserver/retry\\.go$": "ignore deprecation warning of BatchLog",
       "internal/grpc/example/client/retry\\.go$": "ignore deprecation warning of GetCurrentWeatherOld",
       "internal/grpc/example/server/faulty\\.go$": "ignore deprecation warning of GetCurrentWeatherOld",
       "internal/database/dbmocks": "ignore generated database mocks"
@@ -45,15 +45,6 @@
       ".*_generated\\.go$": "ignore generated code",
       ".*_pb\\.go$": "ignore protobuff generated code",
       "dev/buildchecker/slack\\.go$": "ignore false positive"
-    }
-  },
-  "exportloopref": {
-    "exclude_files": {
-      "lib/batches/env/var\\.go$": "false positive",
-      "rules_go.*/.*": "ignore rules_go working directory",
-      "external/.*": "no need to vet third party code",
-      ".*_generated\\.go$": "ignore generated code",
-      ".*_pb\\.go$": "ignore protobuff generated code"
     }
   }
 }

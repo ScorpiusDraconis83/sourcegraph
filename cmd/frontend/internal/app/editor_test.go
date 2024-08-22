@@ -8,7 +8,7 @@ import (
 
 	"github.com/sourcegraph/log/logtest"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/backend"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/backend"
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbmocks"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
@@ -18,7 +18,7 @@ import (
 func TestEditorRev(t *testing.T) {
 	repoName := api.RepoName("myRepo")
 	logger := logtest.Scoped(t)
-	backend.Mocks.Repos.ResolveRev = func(_ context.Context, _ *types.Repo, rev string) (api.CommitID, error) {
+	backend.Mocks.Repos.ResolveRev = func(_ context.Context, _ api.RepoName, rev string) (api.CommitID, error) {
 		if rev == "branch" {
 			return api.CommitID(strings.Repeat("b", 40)), nil
 		}

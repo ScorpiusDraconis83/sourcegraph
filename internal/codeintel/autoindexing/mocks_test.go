@@ -15,7 +15,6 @@ import (
 	store "github.com/sourcegraph/sourcegraph/internal/codeintel/autoindexing/internal/store"
 	shared "github.com/sourcegraph/sourcegraph/internal/codeintel/autoindexing/shared"
 	shared1 "github.com/sourcegraph/sourcegraph/internal/codeintel/uploads/shared"
-	protocol "github.com/sourcegraph/sourcegraph/internal/repoupdater/protocol"
 )
 
 // MockStore is a mock implementation of the Store interface (from the
@@ -37,17 +36,13 @@ type MockStore struct {
 	// GetQueuedRepoRevFunc is an instance of a mock function object
 	// controlling the behavior of the method GetQueuedRepoRev.
 	GetQueuedRepoRevFunc *StoreGetQueuedRepoRevFunc
-	// GetRepositoriesForIndexScanFunc is an instance of a mock function
-	// object controlling the behavior of the method
-	// GetRepositoriesForIndexScan.
-	GetRepositoriesForIndexScanFunc *StoreGetRepositoriesForIndexScanFunc
 	// InsertDependencyIndexingJobFunc is an instance of a mock function
 	// object controlling the behavior of the method
 	// InsertDependencyIndexingJob.
 	InsertDependencyIndexingJobFunc *StoreInsertDependencyIndexingJobFunc
-	// InsertIndexesFunc is an instance of a mock function object
-	// controlling the behavior of the method InsertIndexes.
-	InsertIndexesFunc *StoreInsertIndexesFunc
+	// InsertJobsFunc is an instance of a mock function object controlling
+	// the behavior of the method InsertJobs.
+	InsertJobsFunc *StoreInsertJobsFunc
 	// IsQueuedFunc is an instance of a mock function object controlling the
 	// behavior of the method IsQueued.
 	IsQueuedFunc *StoreIsQueuedFunc
@@ -117,18 +112,13 @@ func NewMockStore() *MockStore {
 				return
 			},
 		},
-		GetRepositoriesForIndexScanFunc: &StoreGetRepositoriesForIndexScanFunc{
-			defaultHook: func(context.Context, time.Duration, bool, *int, int, time.Time) (r0 []int, r1 error) {
-				return
-			},
-		},
 		InsertDependencyIndexingJobFunc: &StoreInsertDependencyIndexingJobFunc{
 			defaultHook: func(context.Context, int, string, time.Time) (r0 int, r1 error) {
 				return
 			},
 		},
-		InsertIndexesFunc: &StoreInsertIndexesFunc{
-			defaultHook: func(context.Context, []shared1.Index) (r0 []shared1.Index, r1 error) {
+		InsertJobsFunc: &StoreInsertJobsFunc{
+			defaultHook: func(context.Context, []shared1.AutoIndexJob) (r0 []shared1.AutoIndexJob, r1 error) {
 				return
 			},
 		},
@@ -224,19 +214,14 @@ func NewStrictMockStore() *MockStore {
 				panic("unexpected invocation of MockStore.GetQueuedRepoRev")
 			},
 		},
-		GetRepositoriesForIndexScanFunc: &StoreGetRepositoriesForIndexScanFunc{
-			defaultHook: func(context.Context, time.Duration, bool, *int, int, time.Time) ([]int, error) {
-				panic("unexpected invocation of MockStore.GetRepositoriesForIndexScan")
-			},
-		},
 		InsertDependencyIndexingJobFunc: &StoreInsertDependencyIndexingJobFunc{
 			defaultHook: func(context.Context, int, string, time.Time) (int, error) {
 				panic("unexpected invocation of MockStore.InsertDependencyIndexingJob")
 			},
 		},
-		InsertIndexesFunc: &StoreInsertIndexesFunc{
-			defaultHook: func(context.Context, []shared1.Index) ([]shared1.Index, error) {
-				panic("unexpected invocation of MockStore.InsertIndexes")
+		InsertJobsFunc: &StoreInsertJobsFunc{
+			defaultHook: func(context.Context, []shared1.AutoIndexJob) ([]shared1.AutoIndexJob, error) {
+				panic("unexpected invocation of MockStore.InsertJobs")
 			},
 		},
 		IsQueuedFunc: &StoreIsQueuedFunc{
@@ -323,14 +308,11 @@ func NewMockStoreFrom(i store.Store) *MockStore {
 		GetQueuedRepoRevFunc: &StoreGetQueuedRepoRevFunc{
 			defaultHook: i.GetQueuedRepoRev,
 		},
-		GetRepositoriesForIndexScanFunc: &StoreGetRepositoriesForIndexScanFunc{
-			defaultHook: i.GetRepositoriesForIndexScan,
-		},
 		InsertDependencyIndexingJobFunc: &StoreInsertDependencyIndexingJobFunc{
 			defaultHook: i.InsertDependencyIndexingJob,
 		},
-		InsertIndexesFunc: &StoreInsertIndexesFunc{
-			defaultHook: i.InsertIndexes,
+		InsertJobsFunc: &StoreInsertJobsFunc{
+			defaultHook: i.InsertJobs,
 		},
 		IsQueuedFunc: &StoreIsQueuedFunc{
 			defaultHook: i.IsQueued,
@@ -814,129 +796,6 @@ func (c StoreGetQueuedRepoRevFuncCall) Results() []interface{} {
 	return []interface{}{c.Result0, c.Result1}
 }
 
-// StoreGetRepositoriesForIndexScanFunc describes the behavior when the
-// GetRepositoriesForIndexScan method of the parent MockStore instance is
-// invoked.
-type StoreGetRepositoriesForIndexScanFunc struct {
-	defaultHook func(context.Context, time.Duration, bool, *int, int, time.Time) ([]int, error)
-	hooks       []func(context.Context, time.Duration, bool, *int, int, time.Time) ([]int, error)
-	history     []StoreGetRepositoriesForIndexScanFuncCall
-	mutex       sync.Mutex
-}
-
-// GetRepositoriesForIndexScan delegates to the next hook function in the
-// queue and stores the parameter and result values of this invocation.
-func (m *MockStore) GetRepositoriesForIndexScan(v0 context.Context, v1 time.Duration, v2 bool, v3 *int, v4 int, v5 time.Time) ([]int, error) {
-	r0, r1 := m.GetRepositoriesForIndexScanFunc.nextHook()(v0, v1, v2, v3, v4, v5)
-	m.GetRepositoriesForIndexScanFunc.appendCall(StoreGetRepositoriesForIndexScanFuncCall{v0, v1, v2, v3, v4, v5, r0, r1})
-	return r0, r1
-}
-
-// SetDefaultHook sets function that is called when the
-// GetRepositoriesForIndexScan method of the parent MockStore instance is
-// invoked and the hook queue is empty.
-func (f *StoreGetRepositoriesForIndexScanFunc) SetDefaultHook(hook func(context.Context, time.Duration, bool, *int, int, time.Time) ([]int, error)) {
-	f.defaultHook = hook
-}
-
-// PushHook adds a function to the end of hook queue. Each invocation of the
-// GetRepositoriesForIndexScan method of the parent MockStore instance
-// invokes the hook at the front of the queue and discards it. After the
-// queue is empty, the default hook function is invoked for any future
-// action.
-func (f *StoreGetRepositoriesForIndexScanFunc) PushHook(hook func(context.Context, time.Duration, bool, *int, int, time.Time) ([]int, error)) {
-	f.mutex.Lock()
-	f.hooks = append(f.hooks, hook)
-	f.mutex.Unlock()
-}
-
-// SetDefaultReturn calls SetDefaultHook with a function that returns the
-// given values.
-func (f *StoreGetRepositoriesForIndexScanFunc) SetDefaultReturn(r0 []int, r1 error) {
-	f.SetDefaultHook(func(context.Context, time.Duration, bool, *int, int, time.Time) ([]int, error) {
-		return r0, r1
-	})
-}
-
-// PushReturn calls PushHook with a function that returns the given values.
-func (f *StoreGetRepositoriesForIndexScanFunc) PushReturn(r0 []int, r1 error) {
-	f.PushHook(func(context.Context, time.Duration, bool, *int, int, time.Time) ([]int, error) {
-		return r0, r1
-	})
-}
-
-func (f *StoreGetRepositoriesForIndexScanFunc) nextHook() func(context.Context, time.Duration, bool, *int, int, time.Time) ([]int, error) {
-	f.mutex.Lock()
-	defer f.mutex.Unlock()
-
-	if len(f.hooks) == 0 {
-		return f.defaultHook
-	}
-
-	hook := f.hooks[0]
-	f.hooks = f.hooks[1:]
-	return hook
-}
-
-func (f *StoreGetRepositoriesForIndexScanFunc) appendCall(r0 StoreGetRepositoriesForIndexScanFuncCall) {
-	f.mutex.Lock()
-	f.history = append(f.history, r0)
-	f.mutex.Unlock()
-}
-
-// History returns a sequence of StoreGetRepositoriesForIndexScanFuncCall
-// objects describing the invocations of this function.
-func (f *StoreGetRepositoriesForIndexScanFunc) History() []StoreGetRepositoriesForIndexScanFuncCall {
-	f.mutex.Lock()
-	history := make([]StoreGetRepositoriesForIndexScanFuncCall, len(f.history))
-	copy(history, f.history)
-	f.mutex.Unlock()
-
-	return history
-}
-
-// StoreGetRepositoriesForIndexScanFuncCall is an object that describes an
-// invocation of method GetRepositoriesForIndexScan on an instance of
-// MockStore.
-type StoreGetRepositoriesForIndexScanFuncCall struct {
-	// Arg0 is the value of the 1st argument passed to this method
-	// invocation.
-	Arg0 context.Context
-	// Arg1 is the value of the 2nd argument passed to this method
-	// invocation.
-	Arg1 time.Duration
-	// Arg2 is the value of the 3rd argument passed to this method
-	// invocation.
-	Arg2 bool
-	// Arg3 is the value of the 4th argument passed to this method
-	// invocation.
-	Arg3 *int
-	// Arg4 is the value of the 5th argument passed to this method
-	// invocation.
-	Arg4 int
-	// Arg5 is the value of the 6th argument passed to this method
-	// invocation.
-	Arg5 time.Time
-	// Result0 is the value of the 1st result returned from this method
-	// invocation.
-	Result0 []int
-	// Result1 is the value of the 2nd result returned from this method
-	// invocation.
-	Result1 error
-}
-
-// Args returns an interface slice containing the arguments of this
-// invocation.
-func (c StoreGetRepositoriesForIndexScanFuncCall) Args() []interface{} {
-	return []interface{}{c.Arg0, c.Arg1, c.Arg2, c.Arg3, c.Arg4, c.Arg5}
-}
-
-// Results returns an interface slice containing the results of this
-// invocation.
-func (c StoreGetRepositoriesForIndexScanFuncCall) Results() []interface{} {
-	return []interface{}{c.Result0, c.Result1}
-}
-
 // StoreInsertDependencyIndexingJobFunc describes the behavior when the
 // InsertDependencyIndexingJob method of the parent MockStore instance is
 // invoked.
@@ -1054,34 +913,34 @@ func (c StoreInsertDependencyIndexingJobFuncCall) Results() []interface{} {
 	return []interface{}{c.Result0, c.Result1}
 }
 
-// StoreInsertIndexesFunc describes the behavior when the InsertIndexes
-// method of the parent MockStore instance is invoked.
-type StoreInsertIndexesFunc struct {
-	defaultHook func(context.Context, []shared1.Index) ([]shared1.Index, error)
-	hooks       []func(context.Context, []shared1.Index) ([]shared1.Index, error)
-	history     []StoreInsertIndexesFuncCall
+// StoreInsertJobsFunc describes the behavior when the InsertJobs method of
+// the parent MockStore instance is invoked.
+type StoreInsertJobsFunc struct {
+	defaultHook func(context.Context, []shared1.AutoIndexJob) ([]shared1.AutoIndexJob, error)
+	hooks       []func(context.Context, []shared1.AutoIndexJob) ([]shared1.AutoIndexJob, error)
+	history     []StoreInsertJobsFuncCall
 	mutex       sync.Mutex
 }
 
-// InsertIndexes delegates to the next hook function in the queue and stores
+// InsertJobs delegates to the next hook function in the queue and stores
 // the parameter and result values of this invocation.
-func (m *MockStore) InsertIndexes(v0 context.Context, v1 []shared1.Index) ([]shared1.Index, error) {
-	r0, r1 := m.InsertIndexesFunc.nextHook()(v0, v1)
-	m.InsertIndexesFunc.appendCall(StoreInsertIndexesFuncCall{v0, v1, r0, r1})
+func (m *MockStore) InsertJobs(v0 context.Context, v1 []shared1.AutoIndexJob) ([]shared1.AutoIndexJob, error) {
+	r0, r1 := m.InsertJobsFunc.nextHook()(v0, v1)
+	m.InsertJobsFunc.appendCall(StoreInsertJobsFuncCall{v0, v1, r0, r1})
 	return r0, r1
 }
 
-// SetDefaultHook sets function that is called when the InsertIndexes method
-// of the parent MockStore instance is invoked and the hook queue is empty.
-func (f *StoreInsertIndexesFunc) SetDefaultHook(hook func(context.Context, []shared1.Index) ([]shared1.Index, error)) {
+// SetDefaultHook sets function that is called when the InsertJobs method of
+// the parent MockStore instance is invoked and the hook queue is empty.
+func (f *StoreInsertJobsFunc) SetDefaultHook(hook func(context.Context, []shared1.AutoIndexJob) ([]shared1.AutoIndexJob, error)) {
 	f.defaultHook = hook
 }
 
 // PushHook adds a function to the end of hook queue. Each invocation of the
-// InsertIndexes method of the parent MockStore instance invokes the hook at
+// InsertJobs method of the parent MockStore instance invokes the hook at
 // the front of the queue and discards it. After the queue is empty, the
 // default hook function is invoked for any future action.
-func (f *StoreInsertIndexesFunc) PushHook(hook func(context.Context, []shared1.Index) ([]shared1.Index, error)) {
+func (f *StoreInsertJobsFunc) PushHook(hook func(context.Context, []shared1.AutoIndexJob) ([]shared1.AutoIndexJob, error)) {
 	f.mutex.Lock()
 	f.hooks = append(f.hooks, hook)
 	f.mutex.Unlock()
@@ -1089,20 +948,20 @@ func (f *StoreInsertIndexesFunc) PushHook(hook func(context.Context, []shared1.I
 
 // SetDefaultReturn calls SetDefaultHook with a function that returns the
 // given values.
-func (f *StoreInsertIndexesFunc) SetDefaultReturn(r0 []shared1.Index, r1 error) {
-	f.SetDefaultHook(func(context.Context, []shared1.Index) ([]shared1.Index, error) {
+func (f *StoreInsertJobsFunc) SetDefaultReturn(r0 []shared1.AutoIndexJob, r1 error) {
+	f.SetDefaultHook(func(context.Context, []shared1.AutoIndexJob) ([]shared1.AutoIndexJob, error) {
 		return r0, r1
 	})
 }
 
 // PushReturn calls PushHook with a function that returns the given values.
-func (f *StoreInsertIndexesFunc) PushReturn(r0 []shared1.Index, r1 error) {
-	f.PushHook(func(context.Context, []shared1.Index) ([]shared1.Index, error) {
+func (f *StoreInsertJobsFunc) PushReturn(r0 []shared1.AutoIndexJob, r1 error) {
+	f.PushHook(func(context.Context, []shared1.AutoIndexJob) ([]shared1.AutoIndexJob, error) {
 		return r0, r1
 	})
 }
 
-func (f *StoreInsertIndexesFunc) nextHook() func(context.Context, []shared1.Index) ([]shared1.Index, error) {
+func (f *StoreInsertJobsFunc) nextHook() func(context.Context, []shared1.AutoIndexJob) ([]shared1.AutoIndexJob, error) {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
 
@@ -1115,35 +974,35 @@ func (f *StoreInsertIndexesFunc) nextHook() func(context.Context, []shared1.Inde
 	return hook
 }
 
-func (f *StoreInsertIndexesFunc) appendCall(r0 StoreInsertIndexesFuncCall) {
+func (f *StoreInsertJobsFunc) appendCall(r0 StoreInsertJobsFuncCall) {
 	f.mutex.Lock()
 	f.history = append(f.history, r0)
 	f.mutex.Unlock()
 }
 
-// History returns a sequence of StoreInsertIndexesFuncCall objects
-// describing the invocations of this function.
-func (f *StoreInsertIndexesFunc) History() []StoreInsertIndexesFuncCall {
+// History returns a sequence of StoreInsertJobsFuncCall objects describing
+// the invocations of this function.
+func (f *StoreInsertJobsFunc) History() []StoreInsertJobsFuncCall {
 	f.mutex.Lock()
-	history := make([]StoreInsertIndexesFuncCall, len(f.history))
+	history := make([]StoreInsertJobsFuncCall, len(f.history))
 	copy(history, f.history)
 	f.mutex.Unlock()
 
 	return history
 }
 
-// StoreInsertIndexesFuncCall is an object that describes an invocation of
-// method InsertIndexes on an instance of MockStore.
-type StoreInsertIndexesFuncCall struct {
+// StoreInsertJobsFuncCall is an object that describes an invocation of
+// method InsertJobs on an instance of MockStore.
+type StoreInsertJobsFuncCall struct {
 	// Arg0 is the value of the 1st argument passed to this method
 	// invocation.
 	Arg0 context.Context
 	// Arg1 is the value of the 2nd argument passed to this method
 	// invocation.
-	Arg1 []shared1.Index
+	Arg1 []shared1.AutoIndexJob
 	// Result0 is the value of the 1st result returned from this method
 	// invocation.
-	Result0 []shared1.Index
+	Result0 []shared1.AutoIndexJob
 	// Result1 is the value of the 2nd result returned from this method
 	// invocation.
 	Result1 error
@@ -1151,13 +1010,13 @@ type StoreInsertIndexesFuncCall struct {
 
 // Args returns an interface slice containing the arguments of this
 // invocation.
-func (c StoreInsertIndexesFuncCall) Args() []interface{} {
+func (c StoreInsertJobsFuncCall) Args() []interface{} {
 	return []interface{}{c.Arg0, c.Arg1}
 }
 
 // Results returns an interface slice containing the results of this
 // invocation.
-func (c StoreInsertIndexesFuncCall) Results() []interface{} {
+func (c StoreInsertJobsFuncCall) Results() []interface{} {
 	return []interface{}{c.Result0, c.Result1}
 }
 
@@ -2757,170 +2616,15 @@ func (c InferenceServiceInferIndexJobsFuncCall) Results() []interface{} {
 	return []interface{}{c.Result0, c.Result1}
 }
 
-// MockRepoUpdaterClient is a mock implementation of the RepoUpdaterClient
-// interface (from the package
-// github.com/sourcegraph/sourcegraph/internal/codeintel/autoindexing) used
-// for unit testing.
-type MockRepoUpdaterClient struct {
-	// RepoLookupFunc is an instance of a mock function object controlling
-	// the behavior of the method RepoLookup.
-	RepoLookupFunc *RepoUpdaterClientRepoLookupFunc
-}
-
-// NewMockRepoUpdaterClient creates a new mock of the RepoUpdaterClient
-// interface. All methods return zero values for all results, unless
-// overwritten.
-func NewMockRepoUpdaterClient() *MockRepoUpdaterClient {
-	return &MockRepoUpdaterClient{
-		RepoLookupFunc: &RepoUpdaterClientRepoLookupFunc{
-			defaultHook: func(context.Context, protocol.RepoLookupArgs) (r0 *protocol.RepoLookupResult, r1 error) {
-				return
-			},
-		},
-	}
-}
-
-// NewStrictMockRepoUpdaterClient creates a new mock of the
-// RepoUpdaterClient interface. All methods panic on invocation, unless
-// overwritten.
-func NewStrictMockRepoUpdaterClient() *MockRepoUpdaterClient {
-	return &MockRepoUpdaterClient{
-		RepoLookupFunc: &RepoUpdaterClientRepoLookupFunc{
-			defaultHook: func(context.Context, protocol.RepoLookupArgs) (*protocol.RepoLookupResult, error) {
-				panic("unexpected invocation of MockRepoUpdaterClient.RepoLookup")
-			},
-		},
-	}
-}
-
-// NewMockRepoUpdaterClientFrom creates a new mock of the
-// MockRepoUpdaterClient interface. All methods delegate to the given
-// implementation, unless overwritten.
-func NewMockRepoUpdaterClientFrom(i RepoUpdaterClient) *MockRepoUpdaterClient {
-	return &MockRepoUpdaterClient{
-		RepoLookupFunc: &RepoUpdaterClientRepoLookupFunc{
-			defaultHook: i.RepoLookup,
-		},
-	}
-}
-
-// RepoUpdaterClientRepoLookupFunc describes the behavior when the
-// RepoLookup method of the parent MockRepoUpdaterClient instance is
-// invoked.
-type RepoUpdaterClientRepoLookupFunc struct {
-	defaultHook func(context.Context, protocol.RepoLookupArgs) (*protocol.RepoLookupResult, error)
-	hooks       []func(context.Context, protocol.RepoLookupArgs) (*protocol.RepoLookupResult, error)
-	history     []RepoUpdaterClientRepoLookupFuncCall
-	mutex       sync.Mutex
-}
-
-// RepoLookup delegates to the next hook function in the queue and stores
-// the parameter and result values of this invocation.
-func (m *MockRepoUpdaterClient) RepoLookup(v0 context.Context, v1 protocol.RepoLookupArgs) (*protocol.RepoLookupResult, error) {
-	r0, r1 := m.RepoLookupFunc.nextHook()(v0, v1)
-	m.RepoLookupFunc.appendCall(RepoUpdaterClientRepoLookupFuncCall{v0, v1, r0, r1})
-	return r0, r1
-}
-
-// SetDefaultHook sets function that is called when the RepoLookup method of
-// the parent MockRepoUpdaterClient instance is invoked and the hook queue
-// is empty.
-func (f *RepoUpdaterClientRepoLookupFunc) SetDefaultHook(hook func(context.Context, protocol.RepoLookupArgs) (*protocol.RepoLookupResult, error)) {
-	f.defaultHook = hook
-}
-
-// PushHook adds a function to the end of hook queue. Each invocation of the
-// RepoLookup method of the parent MockRepoUpdaterClient instance invokes
-// the hook at the front of the queue and discards it. After the queue is
-// empty, the default hook function is invoked for any future action.
-func (f *RepoUpdaterClientRepoLookupFunc) PushHook(hook func(context.Context, protocol.RepoLookupArgs) (*protocol.RepoLookupResult, error)) {
-	f.mutex.Lock()
-	f.hooks = append(f.hooks, hook)
-	f.mutex.Unlock()
-}
-
-// SetDefaultReturn calls SetDefaultHook with a function that returns the
-// given values.
-func (f *RepoUpdaterClientRepoLookupFunc) SetDefaultReturn(r0 *protocol.RepoLookupResult, r1 error) {
-	f.SetDefaultHook(func(context.Context, protocol.RepoLookupArgs) (*protocol.RepoLookupResult, error) {
-		return r0, r1
-	})
-}
-
-// PushReturn calls PushHook with a function that returns the given values.
-func (f *RepoUpdaterClientRepoLookupFunc) PushReturn(r0 *protocol.RepoLookupResult, r1 error) {
-	f.PushHook(func(context.Context, protocol.RepoLookupArgs) (*protocol.RepoLookupResult, error) {
-		return r0, r1
-	})
-}
-
-func (f *RepoUpdaterClientRepoLookupFunc) nextHook() func(context.Context, protocol.RepoLookupArgs) (*protocol.RepoLookupResult, error) {
-	f.mutex.Lock()
-	defer f.mutex.Unlock()
-
-	if len(f.hooks) == 0 {
-		return f.defaultHook
-	}
-
-	hook := f.hooks[0]
-	f.hooks = f.hooks[1:]
-	return hook
-}
-
-func (f *RepoUpdaterClientRepoLookupFunc) appendCall(r0 RepoUpdaterClientRepoLookupFuncCall) {
-	f.mutex.Lock()
-	f.history = append(f.history, r0)
-	f.mutex.Unlock()
-}
-
-// History returns a sequence of RepoUpdaterClientRepoLookupFuncCall objects
-// describing the invocations of this function.
-func (f *RepoUpdaterClientRepoLookupFunc) History() []RepoUpdaterClientRepoLookupFuncCall {
-	f.mutex.Lock()
-	history := make([]RepoUpdaterClientRepoLookupFuncCall, len(f.history))
-	copy(history, f.history)
-	f.mutex.Unlock()
-
-	return history
-}
-
-// RepoUpdaterClientRepoLookupFuncCall is an object that describes an
-// invocation of method RepoLookup on an instance of MockRepoUpdaterClient.
-type RepoUpdaterClientRepoLookupFuncCall struct {
-	// Arg0 is the value of the 1st argument passed to this method
-	// invocation.
-	Arg0 context.Context
-	// Arg1 is the value of the 2nd argument passed to this method
-	// invocation.
-	Arg1 protocol.RepoLookupArgs
-	// Result0 is the value of the 1st result returned from this method
-	// invocation.
-	Result0 *protocol.RepoLookupResult
-	// Result1 is the value of the 2nd result returned from this method
-	// invocation.
-	Result1 error
-}
-
-// Args returns an interface slice containing the arguments of this
-// invocation.
-func (c RepoUpdaterClientRepoLookupFuncCall) Args() []interface{} {
-	return []interface{}{c.Arg0, c.Arg1}
-}
-
-// Results returns an interface slice containing the results of this
-// invocation.
-func (c RepoUpdaterClientRepoLookupFuncCall) Results() []interface{} {
-	return []interface{}{c.Result0, c.Result1}
-}
-
 // MockUploadService is a mock implementation of the UploadService interface
 // (from the package
 // github.com/sourcegraph/sourcegraph/internal/codeintel/autoindexing) used
 // for unit testing.
 type MockUploadService struct {
-	// GetRecentIndexesSummaryFunc is an instance of a mock function object
-	// controlling the behavior of the method GetRecentIndexesSummary.
-	GetRecentIndexesSummaryFunc *UploadServiceGetRecentIndexesSummaryFunc
+	// GetRecentAutoIndexJobsSummaryFunc is an instance of a mock function
+	// object controlling the behavior of the method
+	// GetRecentAutoIndexJobsSummary.
+	GetRecentAutoIndexJobsSummaryFunc *UploadServiceGetRecentAutoIndexJobsSummaryFunc
 	// GetRecentUploadsSummaryFunc is an instance of a mock function object
 	// controlling the behavior of the method GetRecentUploadsSummary.
 	GetRecentUploadsSummaryFunc *UploadServiceGetRecentUploadsSummaryFunc
@@ -2936,8 +2640,8 @@ type MockUploadService struct {
 // All methods return zero values for all results, unless overwritten.
 func NewMockUploadService() *MockUploadService {
 	return &MockUploadService{
-		GetRecentIndexesSummaryFunc: &UploadServiceGetRecentIndexesSummaryFunc{
-			defaultHook: func(context.Context, int) (r0 []shared1.IndexesWithRepositoryNamespace, r1 error) {
+		GetRecentAutoIndexJobsSummaryFunc: &UploadServiceGetRecentAutoIndexJobsSummaryFunc{
+			defaultHook: func(context.Context, int) (r0 []shared1.GroupedAutoIndexJobs, r1 error) {
 				return
 			},
 		},
@@ -2963,9 +2667,9 @@ func NewMockUploadService() *MockUploadService {
 // interface. All methods panic on invocation, unless overwritten.
 func NewStrictMockUploadService() *MockUploadService {
 	return &MockUploadService{
-		GetRecentIndexesSummaryFunc: &UploadServiceGetRecentIndexesSummaryFunc{
-			defaultHook: func(context.Context, int) ([]shared1.IndexesWithRepositoryNamespace, error) {
-				panic("unexpected invocation of MockUploadService.GetRecentIndexesSummary")
+		GetRecentAutoIndexJobsSummaryFunc: &UploadServiceGetRecentAutoIndexJobsSummaryFunc{
+			defaultHook: func(context.Context, int) ([]shared1.GroupedAutoIndexJobs, error) {
+				panic("unexpected invocation of MockUploadService.GetRecentAutoIndexJobsSummary")
 			},
 		},
 		GetRecentUploadsSummaryFunc: &UploadServiceGetRecentUploadsSummaryFunc{
@@ -2991,8 +2695,8 @@ func NewStrictMockUploadService() *MockUploadService {
 // overwritten.
 func NewMockUploadServiceFrom(i UploadService) *MockUploadService {
 	return &MockUploadService{
-		GetRecentIndexesSummaryFunc: &UploadServiceGetRecentIndexesSummaryFunc{
-			defaultHook: i.GetRecentIndexesSummary,
+		GetRecentAutoIndexJobsSummaryFunc: &UploadServiceGetRecentAutoIndexJobsSummaryFunc{
+			defaultHook: i.GetRecentAutoIndexJobsSummary,
 		},
 		GetRecentUploadsSummaryFunc: &UploadServiceGetRecentUploadsSummaryFunc{
 			defaultHook: i.GetRecentUploadsSummary,
@@ -3006,37 +2710,37 @@ func NewMockUploadServiceFrom(i UploadService) *MockUploadService {
 	}
 }
 
-// UploadServiceGetRecentIndexesSummaryFunc describes the behavior when the
-// GetRecentIndexesSummary method of the parent MockUploadService instance
-// is invoked.
-type UploadServiceGetRecentIndexesSummaryFunc struct {
-	defaultHook func(context.Context, int) ([]shared1.IndexesWithRepositoryNamespace, error)
-	hooks       []func(context.Context, int) ([]shared1.IndexesWithRepositoryNamespace, error)
-	history     []UploadServiceGetRecentIndexesSummaryFuncCall
+// UploadServiceGetRecentAutoIndexJobsSummaryFunc describes the behavior
+// when the GetRecentAutoIndexJobsSummary method of the parent
+// MockUploadService instance is invoked.
+type UploadServiceGetRecentAutoIndexJobsSummaryFunc struct {
+	defaultHook func(context.Context, int) ([]shared1.GroupedAutoIndexJobs, error)
+	hooks       []func(context.Context, int) ([]shared1.GroupedAutoIndexJobs, error)
+	history     []UploadServiceGetRecentAutoIndexJobsSummaryFuncCall
 	mutex       sync.Mutex
 }
 
-// GetRecentIndexesSummary delegates to the next hook function in the queue
-// and stores the parameter and result values of this invocation.
-func (m *MockUploadService) GetRecentIndexesSummary(v0 context.Context, v1 int) ([]shared1.IndexesWithRepositoryNamespace, error) {
-	r0, r1 := m.GetRecentIndexesSummaryFunc.nextHook()(v0, v1)
-	m.GetRecentIndexesSummaryFunc.appendCall(UploadServiceGetRecentIndexesSummaryFuncCall{v0, v1, r0, r1})
+// GetRecentAutoIndexJobsSummary delegates to the next hook function in the
+// queue and stores the parameter and result values of this invocation.
+func (m *MockUploadService) GetRecentAutoIndexJobsSummary(v0 context.Context, v1 int) ([]shared1.GroupedAutoIndexJobs, error) {
+	r0, r1 := m.GetRecentAutoIndexJobsSummaryFunc.nextHook()(v0, v1)
+	m.GetRecentAutoIndexJobsSummaryFunc.appendCall(UploadServiceGetRecentAutoIndexJobsSummaryFuncCall{v0, v1, r0, r1})
 	return r0, r1
 }
 
 // SetDefaultHook sets function that is called when the
-// GetRecentIndexesSummary method of the parent MockUploadService instance
-// is invoked and the hook queue is empty.
-func (f *UploadServiceGetRecentIndexesSummaryFunc) SetDefaultHook(hook func(context.Context, int) ([]shared1.IndexesWithRepositoryNamespace, error)) {
+// GetRecentAutoIndexJobsSummary method of the parent MockUploadService
+// instance is invoked and the hook queue is empty.
+func (f *UploadServiceGetRecentAutoIndexJobsSummaryFunc) SetDefaultHook(hook func(context.Context, int) ([]shared1.GroupedAutoIndexJobs, error)) {
 	f.defaultHook = hook
 }
 
 // PushHook adds a function to the end of hook queue. Each invocation of the
-// GetRecentIndexesSummary method of the parent MockUploadService instance
-// invokes the hook at the front of the queue and discards it. After the
-// queue is empty, the default hook function is invoked for any future
-// action.
-func (f *UploadServiceGetRecentIndexesSummaryFunc) PushHook(hook func(context.Context, int) ([]shared1.IndexesWithRepositoryNamespace, error)) {
+// GetRecentAutoIndexJobsSummary method of the parent MockUploadService
+// instance invokes the hook at the front of the queue and discards it.
+// After the queue is empty, the default hook function is invoked for any
+// future action.
+func (f *UploadServiceGetRecentAutoIndexJobsSummaryFunc) PushHook(hook func(context.Context, int) ([]shared1.GroupedAutoIndexJobs, error)) {
 	f.mutex.Lock()
 	f.hooks = append(f.hooks, hook)
 	f.mutex.Unlock()
@@ -3044,20 +2748,20 @@ func (f *UploadServiceGetRecentIndexesSummaryFunc) PushHook(hook func(context.Co
 
 // SetDefaultReturn calls SetDefaultHook with a function that returns the
 // given values.
-func (f *UploadServiceGetRecentIndexesSummaryFunc) SetDefaultReturn(r0 []shared1.IndexesWithRepositoryNamespace, r1 error) {
-	f.SetDefaultHook(func(context.Context, int) ([]shared1.IndexesWithRepositoryNamespace, error) {
+func (f *UploadServiceGetRecentAutoIndexJobsSummaryFunc) SetDefaultReturn(r0 []shared1.GroupedAutoIndexJobs, r1 error) {
+	f.SetDefaultHook(func(context.Context, int) ([]shared1.GroupedAutoIndexJobs, error) {
 		return r0, r1
 	})
 }
 
 // PushReturn calls PushHook with a function that returns the given values.
-func (f *UploadServiceGetRecentIndexesSummaryFunc) PushReturn(r0 []shared1.IndexesWithRepositoryNamespace, r1 error) {
-	f.PushHook(func(context.Context, int) ([]shared1.IndexesWithRepositoryNamespace, error) {
+func (f *UploadServiceGetRecentAutoIndexJobsSummaryFunc) PushReturn(r0 []shared1.GroupedAutoIndexJobs, r1 error) {
+	f.PushHook(func(context.Context, int) ([]shared1.GroupedAutoIndexJobs, error) {
 		return r0, r1
 	})
 }
 
-func (f *UploadServiceGetRecentIndexesSummaryFunc) nextHook() func(context.Context, int) ([]shared1.IndexesWithRepositoryNamespace, error) {
+func (f *UploadServiceGetRecentAutoIndexJobsSummaryFunc) nextHook() func(context.Context, int) ([]shared1.GroupedAutoIndexJobs, error) {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
 
@@ -3070,28 +2774,28 @@ func (f *UploadServiceGetRecentIndexesSummaryFunc) nextHook() func(context.Conte
 	return hook
 }
 
-func (f *UploadServiceGetRecentIndexesSummaryFunc) appendCall(r0 UploadServiceGetRecentIndexesSummaryFuncCall) {
+func (f *UploadServiceGetRecentAutoIndexJobsSummaryFunc) appendCall(r0 UploadServiceGetRecentAutoIndexJobsSummaryFuncCall) {
 	f.mutex.Lock()
 	f.history = append(f.history, r0)
 	f.mutex.Unlock()
 }
 
 // History returns a sequence of
-// UploadServiceGetRecentIndexesSummaryFuncCall objects describing the
+// UploadServiceGetRecentAutoIndexJobsSummaryFuncCall objects describing the
 // invocations of this function.
-func (f *UploadServiceGetRecentIndexesSummaryFunc) History() []UploadServiceGetRecentIndexesSummaryFuncCall {
+func (f *UploadServiceGetRecentAutoIndexJobsSummaryFunc) History() []UploadServiceGetRecentAutoIndexJobsSummaryFuncCall {
 	f.mutex.Lock()
-	history := make([]UploadServiceGetRecentIndexesSummaryFuncCall, len(f.history))
+	history := make([]UploadServiceGetRecentAutoIndexJobsSummaryFuncCall, len(f.history))
 	copy(history, f.history)
 	f.mutex.Unlock()
 
 	return history
 }
 
-// UploadServiceGetRecentIndexesSummaryFuncCall is an object that describes
-// an invocation of method GetRecentIndexesSummary on an instance of
-// MockUploadService.
-type UploadServiceGetRecentIndexesSummaryFuncCall struct {
+// UploadServiceGetRecentAutoIndexJobsSummaryFuncCall is an object that
+// describes an invocation of method GetRecentAutoIndexJobsSummary on an
+// instance of MockUploadService.
+type UploadServiceGetRecentAutoIndexJobsSummaryFuncCall struct {
 	// Arg0 is the value of the 1st argument passed to this method
 	// invocation.
 	Arg0 context.Context
@@ -3100,7 +2804,7 @@ type UploadServiceGetRecentIndexesSummaryFuncCall struct {
 	Arg1 int
 	// Result0 is the value of the 1st result returned from this method
 	// invocation.
-	Result0 []shared1.IndexesWithRepositoryNamespace
+	Result0 []shared1.GroupedAutoIndexJobs
 	// Result1 is the value of the 2nd result returned from this method
 	// invocation.
 	Result1 error
@@ -3108,13 +2812,13 @@ type UploadServiceGetRecentIndexesSummaryFuncCall struct {
 
 // Args returns an interface slice containing the arguments of this
 // invocation.
-func (c UploadServiceGetRecentIndexesSummaryFuncCall) Args() []interface{} {
+func (c UploadServiceGetRecentAutoIndexJobsSummaryFuncCall) Args() []interface{} {
 	return []interface{}{c.Arg0, c.Arg1}
 }
 
 // Results returns an interface slice containing the results of this
 // invocation.
-func (c UploadServiceGetRecentIndexesSummaryFuncCall) Results() []interface{} {
+func (c UploadServiceGetRecentAutoIndexJobsSummaryFuncCall) Results() []interface{} {
 	return []interface{}{c.Result0, c.Result1}
 }
 

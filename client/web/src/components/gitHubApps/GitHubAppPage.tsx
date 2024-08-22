@@ -1,4 +1,4 @@
-import { type FC, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type FC } from 'react'
 
 import { mdiCog, mdiDelete, mdiOpenInNew, mdiPlus } from '@mdi/js'
 import classNames from 'classnames'
@@ -7,28 +7,29 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { Timestamp } from '@sourcegraph/branded/src/components/Timestamp'
 import type { ErrorLike } from '@sourcegraph/common'
 import { useQuery } from '@sourcegraph/http-client'
+import type { TelemetryV2Props } from '@sourcegraph/shared/src/telemetry'
 import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import {
+    AnchorLink,
+    Button,
+    ButtonLink,
     Container,
     ErrorAlert,
-    PageHeader,
-    ButtonLink,
-    Icon,
-    LoadingSpinner,
-    Button,
+    Grid,
     H2,
     H3,
+    Icon,
     Link,
+    LoadingSpinner,
+    PageHeader,
     Text,
-    Grid,
-    AnchorLink,
 } from '@sourcegraph/wildcard'
 // eslint-disable-next-line no-restricted-imports
 import type { BreadcrumbItem } from '@sourcegraph/wildcard/src/components/PageHeader'
 
 import { GitHubAppDomain, type GitHubAppByIDResult, type GitHubAppByIDVariables } from '../../graphql-operations'
 import { ExternalServiceNode } from '../externalServices/ExternalServiceNode'
-import { ConnectionList, SummaryContainer, ConnectionSummary } from '../FilteredConnection/ui'
+import { ConnectionList, ConnectionSummary, SummaryContainer } from '../FilteredConnection/ui'
 import { PageTitle } from '../PageTitle'
 
 import { AppLogo } from './AppLogo'
@@ -38,7 +39,7 @@ import { RemoveGitHubAppModal } from './RemoveGitHubAppModal'
 
 import styles from './GitHubAppCard.module.scss'
 
-interface Props extends TelemetryProps {
+interface Props extends TelemetryProps, TelemetryV2Props {
     /**
      * The parent breadcrumb item to show for this page in the header.
      */
@@ -47,14 +48,20 @@ interface Props extends TelemetryProps {
     headerAnnotation?: React.ReactNode
 }
 
-export const GitHubAppPage: FC<Props> = ({ telemetryService, headerParentBreadcrumb, headerAnnotation }) => {
+export const GitHubAppPage: FC<Props> = ({
+    telemetryService,
+    telemetryRecorder,
+    headerParentBreadcrumb,
+    headerAnnotation,
+}) => {
     const { appID } = useParams()
     const navigate = useNavigate()
     const [removeModalOpen, setRemoveModalOpen] = useState<boolean>(false)
 
     useEffect(() => {
         telemetryService.logPageView('SiteAdminGitHubApp')
-    }, [telemetryService])
+        telemetryRecorder.recordEvent('admin.GitHubApp', 'view')
+    }, [telemetryService, telemetryRecorder])
     const [fetchError, setError] = useState<ErrorLike>()
 
     const { data, loading, error } = useQuery<GitHubAppByIDResult, GitHubAppByIDVariables>(GITHUB_APP_BY_ID_QUERY, {
@@ -74,7 +81,7 @@ export const GitHubAppPage: FC<Props> = ({ telemetryService, headerParentBreadcr
 
     const onAddInstallation = async (app: NonNullable<GitHubAppByIDResult['gitHubApp']>): Promise<void> => {
         try {
-            const req = await fetch(`/.auth/githubapp/state?id=${app?.id}&domain=${app?.domain}`)
+            const req = await fetch(`/githubapp/state?id=${app?.id}&domain=${app?.domain}`)
             const state = await req.text()
             const trailingSlash = app.appURL.endsWith('/') ? '' : '/'
             window.location.assign(`${app.appURL}${trailingSlash}installations/new?state=${state}`)
@@ -181,7 +188,7 @@ export const GitHubAppPage: FC<Props> = ({ telemetryService, headerParentBreadcr
                             </AnchorLink>
                             . A private GitHub App can only be installed on the account that originally created it.{' '}
                             <Link
-                                to="/help/admin/external_service/github#multiple-installations"
+                                to="/help/admin/code_hosts/github#multiple-installations"
                                 target="_blank"
                                 rel="noopener noreferrer"
                             >
@@ -267,7 +274,6 @@ export const GitHubAppPage: FC<Props> = ({ telemetryService, headerParentBreadcr
                                                             <SummaryContainer className="mt-2" centered={true}>
                                                                 <ConnectionSummary
                                                                     noSummaryIfAllNodesVisible={false}
-                                                                    first={100}
                                                                     centered={true}
                                                                     connection={installation.externalServices}
                                                                     noun="code host connection"
@@ -290,7 +296,6 @@ export const GitHubAppPage: FC<Props> = ({ telemetryService, headerParentBreadcr
                             <SummaryContainer className="mt-3" centered={true}>
                                 <ConnectionSummary
                                     noSummaryIfAllNodesVisible={false}
-                                    first={app?.installations?.length ?? 0}
                                     centered={true}
                                     connection={{
                                         nodes: app?.installations ?? [],

@@ -556,7 +556,7 @@ func TestExecutorSecretsIntegration(t *testing.T) {
 	}
 
 	// Read secret2 twice.
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		_, err := secret2.Value(userCtx, db.ExecutorSecretAccessLogs())
 		if err != nil {
 			t.Fatal(err)
@@ -572,7 +572,7 @@ func TestExecutorSecretsIntegration(t *testing.T) {
 		t.Fatal("invalid number of access logs found in DB")
 	}
 
-	s, err := NewSchemaWithoutResolvers(db)
+	s, err := NewSchemaWithoutResolvers(db, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

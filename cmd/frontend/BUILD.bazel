@@ -1,8 +1,7 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
-load("@rules_oci//oci:defs.bzl", "oci_image", "oci_push", "oci_tarball")
-load("@rules_pkg//:pkg.bzl", "pkg_tar")
+load("//dev:oci_defs.bzl", "image_repository", "oci_image", "oci_push", "oci_tarball")
+load("//dev:oci_defs.bzl", "pkg_tar")
 load("@container_structure_test//:defs.bzl", "container_structure_test")
-load("//dev:oci_defs.bzl", "image_repository")
 
 go_library(
     name = "frontend_lib",
@@ -10,12 +9,8 @@ go_library(
     importpath = "github.com/sourcegraph/sourcegraph/cmd/frontend",
     visibility = ["//visibility:private"],
     deps = [
-        "//client/web/dist",
         "//cmd/frontend/shared",
-        "//internal/conf",
         "//internal/sanitycheck",
-        "//internal/service/svcmain",
-        "//internal/tracer",
         "//ui/assets",
     ],
 )
@@ -24,20 +19,19 @@ go_binary(
     name = "frontend",
     embed = [":frontend_lib"],
     visibility = ["//visibility:public"],
-    x_defs = {
-        "github.com/sourcegraph/sourcegraph/internal/version.version": "{STABLE_VERSION}",
-        "github.com/sourcegraph/sourcegraph/internal/version.timestamp": "{VERSION_TIMESTAMP}",
-    },
 )
 
 pkg_tar(
     name = "tar_frontend",
-    srcs = [":frontend"],
+    srcs = [
+        ":frontend",
+    ],
+    visibility = ["//visibility:public"],
 )
 
 oci_image(
     name = "image",
-    base = "@wolfi_base",
+    base = "//wolfi-images/sourcegraph-base:base_image",
     cmd = ["serve"],
     entrypoint = [
         "/sbin/tini",
@@ -57,7 +51,13 @@ oci_image(
         "CODEINTEL_PGSSLMODE": "disable",
         "CODEINTEL_PGUSER": "sg",
     },
-    tars = [":tar_frontend"],
+    tars = [
+        ":tar_frontend",
+        # Needed so the "Upgrade readiness" page in the site-admin
+        # can find locally the current schema.
+        "//cmd/migrator:tar_current_schema_descriptions",
+        "//client/web/dist:tar_bundle",
+    ],
     user = "sourcegraph",
 )
 
@@ -65,6 +65,7 @@ oci_tarball(
     name = "image_tarball",
     image = ":image",
     repo_tags = ["frontend:candidate"],
+    visibility = ["//testing/tools/upgradetest:__pkg__"],
 )
 
 container_structure_test(
@@ -83,4 +84,45 @@ oci_push(
     name = "candidate_push",
     image = ":image",
     repository = image_repository("frontend"),
+)
+
+# No client bundle targets
+
+oci_image(
+    name = "no_client_bundle.image",
+    base = "//wolfi-images/sourcegraph-base:base_image",
+    cmd = ["serve"],
+    entrypoint = [
+        "/sbin/tini",
+        "--",
+        "/frontend",
+    ],
+    env = {
+        "CONFIGURATION_MODE": "server",
+        "PGDATABASE": "sg",
+        "PGHOST": "pgsql",
+        "PGPORT": "5432",
+        "PGSSLMODE": "disable",
+        "PGUSER": "sg",
+        "CODEINTEL_PGDATABASE": "sg",
+        "CODEINTEL_PGHOST": "codeintel-db",
+        "CODEINTEL_PGPORT": "5432",
+        "CODEINTEL_PGSSLMODE": "disable",
+        "CODEINTEL_PGUSER": "sg",
+    },
+    tars = [
+        ":tar_frontend",
+        # Needed so the "Upgrade readiness" page in the site-admin
+        # can find locally the current schema.
+        "//cmd/migrator:tar_current_schema_descriptions",
+        "//client/web/dist:tar_dummy_manifest",
+    ],
+    user = "sourcegraph",
+)
+
+oci_tarball(
+    name = "no_client_bundle.image_tarball",
+    image = ":no_client_bundle.image",
+    repo_tags = ["frontend:candidate"],
+    visibility = ["//testing/tools/upgradetest:__pkg__"],
 )

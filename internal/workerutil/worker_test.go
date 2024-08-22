@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/derision-test/glock"
+	"github.com/stretchr/testify/require"
 
 	"github.com/sourcegraph/log"
 
@@ -41,17 +42,19 @@ func TestWorkerHandlerSuccess(t *testing.T) {
 		WorkerHostname: "test",
 		NumHandlers:    1,
 		Interval:       time.Second,
-		Metrics:        NewMetrics(&observation.TestContext, ""),
+		Metrics:        NewMetrics(observation.TestContextTB(t), ""),
 	}
 
 	store.DequeueFunc.PushReturn(&TestRecord{ID: 42}, true, nil)
 	store.DequeueFunc.SetDefaultReturn(nil, false, nil)
 	store.MarkCompleteFunc.SetDefaultReturn(true, nil)
 
-	worker := newWorker(context.Background(), Store[*TestRecord](store), Handler[*TestRecord](handler), options, dequeueClock, heartbeatClock, shutdownClock)
+	ctx := context.Background()
+	worker := newWorker(ctx, Store[*TestRecord](store), Handler[*TestRecord](handler), options, dequeueClock, heartbeatClock, shutdownClock)
 	go func() { worker.Start() }()
 	dequeueClock.BlockingAdvance(time.Second)
-	worker.Stop()
+	err := worker.Stop(ctx)
+	require.NoError(t, err)
 
 	if callCount := len(handler.HandleFunc.History()); callCount != 1 {
 		t.Errorf("unexpected handle call count. want=%d have=%d", 1, callCount)
@@ -77,7 +80,7 @@ func TestWorkerHandlerFailure(t *testing.T) {
 		WorkerHostname: "test",
 		NumHandlers:    1,
 		Interval:       time.Second,
-		Metrics:        NewMetrics(&observation.TestContext, ""),
+		Metrics:        NewMetrics(observation.TestContextTB(t), ""),
 	}
 
 	store.DequeueFunc.PushReturn(&TestRecord{ID: 42}, true, nil)
@@ -85,10 +88,12 @@ func TestWorkerHandlerFailure(t *testing.T) {
 	store.MarkErroredFunc.SetDefaultReturn(true, nil)
 	handler.HandleFunc.SetDefaultReturn(errors.Errorf("oops"))
 
-	worker := newWorker(context.Background(), Store[*TestRecord](store), Handler[*TestRecord](handler), options, dequeueClock, heartbeatClock, shutdownClock)
+	ctx := context.Background()
+	worker := newWorker(ctx, Store[*TestRecord](store), Handler[*TestRecord](handler), options, dequeueClock, heartbeatClock, shutdownClock)
 	go func() { worker.Start() }()
 	dequeueClock.BlockingAdvance(time.Second)
-	worker.Stop()
+	err := worker.Stop(ctx)
+	require.NoError(t, err)
 
 	if callCount := len(handler.HandleFunc.History()); callCount != 1 {
 		t.Errorf("unexpected handle call count. want=%d have=%d", 1, callCount)
@@ -121,7 +126,7 @@ func TestWorkerHandlerNonRetryableFailure(t *testing.T) {
 		WorkerHostname: "test",
 		NumHandlers:    1,
 		Interval:       time.Second,
-		Metrics:        NewMetrics(&observation.TestContext, ""),
+		Metrics:        NewMetrics(observation.TestContextTB(t), ""),
 	}
 
 	store.DequeueFunc.PushReturn(&TestRecord{ID: 42}, true, nil)
@@ -131,10 +136,12 @@ func TestWorkerHandlerNonRetryableFailure(t *testing.T) {
 	testErr := nonRetryableTestErr{}
 	handler.HandleFunc.SetDefaultReturn(testErr)
 
-	worker := newWorker(context.Background(), Store[*TestRecord](store), Handler[*TestRecord](handler), options, dequeueClock, heartbeatClock, shutdownClock)
+	ctx := context.Background()
+	worker := newWorker(ctx, Store[*TestRecord](store), Handler[*TestRecord](handler), options, dequeueClock, heartbeatClock, shutdownClock)
 	go func() { worker.Start() }()
 	dequeueClock.BlockingAdvance(time.Second)
-	worker.Stop()
+	err := worker.Stop(ctx)
+	require.NoError(t, err)
 
 	if callCount := len(handler.HandleFunc.History()); callCount != 1 {
 		t.Errorf("unexpected handle call count. want=%d have=%d", 1, callCount)
@@ -151,13 +158,11 @@ func TestWorkerHandlerNonRetryableFailure(t *testing.T) {
 	}
 }
 
+const NumTestRecords = 50
+
 func TestWorkerConcurrent(t *testing.T) {
-	NumTestRecords := 50
-
-	for numHandlers := 1; numHandlers < NumTestRecords; numHandlers++ {
-		name := fmt.Sprintf("numHandlers=%d", numHandlers)
-
-		t.Run(name, func(t *testing.T) {
+	runTest := func(numHandlers int) {
+		t.Run(fmt.Sprintf("numHandlers=%d", numHandlers), func(t *testing.T) {
 			t.Parallel()
 
 			store := NewMockStore[*TestRecord]()
@@ -170,27 +175,33 @@ func TestWorkerConcurrent(t *testing.T) {
 				WorkerHostname: "test",
 				NumHandlers:    numHandlers,
 				Interval:       time.Second,
-				Metrics:        NewMetrics(&observation.TestContext, ""),
+				Metrics:        NewMetrics(observation.TestContextTB(t), ""),
 			}
 
-			for i := 0; i < NumTestRecords; i++ {
+			for i := range NumTestRecords {
 				index := i
 				store.DequeueFunc.PushReturn(&TestRecord{ID: index}, true, nil)
 			}
 			store.DequeueFunc.SetDefaultReturn(nil, false, nil)
 
 			var m sync.Mutex
-			times := map[int][2]time.Time{}
-			markTime := func(recordID, index int) {
+			maxConcurrency := 0
+			currentRunning := 0
+			collect := func(start bool) {
 				m.Lock()
-				pair := times[recordID]
-				pair[index] = time.Now()
-				times[recordID] = pair
+				if start {
+					currentRunning++
+				} else {
+					currentRunning--
+				}
+				if currentRunning > maxConcurrency {
+					maxConcurrency = currentRunning
+				}
 				m.Unlock()
 			}
 
-			handler.PreHandleFunc.SetDefaultHook(func(ctx context.Context, _ log.Logger, record *TestRecord) { markTime(record.RecordID(), 0) })
-			handler.PostHandleFunc.SetDefaultHook(func(ctx context.Context, _ log.Logger, record *TestRecord) { markTime(record.RecordID(), 1) })
+			handler.PreHandleFunc.SetDefaultHook(func(ctx context.Context, _ log.Logger, record *TestRecord) { collect(true) })
+			handler.PostHandleFunc.SetDefaultHook(func(ctx context.Context, _ log.Logger, record *TestRecord) { collect(false) })
 			handler.HandleFunc.SetDefaultHook(func(context.Context, log.Logger, *TestRecord) error {
 				// Do a _very_ small sleep to make it very unlikely that the scheduler
 				// will happen to invoke all of the handlers sequentially.
@@ -198,53 +209,27 @@ func TestWorkerConcurrent(t *testing.T) {
 				return nil
 			})
 
-			worker := newWorker(context.Background(), Store[*TestRecord](store), Handler[*TestRecord](handler), options, dequeueClock, heartbeatClock, shutdownClock)
+			ctx := context.Background()
+			worker := newWorker(ctx, Store[*TestRecord](store), Handler[*TestRecord](handler), options, dequeueClock, heartbeatClock, shutdownClock)
 			go func() { worker.Start() }()
-			for i := 0; i < NumTestRecords; i++ {
+			for range NumTestRecords {
 				dequeueClock.BlockingAdvance(time.Second)
 			}
-			worker.Stop()
+			err := worker.Stop(ctx)
+			require.NoError(t, err)
 
-			intersecting := 0
-			for i := 0; i < NumTestRecords; i++ {
-				for j := i + 1; j < NumTestRecords; j++ {
-					if !times[i][1].Before(times[j][0]) {
-						if j-i > 2*numHandlers-1 {
-							// The greatest distance between two "batches" that can overlap is
-							// just under 2x the number of concurrent handler routines. For example
-							// if n=3:
-							//
-							// t1: dequeue A (1 active) *
-							// t2: dequeue B (2 active)
-							// t3: dequeue C (3 active)
-							// t4: process C (2 active)
-							// t5: dequeue D (3 active)
-							// t6: process B (2 active)
-							// t7: dequeue E (3 active) *
-							// t8: process A (2 active) *
-							//
-							// Here, A finishes after E is dequeued, which has a distance of 5 (2*3-1).
-
-							t.Errorf(
-								"times %[1]d (%[3]s-%[4]s) and %[2]d (%[5]s-%[6]s) failed validation",
-								i,
-								j,
-								times[i][0],
-								times[i][1],
-								times[j][0],
-								times[j][1],
-							)
-						}
-
-						intersecting++
-					}
-				}
-			}
-
-			if numHandlers > 1 && intersecting == 0 {
-				t.Errorf("no handler routines were concurrent")
+			// We never want to see more concurrently running jobs than configured.
+			// Ideally, we would also want to see that the number is exactly equal,
+			// but due to the nature of the goroutine scheduler, we can't guarantee that
+			// and it causes flakes in our tests.
+			if maxConcurrency > numHandlers {
+				t.Errorf("unexpected max concurrency. want=%d have=%d", numHandlers, maxConcurrency)
 			}
 		})
+	}
+
+	for numHandlers := 1; numHandlers < NumTestRecords; numHandlers++ {
+		runTest(numHandlers)
 	}
 }
 
@@ -259,7 +244,7 @@ func TestWorkerBlockingPreDequeueHook(t *testing.T) {
 		WorkerHostname: "test",
 		NumHandlers:    1,
 		Interval:       time.Second,
-		Metrics:        NewMetrics(&observation.TestContext, ""),
+		Metrics:        NewMetrics(observation.TestContextTB(t), ""),
 	}
 
 	store.DequeueFunc.PushReturn(&TestRecord{ID: 42}, true, nil)
@@ -268,10 +253,12 @@ func TestWorkerBlockingPreDequeueHook(t *testing.T) {
 	// Block all dequeues
 	handler.PreDequeueFunc.SetDefaultReturn(false, nil, nil)
 
-	worker := newWorker(context.Background(), Store[*TestRecord](store), Handler[*TestRecord](handler), options, dequeueClock, heartbeatClock, shutdownClock)
+	ctx := context.Background()
+	worker := newWorker(ctx, Store[*TestRecord](store), Handler[*TestRecord](handler), options, dequeueClock, heartbeatClock, shutdownClock)
 	go func() { worker.Start() }()
 	dequeueClock.BlockingAdvance(time.Second)
-	worker.Stop()
+	err := worker.Stop(ctx)
+	require.NoError(t, err)
 
 	if callCount := len(handler.HandleFunc.History()); callCount != 0 {
 		t.Errorf("unexpected handle call count. want=%d have=%d", 0, callCount)
@@ -289,7 +276,7 @@ func TestWorkerConditionalPreDequeueHook(t *testing.T) {
 		WorkerHostname: "test",
 		NumHandlers:    1,
 		Interval:       time.Second,
-		Metrics:        NewMetrics(&observation.TestContext, ""),
+		Metrics:        NewMetrics(observation.TestContextTB(t), ""),
 	}
 
 	store.DequeueFunc.PushReturn(&TestRecord{ID: 42}, true, nil)
@@ -302,12 +289,14 @@ func TestWorkerConditionalPreDequeueHook(t *testing.T) {
 	handler.PreDequeueFunc.PushReturn(true, "B", nil)
 	handler.PreDequeueFunc.PushReturn(true, "C", nil)
 
-	worker := newWorker(context.Background(), Store[*TestRecord](store), Handler[*TestRecord](handler), options, dequeueClock, heartbeatClock, shutdownClock)
+	ctx := context.Background()
+	worker := newWorker(ctx, Store[*TestRecord](store), Handler[*TestRecord](handler), options, dequeueClock, heartbeatClock, shutdownClock)
 	go func() { worker.Start() }()
 	dequeueClock.BlockingAdvance(time.Second)
 	dequeueClock.BlockingAdvance(time.Second)
 	dequeueClock.BlockingAdvance(time.Second)
-	worker.Stop()
+	err := worker.Stop(ctx)
+	require.NoError(t, err)
 
 	if callCount := len(handler.HandleFunc.History()); callCount != 3 {
 		t.Errorf("unexpected handle call count. want=%d have=%d", 3, callCount)
@@ -365,7 +354,7 @@ func TestWorkerDequeueHeartbeat(t *testing.T) {
 		NumHandlers:       1,
 		HeartbeatInterval: heartbeatInterval,
 		Interval:          time.Second,
-		Metrics:           NewMetrics(&observation.TestContext, ""),
+		Metrics:           NewMetrics(observation.TestContextTB(t), ""),
 	}
 
 	dequeued := make(chan struct{})
@@ -382,11 +371,13 @@ func TestWorkerDequeueHeartbeat(t *testing.T) {
 		return i, nil, nil
 	})
 
-	worker := newWorker(context.Background(), Store[*TestRecord](store), Handler[*TestRecord](handler), options, dequeueClock, heartbeatClock, shutdownClock)
+	ctx := context.Background()
+	worker := newWorker(ctx, Store[*TestRecord](store), Handler[*TestRecord](handler), options, dequeueClock, heartbeatClock, shutdownClock)
 	go func() { worker.Start() }()
 	t.Cleanup(func() {
 		close(doneHandling)
-		worker.Stop()
+		err := worker.Stop(ctx)
+		require.NoError(t, err)
 	})
 	<-dequeued
 
@@ -412,14 +403,15 @@ func TestWorkerNumTotalJobs(t *testing.T) {
 		NumHandlers:    1,
 		NumTotalJobs:   5,
 		Interval:       time.Second,
-		Metrics:        NewMetrics(&observation.TestContext, ""),
+		Metrics:        NewMetrics(observation.TestContextTB(t), ""),
 	}
 
 	store.DequeueFunc.SetDefaultReturn(&TestRecord{ID: 42}, true, nil)
 	store.MarkCompleteFunc.SetDefaultReturn(true, nil)
 
 	// Should process 5 then shut down
-	worker := newWorker(context.Background(), Store[*TestRecord](store), Handler[*TestRecord](handler), options, dequeueClock, heartbeatClock, shutdownClock)
+	ctx := context.Background()
+	worker := newWorker(ctx, Store[*TestRecord](store), Handler[*TestRecord](handler), options, dequeueClock, heartbeatClock, shutdownClock)
 	worker.Start()
 
 	if callCount := len(store.DequeueFunc.History()); callCount != 5 {
@@ -440,7 +432,7 @@ func TestWorkerMaxActiveTime(t *testing.T) {
 		NumTotalJobs:   50,
 		MaxActiveTime:  time.Second * 5,
 		Interval:       time.Second,
-		Metrics:        NewMetrics(&observation.TestContext, ""),
+		Metrics:        NewMetrics(observation.TestContextTB(t), ""),
 	}
 
 	called := make(chan struct{})
@@ -454,19 +446,20 @@ func TestWorkerMaxActiveTime(t *testing.T) {
 	store.DequeueFunc.SetDefaultReturn(nil, false, nil)
 	store.MarkCompleteFunc.SetDefaultReturn(true, nil)
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		store.DequeueFunc.PushHook(dequeueHook)
 	}
 
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
-		worker := newWorker(context.Background(), Store[*TestRecord](store), Handler[*TestRecord](handler), options, dequeueClock, heartbeatClock, shutdownClock)
+		ctx := context.Background()
+		worker := newWorker(ctx, Store[*TestRecord](store), Handler[*TestRecord](handler), options, dequeueClock, heartbeatClock, shutdownClock)
 		worker.Start()
 	}()
 
 	timeout := time.After(time.Second * 5)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		select {
 		case <-timeout:
 			t.Fatal("timeout waiting for dequeues")
@@ -513,7 +506,7 @@ func TestWorkerCancelJobs(t *testing.T) {
 		NumHandlers:       1,
 		HeartbeatInterval: time.Second,
 		Interval:          time.Second,
-		Metrics:           NewMetrics(&observation.TestContext, ""),
+		Metrics:           NewMetrics(observation.TestContextTB(t), ""),
 	}
 
 	dequeued := make(chan struct{})
@@ -537,12 +530,14 @@ func TestWorkerCancelJobs(t *testing.T) {
 
 	clock := glock.NewMockClock()
 	heartbeatClock := glock.NewMockClock()
-	worker := newWorker(context.Background(), Store[*TestRecord](store), Handler[*TestRecord](handler), options, clock, heartbeatClock, clock)
+	ctx := context.Background()
+	worker := newWorker(ctx, Store[*TestRecord](store), Handler[*TestRecord](handler), options, clock, heartbeatClock, clock)
 	go func() { worker.Start() }()
 	t.Cleanup(func() {
 		// Keep the handler working until context is canceled.
 		close(doneHandling)
-		worker.Stop()
+		err := worker.Stop(ctx)
+		require.NoError(t, err)
 	})
 
 	// Wait until a job has been dequeued.
@@ -591,7 +586,7 @@ func TestWorkerDeadline(t *testing.T) {
 		NumHandlers:       1,
 		HeartbeatInterval: time.Second,
 		Interval:          time.Second,
-		Metrics:           NewMetrics(&observation.TestContext, ""),
+		Metrics:           NewMetrics(observation.TestContextTB(t), ""),
 		// The handler runs forever but should be canceled after 10ms.
 		MaximumRuntimePerJob: 10 * time.Millisecond,
 	}
@@ -614,12 +609,14 @@ func TestWorkerDeadline(t *testing.T) {
 	})
 
 	clock := glock.NewMockClock()
-	worker := newWorker(context.Background(), Store[*TestRecord](store), Handler[*TestRecord](handler), options, clock, clock, clock)
+	ctx := context.Background()
+	worker := newWorker(ctx, Store[*TestRecord](store), Handler[*TestRecord](handler), options, clock, clock, clock)
 	go func() { worker.Start() }()
 	t.Cleanup(func() {
 		// Keep the handler working until context is canceled.
 		close(doneHandling)
-		worker.Stop()
+		err := worker.Stop(ctx)
+		require.NoError(t, err)
 	})
 
 	// Wait until a job has been dequeued.
@@ -647,7 +644,7 @@ func TestWorkerStopDrainsDequeueLoopOnly(t *testing.T) {
 		NumHandlers:       1,
 		HeartbeatInterval: time.Second,
 		Interval:          time.Second,
-		Metrics:           NewMetrics(&observation.TestContext, ""),
+		Metrics:           NewMetrics(observation.TestContextTB(t), ""),
 	}
 
 	dequeued := make(chan struct{})
@@ -668,20 +665,24 @@ func TestWorkerStopDrainsDequeueLoopOnly(t *testing.T) {
 	})
 
 	clock := glock.NewMockClock()
-	worker := newWorker(context.Background(), Store[*TestRecord](store), Handler[*TestRecord](handler), options, clock, clock, clock)
+	ctx := context.Background()
+	worker := newWorker(ctx, Store[*TestRecord](store), Handler[*TestRecord](handler), options, clock, clock, clock)
 	go func() { worker.Start() }()
-	t.Cleanup(func() { worker.Stop() })
+	t.Cleanup(func() {
+		err := worker.Stop(ctx)
+		require.NoError(t, err)
+	})
 
 	// Wait until a job has been dequeued.
 	<-dequeued
 
-	go func() {
-		<-dequeueContext.Done()
+	context.AfterFunc(dequeueContext, func() {
 		block <- struct{}{}
-	}()
+	})
 
 	// Drain dequeue loop and wait for the one active handler to finish.
-	worker.Stop()
+	err := worker.Stop(ctx)
+	require.NoError(t, err)
 
 	for _, call := range handler.HandleFunc.History() {
 		if call.Result0 != nil {

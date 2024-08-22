@@ -2,28 +2,27 @@ package resolvers
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/graph-gophers/graphql-go"
 	"github.com/sourcegraph/log"
 	"golang.org/x/exp/maps"
-	"golang.org/x/exp/slices"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
-	"github.com/sourcegraph/sourcegraph/internal/actor"
-	"github.com/sourcegraph/sourcegraph/internal/collections"
-
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/envvar"
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/globals"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend"
+	"github.com/sourcegraph/sourcegraph/internal/actor"
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/auth"
 	"github.com/sourcegraph/sourcegraph/internal/authz"
 	"github.com/sourcegraph/sourcegraph/internal/authz/permssync"
+	"github.com/sourcegraph/sourcegraph/internal/collections"
+	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/database"
+	"github.com/sourcegraph/sourcegraph/internal/dotcom"
 	"github.com/sourcegraph/sourcegraph/internal/errcode"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
+	"github.com/sourcegraph/sourcegraph/internal/gqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/licensing"
 	"github.com/sourcegraph/sourcegraph/internal/observation"
 	"github.com/sourcegraph/sourcegraph/internal/types"
@@ -60,7 +59,7 @@ func NewResolver(observationCtx *observation.Context, db database.DB) graphqlbac
 }
 
 func (r *Resolver) SetRepositoryPermissionsForUsers(ctx context.Context, args *graphqlbackend.RepoPermsArgs) (*graphqlbackend.EmptyResponse, error) {
-	if envvar.SourcegraphDotComMode() {
+	if dotcom.SourcegraphDotComMode() {
 		return nil, errDisabledSourcegraphDotCom
 	}
 
@@ -87,7 +86,7 @@ func (r *Resolver) SetRepositoryPermissionsForUsers(ctx context.Context, args *g
 		bindIDs = append(bindIDs, up.BindID)
 	}
 
-	mapping, err := r.db.Perms().MapUsers(ctx, bindIDs, globals.PermissionsUserMapping())
+	mapping, err := r.db.Perms().MapUsers(ctx, bindIDs, conf.PermissionsUserMapping())
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +135,7 @@ func (r *Resolver) SetRepositoryPermissionsForUsers(ctx context.Context, args *g
 }
 
 func (r *Resolver) SetRepositoryPermissionsUnrestricted(ctx context.Context, args *graphqlbackend.RepoUnrestrictedArgs) (*graphqlbackend.EmptyResponse, error) {
-	if envvar.SourcegraphDotComMode() {
+	if dotcom.SourcegraphDotComMode() {
 		return nil, errDisabledSourcegraphDotCom
 	}
 
@@ -215,7 +214,7 @@ func (r *Resolver) SetSubRepositoryPermissionsForUsers(ctx context.Context, args
 	if err := r.checkLicense(licensing.FeatureExplicitPermissionsAPI); err != nil {
 		return nil, err
 	}
-	if envvar.SourcegraphDotComMode() {
+	if dotcom.SourcegraphDotComMode() {
 		return nil, errDisabledSourcegraphDotCom
 	}
 
@@ -240,7 +239,7 @@ func (r *Resolver) SetSubRepositoryPermissionsForUsers(ctx context.Context, args
 			bindIDs = append(bindIDs, up.BindID)
 		}
 
-		mapping, err := r.db.Perms().MapUsers(ctx, bindIDs, globals.PermissionsUserMapping())
+		mapping, err := r.db.Perms().MapUsers(ctx, bindIDs, conf.PermissionsUserMapping())
 		if err != nil {
 			return err
 		}
@@ -303,7 +302,7 @@ func (r *Resolver) SetSubRepositoryPermissionsForUsers(ctx context.Context, args
 func (r *Resolver) SetRepositoryPermissionsForBitbucketProject(
 	ctx context.Context, args *graphqlbackend.RepoPermsBitbucketProjectArgs,
 ) (*graphqlbackend.EmptyResponse, error) {
-	if envvar.SourcegraphDotComMode() {
+	if dotcom.SourcegraphDotComMode() {
 		return nil, errDisabledSourcegraphDotCom
 	}
 
@@ -378,7 +377,7 @@ func (r *Resolver) CancelPermissionsSyncJob(ctx context.Context, args *graphqlba
 }
 
 func (r *Resolver) AuthorizedUserRepositories(ctx context.Context, args *graphqlbackend.AuthorizedRepoArgs) (graphqlbackend.RepositoryConnectionResolver, error) {
-	if envvar.SourcegraphDotComMode() {
+	if dotcom.SourcegraphDotComMode() {
 		return nil, errDisabledSourcegraphDotCom
 	}
 
@@ -488,19 +487,6 @@ func (r *Resolver) AuthorizedUsers(ctx context.Context, args *graphqlbackend.Rep
 	}, nil
 }
 
-func (r *Resolver) AuthzProviderTypes(ctx context.Context) ([]string, error) {
-	// 🚨 SECURITY: Only site admins can query for authz providers.
-	if err := auth.CheckCurrentUserIsSiteAdmin(ctx, r.db); err != nil {
-		return nil, err
-	}
-	_, providers := authz.GetProviders()
-	providerTypes := make([]string, 0, len(providers))
-	for _, p := range providers {
-		providerTypes = append(providerTypes, p.ServiceType())
-	}
-	return providerTypes, nil
-}
-
 var jobStatuses = map[string]bool{
 	"queued":     true,
 	"processing": true,
@@ -511,7 +497,7 @@ var jobStatuses = map[string]bool{
 }
 
 func (r *Resolver) BitbucketProjectPermissionJobs(ctx context.Context, args *graphqlbackend.BitbucketProjectPermissionJobsArgs) (graphqlbackend.BitbucketProjectsPermissionJobsResolver, error) {
-	if envvar.SourcegraphDotComMode() {
+	if dotcom.SourcegraphDotComMode() {
 		return nil, errDisabledSourcegraphDotCom
 	}
 	// 🚨 SECURITY: Only site admins can query repository permissions.
@@ -649,7 +635,7 @@ func (r *Resolver) UserPermissionsInfo(ctx context.Context, id graphql.ID) (grap
 	}, nil
 }
 
-func (r *Resolver) PermissionsSyncJobs(ctx context.Context, args graphqlbackend.ListPermissionsSyncJobsArgs) (*graphqlutil.ConnectionResolver[graphqlbackend.PermissionsSyncJobResolver], error) {
+func (r *Resolver) PermissionsSyncJobs(ctx context.Context, args graphqlbackend.ListPermissionsSyncJobsArgs) (*gqlutil.ConnectionResolver[graphqlbackend.PermissionsSyncJobResolver], error) {
 	// 🚨 SECURITY: Only site admins can query sync jobs records or the users themselves.
 	if args.UserID != nil {
 		userID, err := graphqlbackend.UnmarshalUserID(*args.UserID)
@@ -664,7 +650,7 @@ func (r *Resolver) PermissionsSyncJobs(ctx context.Context, args graphqlbackend.
 		return nil, err
 	}
 
-	return NewPermissionsSyncJobsResolver(r.db, args)
+	return NewPermissionsSyncJobsResolver(r.logger, r.db, args)
 }
 
 func (r *Resolver) PermissionsSyncingStats(ctx context.Context) (graphqlbackend.PermissionsSyncingStatsResolver, error) {

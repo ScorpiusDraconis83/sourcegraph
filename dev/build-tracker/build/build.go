@@ -8,8 +8,8 @@ import (
 	"github.com/sourcegraph/log"
 
 	"github.com/sourcegraph/sourcegraph/dev/build-tracker/notify"
-	"github.com/sourcegraph/sourcegraph/dev/build-tracker/util"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
+	"github.com/sourcegraph/sourcegraph/lib/pointers"
 )
 
 // Build keeps track of a buildkite.Build and it's associated jobs and pipeline.
@@ -104,53 +104,60 @@ func (b *Build) IsFinished() bool {
 	}
 }
 
-func (b *Build) GetAuthorName() string {
-	if b.Author == nil {
-		return ""
+func (b *Build) IsReleaseBuild() bool {
+	// Release builds have two environment variables which distinguishes between internal / public releases
+	for _, key := range []string{"RELEASE_PUBLIC", "RELEASE_INTERNAL"} {
+		if v, ok := b.Env[key]; ok && v == "true" {
+			return true
+		}
 	}
 
-	return b.Author.Name
+	return false
 }
 
-func (b *Build) GetAuthorEmail() string {
-	if b.Author == nil {
-		return ""
+func (b *Build) GetBuildAuthor() buildkite.Author {
+	var author buildkite.Author
+	if b.Creator == nil {
+		return author
 	}
 
-	return b.Author.Email
+	author.Name = b.Creator.Name
+	author.Email = b.Creator.Email
+	return author
+}
+
+func (b *Build) GetCommitAuthor() buildkite.Author {
+	return pointers.DerefZero(b.Author)
 }
 
 func (b *Build) GetWebURL() string {
-	if b.WebURL == nil {
-		return ""
-	}
-	return util.Strp(b.WebURL)
+	return pointers.DerefZero(b.WebURL)
 }
 
 func (b *Build) GetState() string {
-	return util.Strp(b.State)
+	return pointers.DerefZero(b.State)
 }
 
 func (b *Build) GetCommit() string {
-	if b.Commit == nil {
-		return ""
-	}
-	return util.Strp(b.Commit)
+	return pointers.DerefZero(b.Commit)
 }
 
 func (b *Build) GetNumber() int {
-	return util.Intp(b.Number)
+	return pointers.DerefZero(b.Number)
 }
 
 func (b *Build) GetBranch() string {
-	return util.Strp(b.Branch)
+	return pointers.DerefZero(b.Branch)
 }
 
 func (b *Build) GetMessage() string {
-	if b.Message == nil {
-		return ""
+	return pointers.DerefZero(b.Message)
+}
+
+func (b *Build) AppendSteps(steps map[string]*Step) {
+	for name, step := range steps {
+		b.Steps[name] = step
 	}
-	return util.Strp(b.Message)
 }
 
 // Pipeline wraps a buildkite.Pipeline and provides convenience functions to access values of the wrapped pipeline in a safe maner
@@ -159,10 +166,7 @@ type Pipeline struct {
 }
 
 func (p *Pipeline) GetName() string {
-	if p == nil {
-		return ""
-	}
-	return util.Strp(p.Name)
+	return pointers.DerefZero(p.Name)
 }
 
 // Event contains information about a buildkite event. Each event contains the build, pipeline, and job. Note that when the event
@@ -176,6 +180,8 @@ type Event struct {
 	Pipeline buildkite.Pipeline `json:"pipeline,omitempty"`
 	// Job is the current job being executed by the Build. When the event is not a job event variant, then this job will be empty
 	Job buildkite.Job `json:"job,omitempty"`
+	// Agent is the agent that is running the job that triggered this event. When the event is not an agent event variant, then this will be empty
+	Agent buildkite.Agent `json:"agent,omitempty"`
 }
 
 func (b *Event) WrappedBuild() *Build {
@@ -205,11 +211,11 @@ func (b *Event) IsJobFinished() bool {
 }
 
 func (b *Event) GetJobName() string {
-	return util.Strp(b.Job.Name)
+	return pointers.DerefZero(b.Job.Name)
 }
 
 func (b *Event) GetBuildNumber() int {
-	return util.Intp(b.Build.Number)
+	return pointers.DerefZero(b.Build.Number)
 }
 
 // Store is a thread safe store which keeps track of Builds described by buildkite build events.
@@ -263,6 +269,28 @@ func (s *Store) Add(event *Event) {
 			log.Int("totalSteps", len(build.Steps)),
 			log.String("status", build.GetState()))
 
+		// If the build was triggered from another build, we need to update the "trigger-er" with the jobs
+		// from the triggered build. This is so that any failures from the triggered build are reported as
+		// failures in the triggerer.
+		// We do this because we do not rely on the state of the build to determine if a build is "successful" or not.
+		// We instead depend on the state of the jobs associated with said build.
+		if event.Build.TriggeredFrom != nil {
+			parentBuild, ok := s.builds[*event.Build.TriggeredFrom.BuildNumber]
+			if ok {
+				parentBuild.Lock()
+				parentBuild.AppendSteps(build.Steps)
+				parentBuild.Unlock()
+			} else {
+				// If the triggered build doesn't exist, we'll just leave log a message
+				s.logger.Warn(
+					"build triggered from non-existent build",
+					log.Int("buildNumber", event.GetBuildNumber()),
+					log.String("pipeline", *event.Build.TriggeredFrom.BuildPipelineSlug),
+					log.Int("triggeredFrom", *event.Build.TriggeredFrom.BuildNumber),
+				)
+			}
+		}
+
 		// Track consecutive failures by pipeline + branch
 		// We update the global count of consecutiveFailures then we set the count on the individual build
 		// if we get a pass, we reset the global count of consecutiveFailures
@@ -302,7 +330,6 @@ func (s *Store) Add(event *Event) {
 			),
 			log.Int("totalSteps", len(build.Steps)),
 		)
-
 	}
 }
 

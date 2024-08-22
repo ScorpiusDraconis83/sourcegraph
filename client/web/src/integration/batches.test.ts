@@ -15,19 +15,19 @@ import { createDriverForTest, type Driver } from '@sourcegraph/shared/src/testin
 import { afterEachSaveScreenshotIfFailed } from '@sourcegraph/shared/src/testing/screenshotReporter'
 
 import {
+    BatchChangeState,
+    BatchSpecState,
+    ChangesetCheckState,
+    ChangesetReviewState,
+    ChangesetSpecType,
+    DiffHunkLineType,
     type BatchChangeBatchSpecsResult,
     type BatchChangeBatchSpecsVariables,
     type BatchChangeByNamespaceResult,
     type BatchChangeChangesetsResult,
     type BatchChangeChangesetsVariables,
-    BatchChangeState,
-    BatchSpecState,
-    ChangesetCheckState,
     type ChangesetCountsOverTimeResult,
     type ChangesetCountsOverTimeVariables,
-    ChangesetReviewState,
-    ChangesetSpecType,
-    DiffHunkLineType,
     type ExternalChangesetFileDiffsFields,
     type ExternalChangesetFileDiffsResult,
     type ExternalChangesetFileDiffsVariables,
@@ -37,7 +37,6 @@ import {
 
 import { createWebIntegrationTestContext, type WebIntegrationTestContext } from './context'
 import { commonWebGraphQlResults } from './graphQlResults'
-import { percySnapshotWithVariants } from './utils'
 
 const now = new Date()
 
@@ -163,6 +162,7 @@ const ChangesetCountsOverTime: (variables: ChangesetCountsOverTimeVariables) => 
         __typename: 'BatchChange',
         changesetCountsOverTime: [
             {
+                __typename: 'ChangesetCounts',
                 closed: 12,
                 date: subDays(now, 2).toISOString(),
                 merged: 10,
@@ -173,6 +173,7 @@ const ChangesetCountsOverTime: (variables: ChangesetCountsOverTimeVariables) => 
                 draft: 10,
             },
             {
+                __typename: 'ChangesetCounts',
                 closed: 12,
                 date: subDays(now, 1).toISOString(),
                 merged: 10,
@@ -549,7 +550,6 @@ describe('Batches', () => {
             await driver.page.waitForSelector('.test-batches-list-page')
             await driver.page.click('[data-testid="test-getting-started-btn"]')
             await driver.page.waitForSelector('[data-testid="test-getting-started"]')
-            await percySnapshotWithVariants(driver.page, 'Batch changes getting started page')
             await accessibilityAudit(driver.page)
         })
     })
@@ -576,7 +576,6 @@ describe('Batches', () => {
                 driver.sourcegraphBaseUrl + '/users/alice/batch-changes/test-batch-change'
             )
 
-            await percySnapshotWithVariants(driver.page, 'Batch Changes List')
             // TODO: Disabled, we need to audit SSBC things on this list before it can pass.
             // await accessibilityAudit(driver.page)
         })
@@ -624,7 +623,6 @@ describe('Batches', () => {
         it.skip('is styled correctly', async () => {
             await driver.page.goto(driver.sourcegraphBaseUrl + '/batch-changes/create')
             await driver.page.waitForSelector('[data-testid="batch-spec-yaml-file"]')
-            await percySnapshotWithVariants(driver.page, 'Create batch change')
             await accessibilityAudit(driver.page)
         })
     })
@@ -653,7 +651,6 @@ describe('Batches', () => {
                 })
                 // View overview page.
                 await driver.page.waitForSelector('.test-batch-change-details-page', { visible: true })
-                await percySnapshotWithVariants(driver.page, `Batch change details page ${entityType}`)
                 await accessibilityAudit(driver.page)
 
                 // we wait for the changesets to be loaded in the browser before proceeding
@@ -699,8 +696,7 @@ describe('Batches', () => {
                 await driver.page.waitForSelector('.test-batch-change-details-page', { visible: true })
                 assert.strictEqual(
                     await driver.page.evaluate(() => window.location.href),
-                    // We now have 1 in the cache, so we'll have a starting number visible that gets set in the URL.
-                    driver.sourcegraphBaseUrl + namespaceURL + '/batch-changes/test-batch-change?visible=1'
+                    driver.sourcegraphBaseUrl + namespaceURL + '/batch-changes/test-batch-change'
                 )
 
                 // Delete the closed batch change.
@@ -913,7 +909,6 @@ describe('Batches', () => {
                 await driver.page.goto(driver.sourcegraphBaseUrl + namespaceURL + '/batch-changes/apply/spec123')
                 // View overview page.
                 await driver.page.waitForSelector('.test-batch-change-apply-page')
-                await percySnapshotWithVariants(driver.page, `Batch change preview page ${entityType}`)
                 await accessibilityAudit(driver.page)
 
                 // Expand one changeset.
@@ -1011,6 +1006,8 @@ describe('Batches', () => {
                                               id: '123',
                                               isSiteCredential: false,
                                               sshPublicKey: 'ssh-rsa randorandorandorando',
+                                              isGitHubApp: false,
+                                              gitHubApp: null,
                                           }
                                         : null,
                                     requiresSSH: false,
@@ -1029,6 +1026,8 @@ describe('Batches', () => {
                             id: '123',
                             isSiteCredential: false,
                             sshPublicKey: 'ssh-rsa randorandorandorando',
+                            isGitHubApp: false,
+                            gitHubApp: null,
                         },
                     }
                 },
@@ -1045,7 +1044,6 @@ describe('Batches', () => {
             await driver.page.goto(driver.sourcegraphBaseUrl + '/users/alice/settings/batch-changes')
             // View settings page.
             await driver.page.waitForSelector('.test-batches-settings-page')
-            await percySnapshotWithVariants(driver.page, 'User batch changes settings page')
             await accessibilityAudit(driver.page)
             // Wait for list to load.
             await driver.page.waitForSelector('.test-code-host-connection-node')

@@ -1,9 +1,9 @@
-import { type FC, useCallback, useEffect } from 'react'
+import { useCallback, useEffect, type FC } from 'react'
 
 import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { H2 } from '@sourcegraph/wildcard'
 
-import { FilteredConnection, type FilteredConnectionFilter } from '../../components/FilteredConnection'
+import { FilteredConnection, type Filter } from '../../components/FilteredConnection'
 import type {
     ListNotebooksResult,
     ListNotebooksVariables,
@@ -13,13 +13,14 @@ import type {
 import type { fetchNotebooks as _fetchNotebooks } from '../backend'
 
 import { NotebookNode, type NotebookNodeProps } from './NotebookNode'
+import { type NotebooksFilterEvents } from './NotebooksListPage'
 
 import styles from './NotebooksList.module.scss'
 
 export interface NotebooksListProps extends TelemetryProps {
     title: string
-    logEventName: string
-    orderOptions: FilteredConnectionFilter[]
+    logEventName: NotebooksFilterEvents
+    orderOptions: Filter[]
     creatorUserID?: string
     starredByUserID?: string
     namespace?: string
@@ -36,13 +37,13 @@ export const NotebooksList: FC<NotebooksListProps> = ({
     fetchNotebooks,
     telemetryService,
 }) => {
-    useEffect(
-        () => telemetryService.logViewEvent(`SearchNotebooksList${logEventName}`),
-        [logEventName, telemetryService]
-    )
+    useEffect(() => {
+        // No V2 telemetry required, as this is duplicative with the view event logged in NotebooksListPage.tsx.
+        telemetryService.logViewEvent(`SearchNotebooksList${logEventName}`)
+    }, [logEventName, telemetryService])
 
     const queryConnection = useCallback(
-        (args: Partial<ListNotebooksVariables>) => {
+        (args: Omit<Partial<ListNotebooksVariables>, 'first'> & { first?: number | null }) => {
             const { orderBy, descending } = args as {
                 orderBy: NotebooksOrderBy | undefined
                 descending: boolean | undefined

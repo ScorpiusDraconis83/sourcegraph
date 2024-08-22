@@ -36,7 +36,6 @@ type DB interface {
 	FeatureFlags() FeatureFlagStore
 	GitHubApps() gha.GitHubAppsStore
 	GitserverRepos() GitserverRepoStore
-	GitserverLocalClone() GitserverLocalCloneStore
 	GlobalState() GlobalStateStore
 	NamespacePermissions() NamespacePermissionStore
 	Namespaces() NamespaceStore
@@ -83,6 +82,7 @@ type DB interface {
 	AssignedOwners() AssignedOwnersStore
 	AssignedTeams() AssignedTeamsStore
 	OwnSignalConfigurations() SignalConfigurationStore
+	Prompts() PromptStore
 
 	WithTransact(context.Context, func(tx DB) error) error
 }
@@ -188,10 +188,6 @@ func (d *db) GitHubApps() gha.GitHubAppsStore {
 
 func (d *db) GitserverRepos() GitserverRepoStore {
 	return GitserverReposWith(d.Store)
-}
-
-func (d *db) GitserverLocalClone() GitserverLocalCloneStore {
-	return GitserverLocalCloneStoreWith(d.Store)
 }
 
 func (d *db) GlobalState() GlobalStateStore {
@@ -379,4 +375,8 @@ func (d *db) AssignedTeams() AssignedTeamsStore {
 
 func (d *db) OwnSignalConfigurations() SignalConfigurationStore {
 	return SignalConfigurationStoreWith(d.Store)
+}
+
+func (d *db) Prompts() PromptStore {
+	return PromptsWith(d.Store)
 }

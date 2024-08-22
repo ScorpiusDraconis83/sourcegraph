@@ -22,17 +22,18 @@ var defaultIndexers = map[string]string{
 	"rust":       "sourcegraph/scip-rust",
 	"typescript": "sourcegraph/scip-typescript",
 	"ruby":       "sourcegraph/scip-ruby",
+	"dotnet":     "sourcegraph/scip-dotnet",
 }
 
 // To update, run `DOCKER_USER=... DOCKER_PASS=... ./update-shas.sh`
 var defaultIndexerSHAs = map[string]string{
-	"sourcegraph/scip-go":         "sha256:4f82e2490c4385a3c47ac0d062c9c53ce5a0bfc5acf0c4032ad07486b39163ec",
-	"sourcegraph/lsif-rust":       "sha256:83cb769788987eb52f21a18b62d51ebb67c9436e1b0d2e99904c70fef424f9d1",
+	"sourcegraph/scip-go":         "sha256:e6ca2d4b55bd1379631d45faab169fc32dc6da2c1939ed11a700261ac4c4d26f",
 	"sourcegraph/scip-rust":       "sha256:adf0047fc3050ba4f7be71302b42c74b49901f38fb40916d94ac5fc9181ac078",
-	"sourcegraph/scip-java":       "sha256:9f04445d3fc70f69a2db42b05964e20b22e716836eefaf1155de4a8b36e8ec19",
-	"sourcegraph/scip-python":     "sha256:219bc4faf063172ba65d709dda95b7fe02125d1697677a59fdc45bd25cc4e321",
-	"sourcegraph/scip-typescript": "sha256:4c9b65a449916bf2d8716c8b4b0a45666cd303a05b78e02980d25b23c1e55e92",
-	"sourcegraph/scip-ruby":       "sha256:ef53e5f1450330ddb4a3edce963b7e10d900d44ff1e7de4960680289ac25f319",
+	"sourcegraph/scip-java":       "sha256:3de6ba2221880e2ff3a7dcb9045e6c3e86f6079d6c8dc2f913a2ca8427605c69",
+	"sourcegraph/scip-python":     "sha256:e3c13f0cadca78098439c541d19a72c21672a3263e22aa706760d941581e068d",
+	"sourcegraph/scip-typescript": "sha256:3df8b36a2ad4e073415bfbeaedf38b3cfff3e697614c8f578299f470d140c2c8",
+	"sourcegraph/scip-ruby":       "sha256:99b1a1adcb1ec1b6e92956f5817dfc6dfc9940f962b999685954b2ba052e1a7b",
+	"sourcegraph/scip-dotnet":     "sha256:1d8a590edfb3834020fceedacac6608811dd31fcba9092426140093876d8d52e",
 }
 
 func DefaultIndexerForLang(language string) (string, bool) {

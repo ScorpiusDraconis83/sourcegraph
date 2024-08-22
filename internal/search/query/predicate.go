@@ -3,11 +3,15 @@ package query
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/grafana/regexp"
 	"github.com/grafana/regexp/syntax"
 
+	"github.com/sourcegraph/sourcegraph/internal/gitserver/gitdomain"
+	"github.com/sourcegraph/sourcegraph/internal/types"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
+	"github.com/sourcegraph/sourcegraph/lib/pointers"
 )
 
 type Predicate interface {
@@ -49,6 +53,9 @@ var DefaultPredicateRegistry = PredicateRegistry{
 		"has.content":      func() Predicate { return &FileContainsContentPredicate{} },
 		"has.owner":        func() Predicate { return &FileHasOwnerPredicate{} },
 		"has.contributor":  func() Predicate { return &FileHasContributorPredicate{} },
+	},
+	FieldRev: {
+		"at.time": func() Predicate { return &RevAtTimePredicate{} },
 	},
 }
 
@@ -313,50 +320,66 @@ func (f *RepoHasTagPredicate) Field() string { return FieldRepo }
 func (f *RepoHasTagPredicate) Name() string  { return "has.tag" }
 
 type RepoHasMetaPredicate struct {
-	Key     string
-	Value   *string
+	// A regex pattern matching the value
+	Key types.RegexpPattern
+	// A regex pattern matching the value
+	Value   *types.RegexpPattern
 	Negated bool
 	KeyOnly bool
 }
 
+func exactRegexpPattern(input string) types.RegexpPattern {
+	return types.RegexpPattern("^" + regexp.QuoteMeta(input) + "$")
+}
+
 func (p *RepoHasMetaPredicate) Unmarshal(params string, negated bool) (err error) {
-	scanLiteral := func(data string) (string, int, error) {
+	scanLiteral := func(data string) (_ string, regexp bool, advance int, _ error) {
 		if strings.HasPrefix(data, `"`) {
-			return ScanDelimited([]byte(data), true, '"')
+			s, advance, err := ScanDelimited([]byte(data), true, '"')
+			return s, false, advance, err
 		}
 		if strings.HasPrefix(data, `'`) {
-			return ScanDelimited([]byte(data), true, '\'')
+			s, advance, err := ScanDelimited([]byte(data), true, '\'')
+			return s, false, advance, err
 		}
-		loc := strings.Index(data, ":")
-		if loc >= 0 {
-			return data[:loc], loc, nil
+		if strings.HasPrefix(data, `/`) {
+			s, advance, err := ScanDelimited([]byte(data), false, '/')
+			return s, true, advance, err
 		}
-		return data, len(data), nil
+		if loc := strings.Index(data, ":"); loc >= 0 {
+			return data[:loc], false, loc, nil
+		}
+		return data, false, len(data), nil
 	}
 
 	// Trim leading and trailing spaces in params
 	params = strings.Trim(params, " \t")
 
 	// Scan the possibly-quoted key
-	key, advance, err := scanLiteral(params)
+	stringKey, isRegexp, advance, err := scanLiteral(params)
 	if err != nil {
 		return err
 	}
-
-	if len(key) == 0 {
+	if len(stringKey) == 0 {
 		return errors.New("key cannot be empty")
+	}
+	var key types.RegexpPattern
+	if isRegexp {
+		key = types.RegexpPattern(stringKey)
+	} else {
+		key = exactRegexpPattern(stringKey)
 	}
 
 	params = params[advance:]
 
 	keyOnly := false
-	var value *string = nil
+	var value *types.RegexpPattern = nil
 	if strings.HasPrefix(params, ":") {
 		// Chomp the leading ":"
 		params = params[len(":"):]
 
 		// Scan the possibly-quoted value
-		val, advance, err := scanLiteral(params)
+		val, isRegexp, advance, err := scanLiteral(params)
 		if err != nil {
 			return err
 		}
@@ -368,8 +391,10 @@ func (p *RepoHasMetaPredicate) Unmarshal(params string, negated bool) (err error
 		if len(params) != 0 {
 			return errors.New("unexpected extra content")
 		}
-		if len(val) > 0 {
-			value = &val
+		if len(val) > 0 && isRegexp {
+			value = pointers.Ptr(types.RegexpPattern(val))
+		} else if len(val) > 0 {
+			value = pointers.Ptr(exactRegexpPattern(val))
 		}
 	} else {
 		keyOnly = true
@@ -614,3 +639,34 @@ func (f *FileHasContributorPredicate) Unmarshal(params string, negated bool) err
 
 func (f FileHasContributorPredicate) Field() string { return FieldFile }
 func (f FileHasContributorPredicate) Name() string  { return "has.contributor" }
+
+type RevAtTimePredicate struct {
+	RevAtTime
+}
+
+func (f *RevAtTimePredicate) Unmarshal(params string, negated bool) error {
+	elems := strings.Split(params, ",")
+	if len(elems) == 1 {
+		t, err := gitdomain.ParseGitDate(strings.TrimSpace(elems[0]), time.Now)
+		if err != nil {
+			return err
+		}
+		f.Timestamp = t
+		f.RevSpec = "HEAD"
+		return nil
+	} else if len(elems) == 2 {
+		t, err := gitdomain.ParseGitDate(strings.TrimSpace(elems[0]), time.Now)
+		if err != nil {
+			return err
+		}
+		f.Timestamp = t
+		f.RevSpec = strings.TrimSpace(elems[1])
+		return nil
+	} else {
+		return errors.New("unexpected number of arguments to rev:at.time()")
+	}
+}
+
+func (f RevAtTimePredicate) Field() string { return FieldRev }
+
+func (f RevAtTimePredicate) Name() string { return "at.time" }

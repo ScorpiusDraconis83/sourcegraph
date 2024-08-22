@@ -7,6 +7,7 @@ import { QueryExamples } from '@sourcegraph/branded/src/search-ui/components/Que
 import type { QueryState } from '@sourcegraph/shared/src/search'
 import { getGlobalSearchContextFilter } from '@sourcegraph/shared/src/search/query/query'
 import { appendContextFilter, omitFilter } from '@sourcegraph/shared/src/search/query/transformer'
+import { useSettingsCascade } from '@sourcegraph/shared/src/settings/settings'
 import { useIsLightTheme } from '@sourcegraph/shared/src/theme'
 import { Label, Tooltip, useLocalStorage } from '@sourcegraph/wildcard'
 
@@ -16,24 +17,26 @@ import { useLegacyContext_onlyInStormRoutes } from '../../../LegacyRouteContext'
 import { useV2QueryInput } from '../../../search/useV2QueryInput'
 import { GettingStartedTour } from '../../../tour/GettingStartedTour'
 import { useShowOnboardingTour } from '../../../tour/hooks'
+import { showQueryExamplesForKeywordSearch } from '../../../util/settings'
 
 import { AddCodeHostWidget } from './AddCodeHostWidget'
+import { KeywordSearchCtaSection } from './KeywordSearchCtaSection'
 import { SearchPageFooter } from './SearchPageFooter'
 import { SearchPageInput } from './SearchPageInput'
-import { TryCodyCtaSection } from './TryCodyCtaSection'
-import { TryCodySignUpCtaSection } from './TryCodySignUpCtaSection'
 
 import styles from './SearchPageContent.module.scss'
 
 interface SearchPageContentProps {
     shouldShowAddCodeHostWidget?: boolean
+    isSourcegraphDotCom: boolean
 }
 
 export const SearchPageContent: FC<SearchPageContentProps> = props => {
     const { shouldShowAddCodeHostWidget } = props
 
-    const { telemetryService, selectedSearchContextSpec, isSourcegraphDotCom, authenticatedUser } =
+    const { telemetryService, selectedSearchContextSpec, isSourcegraphDotCom, authenticatedUser, platformContext } =
         useLegacyContext_onlyInStormRoutes()
+    const { telemetryRecorder } = platformContext
 
     const isLightTheme = useIsLightTheme()
     const [v2QueryInput] = useV2QueryInput()
@@ -43,7 +46,10 @@ export const SearchPageContent: FC<SearchPageContentProps> = props => {
         query: '',
     })
 
-    useEffect(() => telemetryService.logViewEvent('Home'), [telemetryService])
+    useEffect(() => {
+        telemetryService.logViewEvent('Home')
+        telemetryRecorder.recordEvent('home', 'view')
+    }, [telemetryService, telemetryRecorder])
     useEffect(() => {
         // TODO (#48103): Remove/simplify when new search input is released
         // Because the current and the new search input handle the context: selector differently
@@ -67,7 +73,8 @@ export const SearchPageContent: FC<SearchPageContentProps> = props => {
     const [simpleSearchEnabled] = useFeatureFlag('enable-simple-search', false)
 
     const showOnboardingTour = useShowOnboardingTour({ authenticatedUser, isSourcegraphDotCom })
-    const showCodyCTA = !showOnboardingTour
+
+    const queryExamplesForKeywordSearch = showQueryExamplesForKeywordSearch(useSettingsCascade())
 
     return (
         <div className={classNames('d-flex flex-column align-items-center px-3', styles.searchPage)}>
@@ -90,6 +97,9 @@ export const SearchPageContent: FC<SearchPageContentProps> = props => {
                             onToggle={val => {
                                 const arg = { state: val }
                                 telemetryService.log('SimpleSearchToggle', arg, arg)
+                                telemetryRecorder.recordEvent('home.simpleSearch', 'toggle', {
+                                    metadata: { enabled: val ? 1 : 0 },
+                                })
                                 setSimpleSearch(val)
                             }}
                         />
@@ -123,21 +133,12 @@ export const SearchPageContent: FC<SearchPageContentProps> = props => {
                             <GettingStartedTour
                                 className="mt-5"
                                 telemetryService={telemetryService}
+                                telemetryRecorder={telemetryRecorder}
                                 variant="horizontal"
                                 authenticatedUser={authenticatedUser}
                             />
                         )}
-                        {showCodyCTA ? (
-                            authenticatedUser ? (
-                                <TryCodyCtaSection
-                                    className="mx-auto my-5"
-                                    telemetryService={telemetryService}
-                                    isSourcegraphDotCom={isSourcegraphDotCom}
-                                />
-                            ) : (
-                                <TryCodySignUpCtaSection className="mx-auto my-5" telemetryService={telemetryService} />
-                            )
-                        ) : null}
+                        {queryExamplesForKeywordSearch ? <KeywordSearchCtaSection /> : <></>}
                     </>
                 )}
             </div>
@@ -147,12 +148,13 @@ export const SearchPageContent: FC<SearchPageContentProps> = props => {
                         <QueryExamples
                             selectedSearchContextSpec={selectedSearchContextSpec}
                             telemetryService={telemetryService}
+                            telemetryRecorder={telemetryRecorder}
                             isSourcegraphDotCom={isSourcegraphDotCom}
+                            showQueryExamplesForKeywordSearch={queryExamplesForKeywordSearch}
                         />
                     )}
                 </div>
             )}
-
             <SearchPageFooter />
         </div>
     )

@@ -10,6 +10,15 @@ import (
 // A Plan is a pricing plan, with an associated set of features that it offers.
 type Plan string
 
+// Details returns the name and features of the plan.
+func (p Plan) Details() PlanDetails {
+	return planDetails[p]
+}
+
+func (p Plan) IsFreePlan() bool {
+	return p == PlanFree0 || p == PlanFree1
+}
+
 // HasFeature returns whether the plan has the given feature.
 // If the target is a pointer, the plan's feature configuration will be
 // set to the target.
@@ -36,8 +45,8 @@ func (p Plan) HasFeature(target Feature) bool {
 
 const planTagPrefix = "plan:"
 
-// tag is the representation of the plan as a tag in a license key.
-func (p Plan) tag() string { return planTagPrefix + string(p) }
+// Tag is the representation of the plan as a Tag in a license key.
+func (p Plan) Tag() string { return planTagPrefix + string(p) }
 
 // isKnown reports whether the plan is a known plan.
 func (p Plan) isKnown() bool {
@@ -49,18 +58,14 @@ func (p Plan) isKnown() bool {
 	return false
 }
 
-func (p Plan) IsFree() bool {
-	return p == PlanFree0 || p == PlanFree1
-}
-
 // Plan is the pricing plan of the license.
 func (info *Info) Plan() Plan {
 	return PlanFromTags(info.Tags)
 }
 
-// hasUnknownPlan returns an error if the plan is presented in the license tags
+// HasUnknownPlan returns an error if the plan is presented in the license tags
 // but unrecognizable. It returns nil if there is no tags found for plans.
-func (info *Info) hasUnknownPlan() error {
+func (info *Info) HasUnknownPlan() error {
 	for _, tag := range info.Tags {
 		// A tag that begins with "plan:" indicates the license's plan.
 		if !strings.HasPrefix(tag, planTagPrefix) {
@@ -85,13 +90,10 @@ func PlanFromTags(tags []string) Plan {
 				return plan
 			}
 		}
-
-		// Backcompat: support the old "starter" tag (which mapped to "Enterprise Starter").
-		if tag == "starter" {
-			return PlanOldEnterpriseStarter
-		}
 	}
 
 	// Backcompat: no tags means it is the old "Enterprise" plan.
+	// TODO: In the future, we will no longer allow this and instances without a
+	// plan tag will be on the Free plan instead.
 	return PlanOldEnterprise
 }

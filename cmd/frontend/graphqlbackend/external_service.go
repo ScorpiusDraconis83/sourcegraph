@@ -2,6 +2,7 @@ package graphqlbackend
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -11,12 +12,12 @@ import (
 
 	"github.com/sourcegraph/log"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/auth"
 	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/errcode"
 	"github.com/sourcegraph/sourcegraph/internal/extsvc"
+	"github.com/sourcegraph/sourcegraph/internal/gitserver"
 	"github.com/sourcegraph/sourcegraph/internal/gqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/httpcli"
 	"github.com/sourcegraph/sourcegraph/internal/ratelimit"
@@ -124,6 +125,20 @@ func (r *externalServiceResolver) Kind() string {
 	return r.externalService.Kind
 }
 
+func (r *externalServiceResolver) URL(ctx context.Context) (string, error) {
+	// 🚨 SECURITY: check whether user is site-admin
+	if err := auth.CheckCurrentUserIsSiteAdmin(ctx, r.db); err != nil {
+		return "", err
+	}
+
+	config, err := r.externalService.Config.Decrypt(ctx)
+	if err != nil {
+		return "", errors.Wrap(err, "decrypting external service config")
+	}
+
+	return extsvc.UniqueCodeHostIdentifier(r.externalService.Kind, config)
+}
+
 func (r *externalServiceResolver) DisplayName() string {
 	return r.externalService.DisplayName
 }
@@ -156,6 +171,38 @@ func (r *externalServiceResolver) CreatedAt() gqlutil.DateTime {
 
 func (r *externalServiceResolver) UpdatedAt() gqlutil.DateTime {
 	return gqlutil.DateTime{Time: r.externalService.UpdatedAt}
+}
+
+func (r *externalServiceResolver) Creator(ctx context.Context) (*UserResolver, error) {
+	if r.externalService.CreatorID == nil {
+		return nil, nil
+	}
+
+	user, err := r.db.Users().GetByID(ctx, *r.externalService.CreatorID)
+	if err != nil {
+		if database.IsUserNotFoundErr(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	return NewUserResolver(ctx, r.db, user), nil
+}
+
+func (r *externalServiceResolver) LastUpdater(ctx context.Context) (*UserResolver, error) {
+	if r.externalService.LastUpdaterID == nil {
+		return nil, nil
+	}
+
+	user, err := r.db.Users().GetByID(ctx, *r.externalService.LastUpdaterID)
+	if err != nil {
+		if database.IsUserNotFoundErr(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	return NewUserResolver(ctx, r.db, user), nil
 }
 
 func (r *externalServiceResolver) WebhookURL(ctx context.Context) (*string, error) {
@@ -261,20 +308,30 @@ func (r *externalServiceResolver) CheckConnection(ctx context.Context) (*externa
 		return &externalServiceAvailabilityStateResolver{unknown: &externalServiceUnknown{}}, nil
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
 	source, err := repos.NewSource(
 		ctx,
 		log.Scoped("externalServiceResolver.CheckConnection"),
 		r.db,
 		r.externalService,
 		httpcli.ExternalClientFactory,
+		gitserver.NewClient("graphql.check-connection"),
 	)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create source")
 	}
 
 	if err := source.CheckConnection(ctx); err != nil {
+		reason := err.Error()
+
+		if checkErrCodeHostMaybeInaccessible(err) {
+			reason = fmt.Sprintf("%s\n\n%s", reason, codeHostInaccessibleWarning)
+		}
+
 		return &externalServiceAvailabilityStateResolver{
-			unavailable: &externalServiceUnavailable{suspectedReason: err.Error()},
+			unavailable: &externalServiceUnavailable{suspectedReason: reason},
 		}, nil
 	}
 
@@ -361,12 +418,12 @@ func (r *externalServiceSyncJobConnectionResolver) TotalCount(ctx context.Contex
 	return int32(totalCount), err
 }
 
-func (r *externalServiceSyncJobConnectionResolver) PageInfo(ctx context.Context) (*graphqlutil.PageInfo, error) {
+func (r *externalServiceSyncJobConnectionResolver) PageInfo(ctx context.Context) (*gqlutil.PageInfo, error) {
 	jobs, totalCount, err := r.compute(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return graphqlutil.HasNextPage(len(jobs) != int(totalCount)), nil
+	return gqlutil.HasNextPage(len(jobs) != int(totalCount)), nil
 }
 
 func (r *externalServiceSyncJobConnectionResolver) compute(ctx context.Context) ([]*types.ExternalServiceSyncJob, int64, error) {

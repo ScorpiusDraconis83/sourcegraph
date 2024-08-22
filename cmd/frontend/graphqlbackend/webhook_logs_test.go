@@ -5,14 +5,14 @@ import (
 	"testing"
 	"time"
 
-	mockassert "github.com/derision-test/go-mockgen/testutil/assert"
+	mockassert "github.com/derision-test/go-mockgen/v2/testutil/assert"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/sourcegraph/sourcegraph/internal/actor"
 	"github.com/sourcegraph/sourcegraph/internal/database/dbmocks"
+	"github.com/sourcegraph/sourcegraph/internal/gqlutil"
 	"github.com/sourcegraph/sourcegraph/lib/pointers"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend/graphqlutil"
 	"github.com/sourcegraph/sourcegraph/internal/auth"
 	"github.com/sourcegraph/sourcegraph/internal/database"
 	"github.com/sourcegraph/sourcegraph/internal/types"
@@ -54,7 +54,7 @@ func TestWebhookLogsArgs(t *testing.T) {
 			"all arguments": {
 				id: webhookLogsExternalServiceID(1),
 				input: WebhookLogsArgs{
-					ConnectionArgs: graphqlutil.ConnectionArgs{
+					ConnectionArgs: gqlutil.ConnectionArgs{
 						First: pointers.Ptr(int32(25)),
 					},
 					After:      pointers.Ptr("40"),
@@ -139,7 +139,7 @@ func TestWebhookLogConnectionResolver(t *testing.T) {
 
 	// We'll set up a fake page of 20 logs.
 	var logs []*types.WebhookLog
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		logs = append(logs, &types.WebhookLog{})
 	}
 
@@ -156,7 +156,7 @@ func TestWebhookLogConnectionResolver(t *testing.T) {
 
 		r := &WebhookLogConnectionResolver{
 			args: &WebhookLogsArgs{
-				ConnectionArgs: graphqlutil.ConnectionArgs{
+				ConnectionArgs: gqlutil.ConnectionArgs{
 					First: pointers.Ptr(int32(20)),
 				},
 			},
@@ -189,7 +189,7 @@ func TestWebhookLogConnectionResolver(t *testing.T) {
 
 		r := &WebhookLogConnectionResolver{
 			args: &WebhookLogsArgs{
-				ConnectionArgs: graphqlutil.ConnectionArgs{
+				ConnectionArgs: gqlutil.ConnectionArgs{
 					First: pointers.Ptr(int32(20)),
 				},
 			},
@@ -225,7 +225,7 @@ func TestWebhookLogConnectionResolver(t *testing.T) {
 
 		r := &WebhookLogConnectionResolver{
 			args: &WebhookLogsArgs{
-				ConnectionArgs: graphqlutil.ConnectionArgs{
+				ConnectionArgs: gqlutil.ConnectionArgs{
 					First: pointers.Ptr(int32(20)),
 				},
 			},

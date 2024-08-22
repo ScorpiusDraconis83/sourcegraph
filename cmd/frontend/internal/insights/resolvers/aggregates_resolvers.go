@@ -279,7 +279,7 @@ func buildResults(aggregator aggregation.LimitedAggregator, limit int, mode type
 	otherGroups := aggregator.OtherCounts().GroupCount
 	var totalCount uint32
 
-	for i := 0; i < len(sorted); i++ {
+	for i := range len(sorted) {
 		if i < limit {
 			label := sorted[i].Label
 			drilldownQuery, err := buildDrilldownQuery(mode, originalQuery, label, patternType)
@@ -438,7 +438,7 @@ func canAggregateByCaptureGroup(searchQuery, patternType string) (bool, *notAvai
 	if err != nil {
 		return false, &notAvailableReason{reason: cgInvalidQueryMsg, reasonType: types.INVALID_AGGREGATION_MODE_FOR_QUERY}, err
 	}
-	if !(searchType == query.SearchTypeRegex || searchType == query.SearchTypeStandard || searchType == query.SearchTypeLucky) {
+	if !(searchType == query.SearchTypeRegex || searchType == query.SearchTypeStandard) {
 		return false, &notAvailableReason{reason: cgInvalidQueryMsg, reasonType: types.INVALID_AGGREGATION_MODE_FOR_QUERY}, nil
 	}
 

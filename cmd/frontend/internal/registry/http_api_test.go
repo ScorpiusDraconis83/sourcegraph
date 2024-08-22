@@ -7,19 +7,18 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/envvar"
+	"github.com/sourcegraph/sourcegraph/internal/dotcom"
 )
 
 func TestHandleRegistry(t *testing.T) {
-	defer envvar.MockSourcegraphDotComMode(envvar.SourcegraphDotComMode())
-	envvar.MockSourcegraphDotComMode(true)
+	dotcom.MockSourcegraphDotComMode(t, true)
 
 	t.Run("list", func(t *testing.T) {
 		rr := httptest.NewRecorder()
 		rr.Body = new(bytes.Buffer)
 		req, _ := http.NewRequest("GET", "/.api/registry/extensions", nil)
 		req.Header.Set("Accept", "application/vnd.sourcegraph.api+json;version=20180621")
-		handleRegistry(rr, req)
+		HandleRegistry(rr, req)
 		if want := 200; rr.Result().StatusCode != want {
 			t.Errorf("got HTTP status %d, want %d", rr.Result().StatusCode, want)
 		}
@@ -34,7 +33,7 @@ func TestHandleRegistry(t *testing.T) {
 		rr.Body = new(bytes.Buffer)
 		req, _ := http.NewRequest("GET", "/.api/registry/extensions/extension-id/sourcegraph/go", nil)
 		req.Header.Set("Accept", "application/vnd.sourcegraph.api+json;version=20180621")
-		handleRegistry(rr, req)
+		HandleRegistry(rr, req)
 		if want := 200; rr.Result().StatusCode != want {
 			t.Errorf("got HTTP status %d, want %d", rr.Result().StatusCode, want)
 		}

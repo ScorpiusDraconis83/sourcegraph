@@ -13,7 +13,7 @@ import (
 
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/auth"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/auth/oauth"
-	"github.com/sourcegraph/sourcegraph/internal/auth/providers"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/auth/providers"
 	"github.com/sourcegraph/sourcegraph/internal/collections"
 	"github.com/sourcegraph/sourcegraph/internal/conf"
 	"github.com/sourcegraph/sourcegraph/internal/conf/conftypes"
@@ -141,6 +141,7 @@ func parseProvider(logger log.Logger, db database.DB, sourceCfg schema.AuthProvi
 		logger,
 		db,
 		&sessionIssuerHelper{
+			logger:      logger.Scoped("sessionIssuerHelper"),
 			db:          db,
 			CodeHost:    codeHost,
 			clientID:    azureProvider.ClientID,

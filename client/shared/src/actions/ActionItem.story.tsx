@@ -1,21 +1,17 @@
 import { action } from '@storybook/addon-actions'
 import type { Decorator, Meta, StoryFn } from '@storybook/react'
 import type * as H from 'history'
-import { NEVER } from 'rxjs'
 
 import { subtypeOf } from '@sourcegraph/common'
 import { BrandedStory } from '@sourcegraph/wildcard/src/stories'
 
+import { noOpTelemetryRecorder } from '../telemetry'
 import { NOOP_TELEMETRY_SERVICE } from '../telemetry/telemetryService'
 
 import { ActionItem, type ActionItemComponentProps, type ActionItemProps } from './ActionItem'
 
 const EXTENSIONS_CONTROLLER: ActionItemComponentProps['extensionsController'] = {
     executeCommand: () => new Promise(resolve => setTimeout(resolve, 750)),
-}
-
-const PLATFORM_CONTEXT: ActionItemComponentProps['platformContext'] = {
-    settings: NEVER,
 }
 
 const LOCATION: H.Location = { hash: '', pathname: '/', search: '', state: undefined }
@@ -31,8 +27,8 @@ const onDidExecute = action('onDidExecute')
 const commonProps = subtypeOf<Partial<ActionItemProps>>()({
     location: LOCATION,
     extensionsController: EXTENSIONS_CONTROLLER,
-    platformContext: PLATFORM_CONTEXT,
     telemetryService: NOOP_TELEMETRY_SERVICE,
+    telemetryRecorder: noOpTelemetryRecorder,
     iconClassName: 'icon-inline',
     active: true,
 })
@@ -48,7 +44,7 @@ export default config
 export const NoopAction: StoryFn = () => (
     <ActionItem
         {...commonProps}
-        action={{ id: 'a', command: undefined, actionItem: { label: 'Hello' } }}
+        action={{ id: 'a', command: undefined, actionItem: { label: 'Hello' }, telemetryProps: { feature: 'a' } }}
         variant="actionItem"
     />
 )
@@ -58,7 +54,7 @@ NoopAction.storyName = 'Noop action'
 export const CommandAction: StoryFn = () => (
     <ActionItem
         {...commonProps}
-        action={{ id: 'a', command: 'c', title: 'Hello', iconURL: ICON_URL }}
+        action={{ id: 'a', command: 'c', title: 'Hello', iconURL: ICON_URL, telemetryProps: { feature: 'a' } }}
         telemetryService={NOOP_TELEMETRY_SERVICE}
         disabledDuringExecution={true}
         showLoadingSpinnerDuringExecution={true}
@@ -67,12 +63,6 @@ export const CommandAction: StoryFn = () => (
 )
 
 CommandAction.storyName = 'Command action'
-CommandAction.parameters = {
-    chromatic: {
-        enableDarkMode: true,
-        disableSnapshot: false,
-    },
-}
 
 export const LinkAction: StoryFn = () => (
     <ActionItem
@@ -82,6 +72,7 @@ export const LinkAction: StoryFn = () => (
             command: 'open',
             commandArguments: ['javascript:alert("link clicked")'],
             actionItem: { label: 'Hello' },
+            telemetryProps: { feature: 'a' },
         }}
         variant="actionItem"
         onDidExecute={onDidExecute}
@@ -101,7 +92,7 @@ export const Executing: StoryFn = () => {
     return (
         <ActionItemExecuting
             {...commonProps}
-            action={{ id: 'a', command: 'c', title: 'Hello', iconURL: ICON_URL }}
+            action={{ id: 'a', command: 'c', title: 'Hello', iconURL: ICON_URL, telemetryProps: { feature: 'a' } }}
             disabledDuringExecution={true}
             showLoadingSpinnerDuringExecution={true}
         />
@@ -119,7 +110,7 @@ export const _Error: StoryFn = () => {
     return (
         <ActionItemWithError
             {...commonProps}
-            action={{ id: 'a', command: 'c', title: 'Hello', iconURL: ICON_URL }}
+            action={{ id: 'a', command: 'c', title: 'Hello', iconURL: ICON_URL, telemetryProps: { feature: 'a' } }}
             disabledDuringExecution={true}
             showLoadingSpinnerDuringExecution={true}
         />

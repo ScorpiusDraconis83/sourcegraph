@@ -10,7 +10,7 @@ set -eu
 # Select the files to inspect. We don't want to list files which are deleted, as it makes no sense
 # to look for a token being committed in those.
 #
-# So we use --diff-filter, that tells git to only include in the diff files that were
+# We use --diff-filter, that tells git to only include in the diff files that were:
 # - "A" added
 # - "C" copied
 # - "M" modified
@@ -20,9 +20,16 @@ files=$(git diff --name-only --staged --diff-filter ACMR)
 function check() {
   local file="$1"
 
-  if ! grep -qE "(?:(?:\/\/)|(?:#)|(?:--)) ?pre-commit:ignore_sourcegraph_token$" "$file" && grep -qE "s(?:g[psd]|lk)_[0-9a-fA-F]{40,}" "$file" ; then
-    echo "Found a Sourcegraph token in git staged file: $file. Please remove it."
-    exit 1
+  if ! grep -qE "(?:(?:\/\/)|(?:#)|(?:--)) ?pre-commit:ignore_sourcegraph_token$" "$file"; then
+    if grep -qE "s(?:g[psd]|lk)_[0-9a-fA-F]{40,}" "$file"; then
+      echo "Found a Sourcegraph token in git staged file: $file. Please remove it."
+      exit 1
+    fi
+
+    if grep -qE "sgph_[a-f0-9]{16}_[a-f0-9]{40}" "$file"; then
+      echo "Found a Sourcegraph token in git staged file: $file. Please remove it."
+      exit 1
+    fi
   fi
   if grep -qE "gh[pousr]_[0-9a-zA-Z]{36}" "$file"; then
     echo "Found a GitHub token in git staged file: $file. Please remove it."

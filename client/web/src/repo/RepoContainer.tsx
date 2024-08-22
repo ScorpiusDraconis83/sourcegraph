@@ -1,40 +1,40 @@
 import React, {
     createContext,
-    type FC,
-    type PropsWithChildren,
-    type RefObject,
     Suspense,
     useContext,
     useEffect,
     useMemo,
     useRef,
     useState,
+    type FC,
+    type PropsWithChildren,
+    type RefObject,
 } from 'react'
 
 import classNames from 'classnames'
+import { escapeRegExp } from 'lodash'
 import { createPortal } from 'react-dom'
-import { type Location, useLocation, Route, Routes } from 'react-router-dom'
+import { Route, Routes, useLocation, type Location } from 'react-router-dom'
 import { NEVER, of } from 'rxjs'
 import { catchError, switchMap } from 'rxjs/operators'
 
 import type { StreamingSearchResultsListProps } from '@sourcegraph/branded'
-import { asError, type ErrorLike, isErrorLike, logger, repeatUntil } from '@sourcegraph/common'
+import { asError, isErrorLike, repeatUntil, type ErrorLike } from '@sourcegraph/common'
 import {
     isCloneInProgressErrorLike,
     isRepoSeeOtherErrorLike,
     isRevisionNotFoundErrorLike,
 } from '@sourcegraph/shared/src/backend/errors'
 import { RepoQuestionIcon } from '@sourcegraph/shared/src/components/icons'
-import type { ExtensionsControllerProps } from '@sourcegraph/shared/src/extensions/controller'
 import { useKeyboardShortcut } from '@sourcegraph/shared/src/keyboardShortcuts/useKeyboardShortcut'
 import type { PlatformContextProps } from '@sourcegraph/shared/src/platform/context'
 import { Shortcut } from '@sourcegraph/shared/src/react-shortcuts'
 import type { Settings } from '@sourcegraph/shared/src/schema/settings.schema'
 import { EditorHint, type SearchContextProps } from '@sourcegraph/shared/src/search'
+import { escapeSpaces } from '@sourcegraph/shared/src/search/query/filters'
 import type { SettingsCascadeProps } from '@sourcegraph/shared/src/settings/settings'
 import type { TelemetryProps } from '@sourcegraph/shared/src/telemetry/telemetryService'
 import { lazyComponent } from '@sourcegraph/shared/src/util/lazyComponent'
-import { makeRepoURI } from '@sourcegraph/shared/src/util/url'
 import { LoadingSpinner, Panel, useObservable } from '@sourcegraph/wildcard'
 
 import type { AuthenticatedUser } from '../auth'
@@ -42,7 +42,8 @@ import type { BatchChangesProps } from '../batches'
 import type { CodeIntelligenceProps } from '../codeintel'
 import { RepoContainerEditor } from '../cody/components/RepoContainerEditor'
 import { CodySidebar } from '../cody/sidebar'
-import { useCodySidebar, useSidebarSize, CODY_SIDEBAR_SIZES } from '../cody/sidebar/Provider'
+import { CODY_SIDEBAR_SIZES, useCodySidebar, useSidebarSize } from '../cody/sidebar/Provider'
+import { useCodyIgnore } from '../cody/useCodyIgnore'
 import type { BreadcrumbSetters, BreadcrumbsProps } from '../components/Breadcrumbs'
 import { RouteError } from '../components/ErrorBoundary'
 import { HeroPage } from '../components/HeroPage'
@@ -50,7 +51,7 @@ import type { ExternalLinkFields, RepositoryFields } from '../graphql-operations
 import type { CodeInsightsProps } from '../insights/types'
 import type { NotebookProps } from '../notebooks'
 import type { OwnConfigProps } from '../own/OwnConfigProps'
-import { repoFilterForRepoRevision, fileFilterForFilePath, type SearchStreamingProps } from '../search'
+import { searchQueryForRepoRevision, type SearchStreamingProps } from '../search'
 import { useV2QueryInput } from '../search/useV2QueryInput'
 import { useNavbarQueryState } from '../stores'
 import { EventName } from '../util/constants'
@@ -58,7 +59,7 @@ import type { RouteV6Descriptor } from '../util/contributions'
 import { parseBrowserRepoURL } from '../util/url'
 
 import { GoToCodeHostAction } from './actions/GoToCodeHostAction'
-import { fetchFileExternalLinks, type ResolvedRevision, resolveRepoRevision, type Repo } from './backend'
+import { fetchFileExternalLinks, resolveRepoRevision, type Repo, type ResolvedRevision } from './backend'
 import { AskCodyButton } from './cody/AskCodyButton'
 import { RepoContainerError } from './RepoContainerError'
 import { RepoHeader, type RepoHeaderContributionsLifecycleProps } from './RepoHeader'
@@ -83,7 +84,6 @@ const RepoSettingsArea = lazyComponent(() => import('./settings/RepoSettingsArea
 export interface RepoContainerContext
     extends RepoHeaderContributionsLifecycleProps,
         SettingsCascadeProps,
-        ExtensionsControllerProps,
         PlatformContextProps,
         HoverThresholdProps,
         TelemetryProps,
@@ -120,7 +120,6 @@ interface RepoContainerProps
     extends SettingsCascadeProps<Settings>,
         PlatformContextProps,
         TelemetryProps,
-        ExtensionsControllerProps,
         Pick<SearchContextProps, 'selectedSearchContextSpec' | 'searchContextsEnabled'>,
         BreadcrumbSetters,
         BreadcrumbsProps,
@@ -176,7 +175,7 @@ export const RepoContainer: FC<RepoContainerProps> = props => {
                                     }
 
                                     if (isCloneInProgressErrorLike(error)) {
-                                        return of<ErrorLike>(asError(error))
+                                        return of(asError(error))
                                     }
 
                                     throw error
@@ -186,7 +185,7 @@ export const RepoContainer: FC<RepoContainerProps> = props => {
                     )
                     .pipe(
                         repeatUntil(value => !isCloneInProgressErrorLike(value), { delay: 1000 }),
-                        catchError(error => of<ErrorLike>(asError(error)))
+                        catchError(error => of(asError(error)))
                     ),
             [repoName, revision]
         )
@@ -327,7 +326,7 @@ const RepoUserContainer: FC<RepoUserContainerProps> = ({
     repoHeaderContributionsLifecycleProps,
     ...props
 }) => {
-    const { extensionsController, repoContainerRoutes, authenticatedUser, selectedSearchContextSpec } = props
+    const { repoContainerRoutes, authenticatedUser, selectedSearchContextSpec } = props
 
     const location = useLocation()
 
@@ -344,6 +343,8 @@ const RepoUserContainer: FC<RepoUserContainerProps> = ({
     } = useCodySidebar()
 
     const { sidebarSize, setSidebarSize: setCodySidebarSize } = useSidebarSize()
+
+    const { isRepoIgnored } = useCodyIgnore()
 
     /* eslint-disable react-hooks/exhaustive-deps */
     const codySidebarSize = useMemo(() => sidebarSize, [isCodySidebarOpen])
@@ -362,41 +363,6 @@ const RepoUserContainer: FC<RepoUserContainerProps> = ({
     // The external links to show in the repository header, if any.
     const [externalLinks, setExternalLinks] = useState<ExternalLinkFields[] | undefined>()
 
-    // Update the workspace roots service to reflect the current repo / resolved revision
-    useEffect(() => {
-        const workspaceRootUri =
-            resolvedRevisionOrError &&
-            !isErrorLike(resolvedRevisionOrError) &&
-            makeRepoURI({
-                repoName,
-                revision: resolvedRevisionOrError.commitID,
-            })
-
-        if (workspaceRootUri && extensionsController !== null) {
-            extensionsController.extHostAPI
-                .then(extensionHostAPI =>
-                    extensionHostAPI.addWorkspaceRoot({
-                        uri: workspaceRootUri,
-                        inputRevision: revision || '',
-                    })
-                )
-                .catch(error => {
-                    logger.error('Error adding workspace root', error)
-                })
-        }
-
-        // Clear the Sourcegraph extensions model's roots when navigating away.
-        return () => {
-            if (workspaceRootUri && extensionsController !== null) {
-                extensionsController.extHostAPI
-                    .then(extensionHostAPI => extensionHostAPI.removeWorkspaceRoot(workspaceRootUri))
-                    .catch(error => {
-                        logger.error('Error removing workspace root', error)
-                    })
-            }
-        }
-    }, [extensionsController, repoName, resolvedRevisionOrError, revision])
-
     // Update the navbar query to reflect the current repo / revision
     const [enableV2QueryInput] = useV2QueryInput()
     const queryPrefix = useMemo(
@@ -404,17 +370,16 @@ const RepoUserContainer: FC<RepoUserContainerProps> = ({
         [enableV2QueryInput, selectedSearchContextSpec]
     )
     const onNavbarQueryChange = useNavbarQueryState(state => state.setQueryState)
-    const patternType = useNavbarQueryState.getState().searchPatternType
     useEffect(() => {
-        let query = queryPrefix + repoFilterForRepoRevision(repoName, revision, patternType)
+        let query = queryPrefix + searchQueryForRepoRevision(repoName, revision)
         if (filePath) {
-            query = `${query.trimEnd()} ${fileFilterForFilePath(filePath, patternType)}`
+            query = `${query.trimEnd()} file:${escapeSpaces('^' + escapeRegExp(filePath))}`
         }
         onNavbarQueryChange({
             query,
             hint: EditorHint.Blur,
         })
-    }, [revision, filePath, repoName, onNavbarQueryChange, queryPrefix, patternType])
+    }, [revision, filePath, repoName, onNavbarQueryChange, queryPrefix])
 
     const isError = isErrorLike(repoOrError) || isErrorLike(resolvedRevisionOrError)
 
@@ -432,6 +397,7 @@ const RepoUserContainer: FC<RepoUserContainerProps> = ({
                 repoName={repoName}
                 viewerCanAdminister={viewerCanAdminister}
                 repoFetchError={repoOrError as ErrorLike}
+                telemetryRecorder={props.platformContext.telemetryRecorder}
             />
         )
     }
@@ -469,6 +435,7 @@ const RepoUserContainer: FC<RepoUserContainerProps> = ({
 
     // must exactly match how the revision was encoded in the URL
     const repoNameAndRevision = `${repoName}${typeof rawRevision === 'string' ? `@${rawRevision}` : ''}`
+    const showAskCodyBtn = window.context?.codyEnabledForCurrentUser && !isRepoIgnored(repoName) && !isCodySidebarOpen
 
     return (
         <>
@@ -482,7 +449,7 @@ const RepoUserContainer: FC<RepoUserContainerProps> = ({
                 />
             ))}
 
-            {!isCodySidebarOpen && (
+            {showAskCodyBtn && (
                 <RepoHeaderContributionPortal
                     position="right"
                     priority={1}
@@ -492,7 +459,10 @@ const RepoUserContainer: FC<RepoUserContainerProps> = ({
                     {() => (
                         <AskCodyButton
                             onClick={() => {
-                                logTranscriptEvent(EventName.CODY_SIDEBAR_CHAT_OPENED, { repo, path: filePath })
+                                logTranscriptEvent(EventName.CODY_SIDEBAR_CHAT_OPENED, 'repo.askCody', 'click', {
+                                    repo,
+                                    path: filePath,
+                                })
                                 setIsCodySidebarOpen(true)
                             }}
                         />
@@ -522,6 +492,7 @@ const RepoUserContainer: FC<RepoUserContainerProps> = ({
                         source="repoHeader"
                         key="go-to-code-host"
                         externalLinks={externalLinks}
+                        telemetryRecorder={props.platformContext.telemetryRecorder}
                     />
                 )}
             </RepoHeaderContributionPortal>
@@ -587,10 +558,9 @@ const RepoUserContainer: FC<RepoUserContainerProps> = ({
                 </Routes>
             </Suspense>
 
-            {isCodySidebarOpen && (
+            {!isRepoIgnored(repoName) && isCodySidebarOpen && repo && (
                 <RepoContainerRootPortal>
                     <Panel
-                        className="cody-sidebar-panel"
                         position="right"
                         ariaLabel="Cody sidebar"
                         maxSize={CODY_SIDEBAR_SIZES.max}
@@ -598,8 +568,11 @@ const RepoUserContainer: FC<RepoUserContainerProps> = ({
                         defaultSize={codySidebarSize || CODY_SIDEBAR_SIZES.default}
                         storageKey="size-cache-cody-sidebar"
                         onResize={setCodySidebarSize}
+                        className={classNames('cody-sidebar-panel', styles.codySidebarPanel)}
                     >
                         <CodySidebar
+                            repository={repo}
+                            filePath={filePath}
                             onClose={() => setIsCodySidebarOpen(false)}
                             authenticatedUser={props.authenticatedUser}
                         />

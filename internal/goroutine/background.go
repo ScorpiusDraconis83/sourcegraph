@@ -13,7 +13,7 @@ var GracefulShutdownTimeout = env.MustGetDuration("SRC_GRACEFUL_SHUTDOWN_TIMEOUT
 // running process with a graceful shutdown mechanism.
 //
 // See
-// https://docs.sourcegraph.com/dev/background-information/backgroundroutine
+// https://docs-legacy.sourcegraph.com/dev/background-information/backgroundroutine
 // for more information and a step-by-step guide on how to implement a
 // BackgroundRoutine.
 type BackgroundRoutine = background.Routine
@@ -35,5 +35,6 @@ var MonitorBackgroundRoutines = background.Monitor
 // CombinedRoutine is a list of routines which are started and stopped in unison.
 type CombinedRoutine = background.CombinedRoutine
 
-// NoopRoutine does nothing for start or stop.
+// NoopRoutine return a background routine that does nothing for start or stop.
+// If the name is empty, it will default to "noop".
 var NoopRoutine = background.NoopRoutine

@@ -241,7 +241,7 @@ func makeHistoricalSearchJobFunc(logger log.Logger, commitClient GitCommitClient
 		if len(bctx.execution.Revision) == 0 {
 			recentCommits, revErr := commitClient.RecentCommits(ctx, bctx.repoName, bctx.execution.RecordingTime, "")
 			if revErr != nil {
-				if errors.HasType(revErr, &gitdomain.RevisionNotFoundError{}) || gitdomain.IsRepoNotExist(revErr) {
+				if errors.HasType[*gitdomain.RevisionNotFoundError](revErr) || gitdomain.IsRepoNotExist(revErr) {
 					return // no error - repo may not be cloned yet (or not even pushed to code host yet)
 				}
 				err = errors.Append(err, errors.Wrap(revErr, "FindNearestCommit"))
@@ -298,7 +298,7 @@ func makeRunSearchFunc(searchHandlers map[types.GenerationMethod]queryrunner.Ins
 		groupContext, groupCancel := context.WithCancel(ctx)
 		defer groupCancel()
 		p := pool.New().WithContext(groupContext).WithMaxGoroutines(searchWorkerLimit).WithCancelOnError()
-		for i := 0; i < len(jobs); i++ {
+		for i := range len(jobs) {
 			job := jobs[i]
 			p.Go(func(ctx context.Context) error {
 				h := searchHandlers[series.GenerationMethod]

@@ -20,7 +20,7 @@ import (
 
 	"github.com/sourcegraph/log/logtest"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/webhooks"
+	"github.com/sourcegraph/sourcegraph/cmd/frontend/internal/webhooks"
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/batches/sources"
 	"github.com/sourcegraph/sourcegraph/internal/batches/store"
@@ -98,7 +98,7 @@ func testGitHubWebhook(db database.DB, userID int32) func(*testing.T) {
 			t.Fatal(err)
 		}
 
-		s := store.NewWithClock(db, &observation.TestContext, nil, clock)
+		s := store.NewWithClock(db, observation.TestContextTB(t), nil, clock)
 		if err := s.CreateSiteCredential(ctx, &btypes.SiteCredential{
 			ExternalServiceType: githubRepo.ExternalRepo.ServiceType,
 			ExternalServiceID:   githubRepo.ExternalRepo.ServiceID,
@@ -150,13 +150,14 @@ func testGitHubWebhook(db database.DB, userID int32) func(*testing.T) {
 		// Set up mocks to prevent the diffstat computation from trying to
 		// use a real gitserver, and so we can control what diff is used to
 		// create the diffstat.
-		state := bt.MockChangesetSyncState(&protocol.RepoInfo{
+		bt.MockChangesetSyncState(&protocol.RepoInfo{
 			Name: "repo",
 			VCS:  protocol.VCSInfo{URL: "https://example.com/repo/"},
 		})
-		defer state.Unmock()
 
-		src, err := sourcer.ForChangeset(ctx, s, changeset, sources.AuthenticationStrategyUserCredential, githubRepo)
+		src, err := sourcer.ForChangeset(ctx, s, changeset, githubRepo, sources.SourcerOpts{
+			AuthenticationStrategy: sources.AuthenticationStrategyUserCredential,
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -187,7 +188,7 @@ func testGitHubWebhook(db database.DB, userID int32) func(*testing.T) {
 				tc := loadWebhookTestCase(t, fixtureFile)
 
 				// Send all events twice to ensure we are idempotent
-				for i := 0; i < 2; i++ {
+				for range 2 {
 					for _, event := range tc.Payloads {
 						handler := webhooks.GitHubWebhook{
 							Router: &webhooks.Router{

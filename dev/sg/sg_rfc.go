@@ -23,34 +23,37 @@ var rfcCommand = &cli.Command{
 	}()),
 	UsageText: `
 # List all Public RFCs
-sg rfc list
+sg rfc --public list
 
 # List all Private RFCs
-sg rfc --private list
+sg rfc list
+
+# List all Private RFCs that match one of some statuses
+sg rfc list -s approved -s implemented -s done
 
 # Search for a Public RFC
-sg rfc search "search terms"
+sg rfc --public search "search terms"
 
 # Search for a Private RFC
-sg rfc --private search "search terms"
+sg rfc search "search terms"
 
-# Open a specific Public RFC
+# Open a specific Private RFC
 sg rfc open 420
 
-# Open a specific private RFC
-sg rfc --private open 420
+# Open a specific Public RFC
+sg rfc --public open 420
 
 # Create a new public RFC
-sg rfc create "title"
+sg rfc --public create "title"
 
 # Create a new private RFC. Possible types: [solution]
-sg rfc --private create --type <type> "title"
+sg rfc create --type <type> "title"
 `,
 	Category: category.Company,
 	Flags: []cli.Flag{
 		&cli.BoolFlag{
-			Name:     "private",
-			Usage:    "perform the RFC action on the private RFC drive",
+			Name:     "public",
+			Usage:    "perform the RFC action on the public RFC drive",
 			Required: false,
 			Value:    false,
 		},
@@ -60,27 +63,41 @@ sg rfc --private create --type <type> "title"
 			Name:      "list",
 			ArgsUsage: " ",
 			Usage:     "List Sourcegraph RFCs",
+			Flags: []cli.Flag{
+				&cli.StringSliceFlag{
+					Name:    "status",
+					Aliases: []string{"s"},
+					Usage:   "Only show RFCs with the given status(es)",
+				},
+			},
 			Action: func(c *cli.Context) error {
-				driveSpec := rfc.PublicDrive
-				if c.Bool("private") {
-					driveSpec = rfc.PrivateDrive
+				driveSpec := rfc.PrivateDrive
+				if c.Bool("public") {
+					driveSpec = rfc.PublicDrive
 				}
-				return rfc.List(c.Context, driveSpec, std.Out)
+				return rfc.List(c.Context, driveSpec, std.Out, c.StringSlice("status"))
 			},
 		},
 		{
 			Name:      "search",
 			ArgsUsage: "[query]",
 			Usage:     "Search Sourcegraph RFCs",
+			Flags: []cli.Flag{
+				&cli.StringSliceFlag{
+					Name:    "status",
+					Aliases: []string{"s"},
+					Usage:   "Only show RFCs with the given status(es)",
+				},
+			},
 			Action: func(c *cli.Context) error {
-				driveSpec := rfc.PublicDrive
-				if c.Bool("private") {
-					driveSpec = rfc.PrivateDrive
+				driveSpec := rfc.PrivateDrive
+				if c.Bool("public") {
+					driveSpec = rfc.PublicDrive
 				}
 				if c.Args().Len() == 0 {
 					return errors.New("no search query given")
 				}
-				return rfc.Search(c.Context, strings.Join(c.Args().Slice(), " "), driveSpec, std.Out)
+				return rfc.Search(c.Context, strings.Join(c.Args().Slice(), " "), driveSpec, std.Out, c.StringSlice("status"))
 			},
 		},
 		{
@@ -88,9 +105,9 @@ sg rfc --private create --type <type> "title"
 			ArgsUsage: "[number]",
 			Usage:     "Open a Sourcegraph RFC - find and list RFC numbers with 'sg rfc list' or 'sg rfc search'",
 			Action: func(c *cli.Context) error {
-				driveSpec := rfc.PublicDrive
-				if c.Bool("private") {
-					driveSpec = rfc.PrivateDrive
+				driveSpec := rfc.PrivateDrive
+				if c.Bool("public") {
+					driveSpec = rfc.PublicDrive
 				}
 				if c.Args().Len() == 0 {
 					return errors.New("no RFC given")
@@ -110,9 +127,9 @@ sg rfc --private create --type <type> "title"
 			},
 			Usage: "Create Sourcegraph RFCs",
 			Action: func(c *cli.Context) error {
-				driveSpec := rfc.PublicDrive
-				if c.Bool("private") {
-					driveSpec = rfc.PrivateDrive
+				driveSpec := rfc.PrivateDrive
+				if c.Bool("public") {
+					driveSpec = rfc.PublicDrive
 				}
 
 				rfcType := c.String("type")

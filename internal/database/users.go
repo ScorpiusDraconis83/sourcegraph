@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/sourcegraph/sourcegraph/lib/pointers"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgconn"
 	"github.com/keegancsmith/sqlf"
@@ -399,6 +401,24 @@ func (u *userStore) CreateInTransaction(ctx context.Context, info NewUser, spec 
 			}
 			return nil, err
 		}
+
+		// Cancel possible pending access request for this email
+		accessRequestsStore := AccessRequestsWith(u, u.logger)
+		ar, err := accessRequestsStore.GetByEmail(ctx, info.Email)
+
+		if err != nil && !errors.Is(err, &ErrAccessRequestNotFound{Email: info.Email}) {
+			return nil, err
+		}
+
+		if err == nil {
+			ar.Status = types.AccessRequestStatusCanceled
+			ar.UpdatedAt = time.Now()
+			ar.DecisionByUserID = pointers.Ptr(id)
+			_, err = accessRequestsStore.Update(ctx, ar)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	user := &types.User{
@@ -522,7 +542,6 @@ type UserUpdate struct {
 	// - If pointer to a non-empty string, the value in the DB is set to the string.
 	DisplayName, AvatarURL *string
 	TosAccepted            *bool
-	CompletedPostSignup    *bool
 }
 
 // Update updates a user's profile information.
@@ -562,9 +581,6 @@ func (u *userStore) Update(ctx context.Context, id int32, update UserUpdate) (er
 	}
 	if update.TosAccepted != nil {
 		fieldUpdates = append(fieldUpdates, sqlf.Sprintf("tos_accepted=%s", *update.TosAccepted))
-	}
-	if update.CompletedPostSignup != nil {
-		fieldUpdates = append(fieldUpdates, sqlf.Sprintf("completed_post_signup=%s", *update.CompletedPostSignup))
 	}
 	query := sqlf.Sprintf("UPDATE users SET %s WHERE id=%d", sqlf.Join(fieldUpdates, ", "), id)
 	res, err := tx.ExecResult(ctx, query)
@@ -642,7 +658,8 @@ func (u *userStore) DeleteList(ctx context.Context, ids []int32) (err error) {
 
 	idsCond := sqlf.Join(userIDs, ",")
 
-	res, err := tx.ExecResult(ctx, sqlf.Sprintf("UPDATE users SET deleted_at=now() WHERE id IN (%s) AND deleted_at IS NULL", idsCond))
+	// Mark the account as deleted and invalidate sessions.
+	res, err := tx.ExecResult(ctx, sqlf.Sprintf("UPDATE users SET deleted_at=now(), invalidated_sessions_at=now() WHERE id IN (%s) AND deleted_at IS NULL", idsCond))
 	if err != nil {
 		return err
 	}
@@ -1324,9 +1341,7 @@ SELECT u.id,
 	u.passwd IS NOT NULL,
 	u.invalidated_sessions_at,
 	u.tos_accepted,
-	u.completed_post_signup,
-	EXISTS (SELECT 1 FROM user_external_accounts WHERE service_type = 'scim' AND user_id = u.id AND deleted_at IS NULL) AS scim_controlled,
-	u.cody_pro_enabled_at
+	EXISTS (SELECT 1 FROM user_external_accounts WHERE service_type = 'scim' AND user_id = u.id AND deleted_at IS NULL) AS scim_controlled
 FROM users u %s`, query)
 	rows, err := u.Query(ctx, q)
 	if err != nil {
@@ -1338,7 +1353,7 @@ FROM users u %s`, query)
 	for rows.Next() {
 		var u types.User
 		var displayName, avatarURL sql.NullString
-		err := rows.Scan(&u.ID, &u.Username, &displayName, &avatarURL, &u.CreatedAt, &u.UpdatedAt, &u.SiteAdmin, &u.BuiltinAuth, &u.InvalidatedSessionsAt, &u.TosAccepted, &u.CompletedPostSignup, &u.SCIMControlled, &u.CodyProEnabledAt)
+		err := rows.Scan(&u.ID, &u.Username, &displayName, &avatarURL, &u.CreatedAt, &u.UpdatedAt, &u.SiteAdmin, &u.BuiltinAuth, &u.InvalidatedSessionsAt, &u.TosAccepted, &u.SCIMControlled)
 		if err != nil {
 			return nil, err
 		}

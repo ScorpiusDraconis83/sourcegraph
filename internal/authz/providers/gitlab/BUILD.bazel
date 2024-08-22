@@ -9,9 +9,9 @@ go_library(
         "sudo.go",
     ],
     importpath = "github.com/sourcegraph/sourcegraph/internal/authz/providers/gitlab",
+    tags = [TAG_PLATFORM_SOURCE],
     visibility = ["//:__subpackages__"],
     deps = [
-        "//internal/auth/providers",
         "//internal/authz",
         "//internal/authz/types",
         "//internal/database",
@@ -39,11 +39,11 @@ go_test(
     ],
     embed = [":gitlab"],
     tags = [
+        TAG_PLATFORM_SOURCE,
         "requires-network",
     ],
     deps = [
         "//internal/api",
-        "//internal/auth/providers",
         "//internal/authz",
         "//internal/database/dbmocks",
         "//internal/extsvc",
@@ -55,7 +55,6 @@ go_test(
         "//internal/rcache",
         "//internal/types",
         "//lib/errors",
-        "//schema",
         "@com_github_davecgh_go_spew//spew",
         "@com_github_google_go_cmp//cmp",
         "@com_github_inconshreveable_log15//:log15",

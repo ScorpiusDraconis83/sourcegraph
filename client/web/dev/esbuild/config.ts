@@ -5,29 +5,29 @@ import type * as esbuild from 'esbuild'
 
 import { ROOT_PATH, STATIC_ASSETS_PATH } from '@sourcegraph/build-config'
 import {
-    stylePlugin,
-    packageResolutionPlugin,
-    monacoPlugin,
-    RXJS_RESOLUTIONS,
     buildTimerPlugin,
+    monacoPlugin,
+    packageResolutionPlugin,
+    stylePlugin,
+    workerPlugin,
 } from '@sourcegraph/build-config/src/esbuild/plugins'
 import { MONACO_LANGUAGES_AND_FEATURES } from '@sourcegraph/build-config/src/monaco-editor'
 
 import type { EnvironmentConfig } from '../utils'
 
+import chunkCleaner from './chunkCleaner'
 import { manifestPlugin } from './manifestPlugin'
+import { WEB_BUILD_MANIFEST_FILENAME, webManifestBuilder } from './webmanifest'
 
 /**
  * Creates esbuild build options for the client/web app.
  */
 export function esbuildBuildOptions(ENVIRONMENT_CONFIG: EnvironmentConfig): esbuild.BuildOptions {
     return {
-        entryPoints: ENVIRONMENT_CONFIG.CODY_APP
-            ? [path.join(ROOT_PATH, 'client/web/src/enterprise/app/main.tsx')]
-            : [
-                  path.join(ROOT_PATH, 'client/web/src/enterprise/main.tsx'),
-                  path.join(ROOT_PATH, 'client/web/src/enterprise/embed/embedMain.tsx'),
-              ],
+        entryPoints: [
+            path.join(ROOT_PATH, 'client/web/src/enterprise/main.tsx'),
+            path.join(ROOT_PATH, 'client/web/src/enterprise/embed/embedMain.tsx'),
+        ],
         bundle: true,
         minify: ENVIRONMENT_CONFIG.NODE_ENV === 'production',
         treeShaking: true,
@@ -41,11 +41,21 @@ export function esbuildBuildOptions(ENVIRONMENT_CONFIG: EnvironmentConfig): esbu
         entryNames: '[name]-[hash]',
         outdir: STATIC_ASSETS_PATH,
         plugins: [
+            chunkCleaner,
             stylePlugin,
-            manifestPlugin,
+            manifestPlugin({
+                manifestFilename: WEB_BUILD_MANIFEST_FILENAME,
+                builder: webManifestBuilder,
+            }),
+            workerPlugin,
             packageResolutionPlugin({
                 path: require.resolve('path-browserify'),
-                ...RXJS_RESOLUTIONS,
+                // TODO(sqs): force use of same version when developing on opencodegraph because `pnpm link` breaks
+                '@codemirror/state': path.join(ROOT_PATH, 'node_modules/@codemirror/state'),
+                '@codemirror/view': path.join(ROOT_PATH, 'node_modules/@codemirror/view'),
+                react: path.join(ROOT_PATH, 'node_modules/react'),
+                'react-dom': path.join(ROOT_PATH, 'node_modules/react-dom'),
+                'react-dom/client': path.join(ROOT_PATH, 'node_modules/react-dom/client'),
                 ...(ENVIRONMENT_CONFIG.DEV_WEB_BUILDER_OMIT_SLOW_DEPS
                     ? {
                           // Monaco
@@ -62,13 +72,6 @@ export function esbuildBuildOptions(ENVIRONMENT_CONFIG: EnvironmentConfig): esbu
 
                           // Misc.
                           recharts: '/dev/null',
-
-                          // TODO(sqs): force use of same version when developing on opencodegraph because `pnpm link` breaks
-                          '@codemirror/state': path.join(ROOT_PATH, 'node_modules/@codemirror/state'),
-                          '@codemirror/view': path.join(ROOT_PATH, 'node_modules/@codemirror/view'),
-                          react: path.join(ROOT_PATH, 'node_modules/react'),
-                          'react-dom': path.join(ROOT_PATH, 'node_modules/react-dom'),
-                          'react-dom/client': path.join(ROOT_PATH, 'node_modules/react-dom/client'),
                       }
                     : null),
             }),

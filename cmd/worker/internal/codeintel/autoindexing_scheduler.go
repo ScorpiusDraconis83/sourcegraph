@@ -49,10 +49,10 @@ func (j *autoindexingScheduler) Routines(_ context.Context, observationCtx *obse
 
 	return autoindexing.NewIndexSchedulers(
 		observationCtx,
-		services.UploadsService,
 		services.PoliciesService,
 		matcher,
-		services.AutoIndexingService,
+		services.PreciseRepoSchedulingService,
+		*services.AutoIndexingService,
 		db.Repos(),
 	), nil
 }

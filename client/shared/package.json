@@ -8,6 +8,7 @@
     "lint:js": "eslint --cache '**/*.[jt]s?(x)'",
     "lint:css": "stylelint 'src/**/*.scss' --quiet",
     "test": "vitest",
+    "build-ts": "tsc --build tsconfig.json --emitDeclarationOnly",
     "generate": "concurrently -r npm:generate:*",
     "generate:graphql-operations": "ts-node -T dev/generateGraphQlOperations.ts",
     "generate:schema": "ts-node -T dev/generateSchema.ts json-schema-draft-07 settings site batch_spec opencodegraph",
@@ -24,7 +25,7 @@
     "@sourcegraph/codeintellify": "workspace:*",
     "@sourcegraph/common": "workspace:*",
     "@sourcegraph/http-client": "workspace:*",
-    "@sourcegraph/telemetry": "^0.11.0",
+    "@sourcegraph/telemetry": "^0.16.0",
     "@sourcegraph/template-parser": "workspace:*",
     "@sourcegraph/wildcard": "workspace:*"
   },

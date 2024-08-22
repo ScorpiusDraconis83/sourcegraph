@@ -5,14 +5,11 @@ import { startWith, switchMap, map, distinctUntilChanged } from 'rxjs/operators'
 
 import { memoizeObservable } from '@sourcegraph/common'
 import { SearchPatternType } from '@sourcegraph/shared/src/graphql-operations'
-import { SearchMode } from '@sourcegraph/shared/src/search'
-import { discreteValueAliases, escapeSpaces, quoteIfWhitespace } from '@sourcegraph/shared/src/search/query/filters'
-import { stringHuman } from '@sourcegraph/shared/src/search/query/printer'
+import { discreteValueAliases, escapeSpaces } from '@sourcegraph/shared/src/search/query/filters'
 import { findFilter, FilterKind, getGlobalSearchContextFilter } from '@sourcegraph/shared/src/search/query/query'
-import { scanSearchQuery } from '@sourcegraph/shared/src/search/query/scanner'
-import { createLiteral } from '@sourcegraph/shared/src/search/query/token'
 import { omitFilter } from '@sourcegraph/shared/src/search/query/transformer'
 import type { AggregateStreamingSearchResults, StreamSearchOptions } from '@sourcegraph/shared/src/search/stream'
+import { SearchMode } from '@sourcegraph/shared/src/search/types'
 
 export type { SearchAggregationProps } from './results/sidebar/search-aggregation-types'
 
@@ -42,7 +39,7 @@ export function parseSearchURLPatternType(query: string): SearchPatternType | un
         case SearchPatternType.regexp:
         case SearchPatternType.structural:
         case SearchPatternType.lucky:
-        case SearchPatternType.newStandardRC1:
+        case SearchPatternType.codycontext:
         case SearchPatternType.keyword: {
             return patternType
         }
@@ -100,24 +97,17 @@ export function parseSearchURL(
     urlSearchQuery: string,
     { appendCaseFilter = false }: { appendCaseFilter?: boolean } = {}
 ): ParsedSearchURL {
-    let queryInput = parseSearchURLQuery(urlSearchQuery) || ''
-    let patternTypeInput = parseSearchURLPatternType(urlSearchQuery)
+    let query = parseSearchURLQuery(urlSearchQuery) || ''
+    let patternType = parseSearchURLPatternType(urlSearchQuery)
     let caseSensitive = searchURLIsCaseSensitive(urlSearchQuery)
     const searchMode = parseSearchURLSearchMode(urlSearchQuery)
 
-    const globalPatternType = findFilter(queryInput, 'patterntype', FilterKind.Global)
+    const globalPatternType = findFilter(query, 'patterntype', FilterKind.Global)
     if (globalPatternType?.value && globalPatternType.value.type === 'literal') {
         // Any `patterntype:` filter in the query should override the patternType= URL query parameter if it exists.
-        queryInput = omitFilter(queryInput, globalPatternType)
-        patternTypeInput = globalPatternType.value.value as SearchPatternType
+        query = omitFilter(query, globalPatternType)
+        patternType = globalPatternType.value.value as SearchPatternType
     }
-
-    let query = queryInput
-    const { queryInput: newQuery, patternTypeInput: patternType } = literalSearchCompatibility({
-        queryInput,
-        patternTypeInput: patternTypeInput || SearchPatternType.standard,
-    })
-    query = newQuery
 
     const globalCase = findFilter(query, 'case', FilterKind.Global)
     if (globalCase?.value && globalCase.value.type === 'literal') {
@@ -144,26 +134,12 @@ export function parseSearchURL(
     }
 }
 
-export function filterValueForRepoRevision(repoName: string, revision?: string): string {
+export function repoFilterForRepoRevision(repoName: string, revision?: string): string {
     return `${escapeSpaces(`^${escapeRegExp(repoName)}$${revision ? `@${abbreviateOID(revision)}` : ''}`)}`
 }
 
-export function repoFilterForRepoRevision(
-    repoName: string,
-    revision?: string,
-    patternType?: SearchPatternType
-): string {
-    if (patternType === SearchPatternType.newStandardRC1) {
-        return `repo:${quoteIfWhitespace(repoName)}${revision ? `@${abbreviateOID(revision)}` : ''} `
-    }
-    return `repo:${filterValueForRepoRevision(repoName, revision)} `
-}
-
-export function fileFilterForFilePath(filePath: string, patternType?: SearchPatternType): string {
-    if (patternType === SearchPatternType.newStandardRC1) {
-        return `file:${quoteIfWhitespace(filePath)}`
-    }
-    return `file:${escapeSpaces('^' + escapeRegExp(filePath))}`
+export function searchQueryForRepoRevision(repoName: string, revision?: string): string {
+    return `repo:${repoFilterForRepoRevision(repoName, revision)} `
 }
 
 function abbreviateOID(oid: string): string {
@@ -178,45 +154,6 @@ export function quoteIfNeeded(string: string): string {
         return JSON.stringify(string)
     }
     return string
-}
-
-interface QueryCompatibility {
-    queryInput: string
-    patternTypeInput: SearchPatternType
-}
-
-export function literalSearchCompatibility({ queryInput, patternTypeInput }: QueryCompatibility): QueryCompatibility {
-    if (patternTypeInput !== SearchPatternType.literal) {
-        return { queryInput, patternTypeInput }
-    }
-    const tokens = scanSearchQuery(queryInput, false, SearchPatternType.standard)
-    if (tokens.type === 'error') {
-        return { queryInput, patternTypeInput }
-    }
-
-    if (!tokens.term.find(token => token.type === 'pattern' && token.delimited)) {
-        // If no /.../ pattern exists in this literal search, just return the query as-is.
-        return { queryInput, patternTypeInput: SearchPatternType.standard }
-    }
-
-    const newQueryInput = stringHuman(
-        tokens.term.map(token =>
-            token.type === 'pattern' && token.delimited
-                ? {
-                      type: 'filter',
-                      range: { start: 0, end: 0 },
-                      field: createLiteral('content', { start: 0, end: 0 }, false),
-                      value: createLiteral(`/${token.value}/`, { start: 0, end: 0 }, true),
-                      negated: false /** if `NOT` was used on this pattern, it's already preserved */,
-                  }
-                : token
-        )
-    )
-
-    return {
-        queryInput: newQueryInput,
-        patternTypeInput: SearchPatternType.standard,
-    }
 }
 
 export interface SearchStreamingProps {

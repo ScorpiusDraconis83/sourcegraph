@@ -2,23 +2,56 @@ package search
 
 import (
 	"context"
+	"math"
 	"strings"
 	"sync"
 
-	"github.com/sourcegraph/sourcegraph/cmd/searcher/protocol"
-	proto "github.com/sourcegraph/sourcegraph/internal/searcher/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/sourcegraph/sourcegraph/internal/searcher/protocol"
+	proto "github.com/sourcegraph/sourcegraph/internal/searcher/v1"
 )
 
-type Server struct {
+type grpcServer struct {
 	Service *Service
 	proto.UnimplementedSearcherServiceServer
 }
 
-func (s *Server) Search(req *proto.SearchRequest, stream proto.SearcherService_SearchServer) error {
-	var unmarshaledReq protocol.Request
-	unmarshaledReq.FromProto(req)
+func NewGRPCServer(svc *Service, exhaustiveRequestLoggingEnabled bool) proto.SearcherServiceServer {
+	var srv proto.SearcherServiceServer = &grpcServer{
+		Service: svc,
+	}
+	if exhaustiveRequestLoggingEnabled {
+		logger := svc.Logger.Scoped("gRPCRequestLogger")
+
+		srv = &loggingGRPCServer{
+			base:   srv,
+			logger: logger,
+		}
+	}
+	return srv
+}
+
+func (s *grpcServer) Search(req *proto.SearchRequest, stream proto.SearcherService_SearchServer) error {
+	var p protocol.Request
+	p.FromProto(req)
+
+	if !p.PatternMatchesContent && !p.PatternMatchesPath {
+		// BACKCOMPAT: Old frontends send neither of these fields, but we still want to
+		// search file content in that case.
+		p.PatternMatchesContent = true
+	}
+	if err := validateParams(&p); err != nil {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	if p.Limit == 0 {
+		// No limit for streaming search since upstream limits
+		// will either be sent in the request, or propagated by
+		// a cancelled context.
+		p.Limit = math.MaxInt32
+	}
 
 	// mu protects the stream from concurrent writes.
 	var mu sync.Mutex
@@ -33,10 +66,10 @@ func (s *Server) Search(req *proto.SearchRequest, stream proto.SearcherService_S
 		})
 	}
 
-	ctx, cancel, matchStream := newLimitedStream(stream.Context(), int(req.PatternInfo.Limit), onMatches)
+	ctx, cancel, matchStream := newLimitedStream(stream.Context(), int(p.PatternInfo.Limit), onMatches)
 	defer cancel()
 
-	err := s.Service.search(ctx, &unmarshaledReq, matchStream)
+	err := s.Service.search(ctx, &p, matchStream)
 	if err != nil {
 		return convertToGRPCError(ctx, err)
 	}

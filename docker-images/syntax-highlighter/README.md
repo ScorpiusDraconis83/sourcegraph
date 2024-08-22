@@ -3,11 +3,9 @@
 Crates:
 
 - The main `syntect_server` executable
-- `crates/scip-treesitter-languages/`: All the grammars and parsers live here to make shipping parsers with the same tree-sitter version (and associated build tooling) very easy. All new grammars and parsers should be added here.
-- `crates/scip-treesitter/`: Associated utilities for tree-sitter and scip. Not required to be used for other projects
-- `crates/scip-treesitter-cli/`: Command line tool that produces a SCIP index file from the analysis performed by other `scip-*` crates in this project
-- `crates/scip-syntax/`: local navigation calculation (and some other utilities) live here.
-- `crates/sg-syntax/`: Sourcegraph code to glue together whatever from the above crates to be used for our purposes.
+- `crates/tree-sitter-all-languages/`: All the grammars and parsers live here to make shipping parsers with the same tree-sitter version (and associated build tooling) very easy. All new grammars and parsers should be added here.
+- `crates/scip-syntax/`: Command line tool that produces a SCIP index file from the analysis performed by other `scip-*` crates in this project
+- `crates/syntax-analysis/`: local navigation calculation (and some other utilities) live here.
 
 # scip-ctags
 
@@ -49,6 +47,38 @@ By default on startup, `syntect_server` will list all file types it supports. Th
 2. Use `cargo run --bin syntect_server` to run the server locally.
 3. You can change the `SRC_SYNTECT_SERVER` option in your `sg.config.yaml` to point to whatever port you're running on (usually 8000) and test against that without building the docker image.
 
+For formatting, run:
+
+```bash
+bazel run @rules_rust//:rustfmt
+```
+
+### Testing syntect -> SCIP grammar mappings
+
+<!-- NOTE(id: only-flag) -->
+
+You can run a subset of tests for `syntect_scip` using the `ONLY` environment variable.
+Example:
+
+```bash
+cd crates/syntax-analysis
+ONLY=.java cargo test test_all_files -- --nocapture
+```
+
+### Load Testing
+
+Start up the highlighter using:
+
+```bash
+cargo run --release --bin syntect_server
+```
+
+Use [wrk](https://github.com/wg/wrk) with a Lua script, such as [`load_test.lua`](./load_test.lua).
+
+```bash
+wrk --threads 4 --duration 5s --connections 100 --script load_test.lua http://127.0.0.1:8000/scip
+```
+
 ## Building docker image
 
 `./build.sh` will build your current repository checkout into a final Docker image. You **DO NOT** need to do this when you push to get it publish. But, you should do this to make sure that it is possible to build the image :smile:.
@@ -66,7 +96,7 @@ Additionally, it's worth doing a [search](https://sourcegraph.com/search?q=repo:
 
 ## Adding languages (tree-sitter):
 
-See [scip-treesitter-languages](./crates/scip-treesitter-languages/README.md)
+See [tree-sitter-all-languages](./crates/tree-sitter-all-languages/README.md)
 
 ## Adding languages (syntect -- outdated):
 

@@ -38,7 +38,7 @@ func TestBatchSpecWorkspaceCreatorProcess(t *testing.T) {
 
 	user := bt.CreateTestUser(t, db, true)
 
-	s := store.New(db, &observation.TestContext, nil)
+	s := store.New(db, observation.TestContextTB(t), nil)
 
 	batchSpec, err := btypes.NewBatchSpecFromRaw(bt.TestRawBatchSpecYAML)
 	if err != nil {
@@ -196,7 +196,7 @@ func TestBatchSpecWorkspaceCreatorProcess_Caching(t *testing.T) {
 
 	now := timeutil.Now()
 	clock := func() time.Time { return now }
-	s := store.NewWithClock(db, &observation.TestContext, nil, clock)
+	s := store.NewWithClock(db, observation.TestContextTB(t), nil, clock)
 
 	creator := &batchSpecWorkspaceCreator{store: s, logger: logtest.Scoped(t)}
 
@@ -800,16 +800,17 @@ changesetTemplate:
 }
 
 func TestBatchSpecWorkspaceCreatorProcess_Importing(t *testing.T) {
+	ctx := actor.WithInternalActor(context.Background())
 	logger := logtest.Scoped(t)
 	db := database.NewDB(logger, dbtest.NewDB(t))
 
-	repos, _ := bt.CreateTestRepos(t, context.Background(), db, 1)
+	repos, _ := bt.CreateTestRepos(t, ctx, db, 1)
 
 	user := bt.CreateTestUser(t, db, true)
 
 	now := timeutil.Now()
 	clock := func() time.Time { return now }
-	s := store.NewWithClock(db, &observation.TestContext, nil, clock)
+	s := store.NewWithClock(db, observation.TestContextTB(t), nil, clock)
 
 	testSpecYAML := `
 name: my-unique-name
@@ -820,7 +821,7 @@ importChangesets:
 `
 
 	batchSpec := &btypes.BatchSpec{UserID: user.ID, NamespaceUserID: user.ID, RawSpec: testSpecYAML}
-	if err := s.CreateBatchSpec(context.Background(), batchSpec); err != nil {
+	if err := s.CreateBatchSpec(ctx, batchSpec); err != nil {
 		t.Fatal(err)
 	}
 
@@ -829,11 +830,11 @@ importChangesets:
 	resolver := &dummyWorkspaceResolver{}
 
 	creator := &batchSpecWorkspaceCreator{store: s, logger: logtest.Scoped(t)}
-	if err := creator.process(context.Background(), resolver.DummyBuilder, job); err != nil {
+	if err := creator.process(ctx, resolver.DummyBuilder, job); err != nil {
 		t.Fatalf("proces failed: %s", err)
 	}
 
-	have, _, err := s.ListChangesetSpecs(context.Background(), store.ListChangesetSpecsOpts{BatchSpecID: batchSpec.ID})
+	have, _, err := s.ListChangesetSpecs(ctx, store.ListChangesetSpecsOpts{BatchSpecID: batchSpec.ID})
 	if err != nil {
 		t.Fatalf("listing specs failed: %s", err)
 	}
@@ -859,15 +860,16 @@ importChangesets:
 
 func TestBatchSpecWorkspaceCreatorProcess_NoDiff(t *testing.T) {
 	logger := logtest.Scoped(t)
+	ctx := actor.WithInternalActor(context.Background())
 	db := database.NewDB(logger, dbtest.NewDB(t))
 
-	repos, _ := bt.CreateTestRepos(t, context.Background(), db, 1)
+	repos, _ := bt.CreateTestRepos(t, ctx, db, 1)
 
 	user := bt.CreateTestUser(t, db, true)
 
 	now := timeutil.Now()
 	clock := func() time.Time { return now }
-	s := store.NewWithClock(db, &observation.TestContext, nil, clock)
+	s := store.NewWithClock(db, observation.TestContextTB(t), nil, clock)
 
 	testSpecYAML := `
 name: my-unique-name
@@ -878,7 +880,7 @@ importChangesets:
 `
 
 	batchSpec := &btypes.BatchSpec{UserID: user.ID, NamespaceUserID: user.ID, RawSpec: testSpecYAML}
-	if err := s.CreateBatchSpec(context.Background(), batchSpec); err != nil {
+	if err := s.CreateBatchSpec(ctx, batchSpec); err != nil {
 		t.Fatal(err)
 	}
 
@@ -887,11 +889,11 @@ importChangesets:
 	resolver := &dummyWorkspaceResolver{}
 
 	creator := &batchSpecWorkspaceCreator{store: s, logger: logtest.Scoped(t)}
-	if err := creator.process(context.Background(), resolver.DummyBuilder, job); err != nil {
+	if err := creator.process(ctx, resolver.DummyBuilder, job); err != nil {
 		t.Fatalf("proces failed: %s", err)
 	}
 
-	have, _, err := s.ListChangesetSpecs(context.Background(), store.ListChangesetSpecsOpts{BatchSpecID: batchSpec.ID})
+	have, _, err := s.ListChangesetSpecs(ctx, store.ListChangesetSpecsOpts{BatchSpecID: batchSpec.ID})
 	if err != nil {
 		t.Fatalf("listing specs failed: %s", err)
 	}
@@ -925,7 +927,7 @@ func TestBatchSpecWorkspaceCreatorProcess_Secrets(t *testing.T) {
 
 	repos, _ := bt.CreateTestRepos(t, ctx, db, 4)
 
-	s := store.New(db, &observation.TestContext, nil)
+	s := store.New(db, observation.TestContextTB(t), nil)
 
 	secret := &database.ExecutorSecret{
 		Key:       "FOO",

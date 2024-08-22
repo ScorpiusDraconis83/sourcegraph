@@ -1,10 +1,11 @@
 // Package observation provides a unified way to wrap an operation with logging, tracing, and metrics.
 //
-// To learn more, refer to "How to add observability": https://docs.sourcegraph.com/dev/how-to/add_observability
+// To learn more, refer to "How to add observability": https://docs-legacy.sourcegraph.com/dev/how-to/add_observability
 package observation
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/sourcegraph/log"
@@ -88,6 +89,10 @@ type TraceLogger interface {
 	// underlying Logger.
 	SetAttributes(attributes ...attribute.KeyValue)
 
+	// WithFields is analogous to log.Logger's With function, but returns
+	// a new TraceLogger instead.
+	WithFields(...log.Field) TraceLogger
+
 	// Logger is a logger scoped to this trace.
 	log.Logger
 }
@@ -152,6 +157,16 @@ func (t *traceLogger) SetAttributes(attributes ...attribute.KeyValue) {
 	t.Logger = t.Logger.With(attributesToLogFields(attributes)...)
 }
 
+func (t *traceLogger) WithFields(field ...log.Field) TraceLogger {
+	return &traceLogger{
+		opName:  t.opName,
+		event:   t.event,
+		trace:   t.trace,
+		context: t.context,
+		Logger:  t.Logger.With(field...),
+	}
+}
+
 // FinishFunc is the shape of the function returned by With and should be invoked within
 // a defer directly before the observed function returns or when a context is cancelled
 // with OnCancel.
@@ -162,14 +177,15 @@ type FinishFunc func(count float64, args Args)
 // be used for continuing an observation beyond the lifetime of a function if that function
 // returns more units of work that you want to observe as part of the original function.
 func (f FinishFunc) OnCancel(ctx context.Context, count float64, args Args) {
-	go func() {
-		<-ctx.Done()
+	context.AfterFunc(ctx, func() {
 		f(count, args)
-	}()
+	})
 }
 
 // ErrCollector represents multiple errors and additional log fields that arose from those errors.
+// This type is thread-safe.
 type ErrCollector struct {
+	mu         sync.Mutex
 	errs       error
 	extraAttrs []attribute.KeyValue
 }
@@ -177,6 +193,9 @@ type ErrCollector struct {
 func NewErrorCollector() *ErrCollector { return &ErrCollector{errs: nil} }
 
 func (e *ErrCollector) Collect(err *error, attrs ...attribute.KeyValue) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
 	if err != nil && *err != nil {
 		e.errs = errors.Append(e.errs, *err)
 		e.extraAttrs = append(e.extraAttrs, attrs...)
@@ -184,10 +203,32 @@ func (e *ErrCollector) Collect(err *error, attrs ...attribute.KeyValue) {
 }
 
 func (e *ErrCollector) Error() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
 	if e.errs == nil {
 		return ""
 	}
 	return e.errs.Error()
+}
+
+func (e *ErrCollector) Unwrap() error {
+	// ErrCollector wraps collected errors, for compatibility with errors.HasType,
+	// errors.Is etc it has to implement Unwrap to return the inner errors the
+	// collector stores.
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	return e.errs
+}
+
+// appendExtraAttrs appends the extra attributes stored in the ErrCollector to the provided base slice.
+func (e *ErrCollector) appendExtraAttrs(base []attribute.KeyValue) []attribute.KeyValue {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	return append(base, e.extraAttrs...)
 }
 
 // Args configures the observation behavior of an invocation of an operation.
@@ -223,7 +264,7 @@ func (op *Operation) WithErrorsAndLogger(ctx context.Context, root *error, args 
 	if root != nil {
 		endFunc = func(count float64, args Args) {
 			if *root != nil {
-				errTracer.errs = errors.Append(errTracer.errs, *root)
+				errTracer.Collect(root)
 			}
 			endObservation(count, args)
 		}
@@ -239,7 +280,7 @@ func (op *Operation) With(ctx context.Context, err *error, args Args) (context.C
 	start := time.Now()
 	tr, ctx := op.startTrace(ctx)
 
-	event := honey.NoopEvent()
+	event := honey.NonSendingEvent()
 	snakecaseOpName := toSnakeCase(op.name)
 	if op.context.HoneyDataset != nil {
 		event = op.context.HoneyDataset.EventWithFields(map[string]any{
@@ -281,10 +322,11 @@ func (op *Operation) With(ctx context.Context, err *error, args Args) (context.C
 		metricLabels := mergeLabels(op.metricLabels, args.MetricLabelValues, finishArgs.MetricLabelValues)
 
 		if multi := new(ErrCollector); err != nil && errors.As(*err, &multi) {
-			if multi.errs == nil {
+			if multi.Error() == "" {
 				err = nil
 			}
-			finishAttrs = append(finishAttrs, multi.extraAttrs...)
+
+			multi.appendExtraAttrs(finishAttrs)
 		}
 
 		var (

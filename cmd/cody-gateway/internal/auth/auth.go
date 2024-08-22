@@ -2,6 +2,7 @@ package auth
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/sourcegraph/log"
 
@@ -9,7 +10,7 @@ import (
 	"github.com/sourcegraph/sourcegraph/cmd/cody-gateway/internal/events"
 	"github.com/sourcegraph/sourcegraph/cmd/cody-gateway/internal/response"
 	"github.com/sourcegraph/sourcegraph/internal/authbearer"
-	"github.com/sourcegraph/sourcegraph/internal/codygateway"
+	"github.com/sourcegraph/sourcegraph/internal/codygateway/codygatewayevents"
 	"github.com/sourcegraph/sourcegraph/internal/trace"
 	"github.com/sourcegraph/sourcegraph/lib/errors"
 )
@@ -47,7 +48,7 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 				if err := a.EventLogger.LogEvent(
 					r.Context(),
 					events.Event{
-						Name:       codygateway.EventNameUnauthorized,
+						Name:       codygatewayevents.EventNameUnauthorized,
 						Source:     e.Source,
 						Identifier: "unknown",
 						Metadata: map[string]any{
@@ -66,7 +67,7 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		if !act.AccessEnabled {
+		if !isAccessEnabled(act, r.URL.Path) {
 			response.JSONError(
 				logger,
 				w,
@@ -77,7 +78,7 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 			err := a.EventLogger.LogEvent(
 				r.Context(),
 				events.Event{
-					Name:       codygateway.EventNameAccessDenied,
+					Name:       codygatewayevents.EventNameAccessDenied,
 					Source:     act.Source.Name(),
 					Identifier: act.ID,
 				},
@@ -92,4 +93,21 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 		// Continue with the chain.
 		next.ServeHTTP(w, r)
 	})
+}
+
+func isAccessEnabled(act *actor.Actor, path string) bool {
+	if act.AccessEnabled {
+		return true
+	}
+	if act.EndpointAccess == nil {
+		return false
+	}
+	path = strings.TrimPrefix(path, "/")
+	for prefix, enabled := range act.EndpointAccess {
+		prefix = strings.TrimPrefix(prefix, "/")
+		if strings.HasPrefix(path, prefix) {
+			return enabled
+		}
+	}
+	return false
 }

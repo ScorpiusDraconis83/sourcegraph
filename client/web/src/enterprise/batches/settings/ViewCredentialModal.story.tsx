@@ -20,6 +20,7 @@ const credential: BatchChangesCredentialFields = {
     isSiteCredential: false,
     sshPublicKey:
         'ssh-rsa randorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorandorando',
+    gitHubApp: null,
 }
 
 export const View: StoryFn = () => (
@@ -42,10 +43,3 @@ export const View: StoryFn = () => (
         )}
     </WebStory>
 )
-
-View.parameters = {
-    chromatic: {
-        // Delay screenshot taking, so the modal has opened by the time the screenshot is taken.
-        delay: 2000,
-    },
-}

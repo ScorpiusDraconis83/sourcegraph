@@ -1,3 +1,4 @@
+load("//dev:go_mockgen.bzl", "go_mockgen")
 load("//dev:go_defs.bzl", "go_test")
 load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
@@ -8,6 +9,7 @@ go_library(
         "transform.go",
     ],
     importpath = "github.com/sourcegraph/sourcegraph/cmd/frontend/internal/executorqueue/queues/batches",
+    tags = [TAG_SEARCHSUITE],
     visibility = ["//cmd/frontend:__subpackages__"],
     deps = [
         "//cmd/frontend/graphqlbackend",
@@ -38,6 +40,7 @@ go_test(
         "transform_test.go",
     ],
     embed = [":batches"],
+    tags = [TAG_SEARCHSUITE],
     deps = [
         "//cmd/frontend/graphqlbackend",
         "//internal/api",
@@ -52,9 +55,20 @@ go_test(
         "//lib/batches/execution",
         "//lib/batches/template",
         "//schema",
-        "@com_github_derision_test_go_mockgen//testutil/assert",
+        "@com_github_derision_test_go_mockgen_v2//testutil/assert",
         "@com_github_google_go_cmp//cmp",
         "@com_github_sourcegraph_log//logtest",
         "@in_gopkg_yaml_v2//:yaml_v2",
     ],
+)
+
+go_mockgen(
+    name = "generate_mocks",
+    out = "mocks_test.go",
+    manifests = [
+        "//:mockgen.yaml",
+        "//:mockgen.test.yaml",
+        "//:mockgen.temp.yaml",
+    ],
+    deps = [":batches"],
 )
